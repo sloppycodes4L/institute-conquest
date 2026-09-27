@@ -597,9 +597,16 @@ export class World {
     if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
-    // pull back on narrow screens so the whole valley fits
-    this.camera.fov = w / h < 0.8 ? 60 : 42;
+    // pull back so the whole valley (≈ 54 units wide) fits the narrower screen axis
+    const aspect = w / h;
+    this.camera.fov = aspect < 0.8 ? 55 : 42;
     this.camera.updateProjectionMatrix();
+    const vHalf = (this.camera.fov * Math.PI) / 360;
+    const hHalf = Math.atan(Math.tan(vHalf) * aspect);
+    const fit = Math.min(105, Math.max(55, 29 / Math.tan(Math.min(vHalf, hHalf))));
+    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+    this.camera.position.copy(this.controls.target).addScaledVector(dir, fit);
+    this.controls.maxDistance = Math.max(110, fit + 10);
     for (const m of this.borderMats) m.resolution.set(w, h);
   }
 
