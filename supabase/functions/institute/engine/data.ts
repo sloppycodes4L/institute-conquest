@@ -1,5 +1,10 @@
-// Static world data: Houses, quadrants, territories, and the procedurally-built hex valley.
+// Static world data: Houses, quadrants, territory names, and the procedurally-built hex valley.
 // Pure TS with no deps so it runs in the browser and in the Deno edge function.
+//
+// The valley is a ring of seven House slices around the chasm beneath Olympus. Each slice is a
+// polar grid of three rows (inner "Foot of Olympus", middle, outer) with the Keep in the middle
+// of the middle row, so it is always buffered by at least two of its own territories before any
+// foreign border. The map grows with the player count (see LAYOUTS).
 
 export type HouseId = 'apollo' | 'diana' | 'minerva' | 'mars' | 'pluto' | 'jupiter' | 'ceres';
 export type Biome =
@@ -27,31 +32,57 @@ export const HOUSES: House[] = [
 ];
 export const HOUSE_INDEX: Record<HouseId, number> = Object.fromEntries(HOUSES.map((h, i) => [h.id, i])) as any;
 
-export interface Quadrant { name: string; bonus: number; houses: number[] }
+export interface Quadrant { name: string; houses: number[] }
 export const QUADRANTS: Quadrant[] = [
-  { name: 'The Greatwoods', bonus: 5, houses: [0, 1] },
-  { name: 'The Highlands', bonus: 5, houses: [2, 3] },
-  { name: 'The Frostfangs', bonus: 2, houses: [4] },
-  { name: 'The Argos Lowlands', bonus: 5, houses: [5, 6] },
+  { name: 'The Greatwoods', houses: [0, 1] },
+  { name: 'The Highlands', houses: [2, 3] },
+  { name: 'The Frostfangs', houses: [4] },
+  { name: 'The Argos Lowlands', houses: [5, 6] },
 ];
 
-export const TERR_PER_HOUSE = 6;
-// Slot 0 of each House is its Keep.
-const TERR_DEFS: [string, Biome][][] = [
+export const MIN_PLAYERS = 2;
+export const MAX_PLAYERS = 7;
+
+/** Territories per row of each House slice, inner → outer, by player count. The middle row is odd and ≥ 5 so the Keep sits two cells from either side. */
+export const LAYOUTS: Record<number, number[]> = {
+  2: [3, 5, 3],
+  3: [3, 5, 4],
+  4: [3, 5, 5],
+  5: [4, 5, 5],
+  6: [4, 5, 6],
+  7: [4, 5, 7],
+};
+
+// Slot 0 of each House is its Keep. Later slots are handed out nearest-the-Keep first.
+const NAMES: [string, Biome][][] = [
   // Apollo
-  [['The Sun Citadel', 'keep'], ['Gilded Steppe', 'plain'], ['Lyre Falls', 'lake'], ['Pythian Crags', 'crag'], ['Laurel Groves', 'forest'], ['Brightspire', 'mountain']],
+  [['The Sun Citadel', 'keep'], ['Gilded Steppe', 'plain'], ['Lyre Falls', 'lake'], ['Pythian Crags', 'crag'], ['Laurel Groves', 'forest'], ['Brightspire', 'mountain'],
+    ['Delphi Rise', 'highland'], ['Helios Fields', 'fields'], ["Oracle's Tarn", 'lake'], ['Goldleaf Wood', 'forest'], ['Solar Scarp', 'crag'], ['Chariot Road', 'plain'],
+    ['Amber Hollow', 'forest'], ['Dawnwatch', 'highland'], ["Python's Coil", 'swamp'], ['Sunfall Ridge', 'mountain']],
   // Diana
-  [['Moonhall', 'keep'], ['The Greatwood', 'forest'], ["Hunter's Tarn", 'lake'], ['Hartsblood Run', 'plain'], ['Silverbirch Hollow', 'forest'], ['Antler Ridge', 'crag']],
+  [['Moonhall', 'keep'], ['The Greatwood', 'forest'], ["Hunter's Tarn", 'lake'], ['Hartsblood Run', 'plain'], ['Silverbirch Hollow', 'forest'], ['Antler Ridge', 'crag'],
+    ['Quiverwood', 'forest'], ["Stag's Leap", 'highland'], ['Nightbloom Mire', 'swamp'], ['Wolfsbane Glen', 'forest'], ['Artemis Pool', 'lake'], ['Bowstring Crag', 'crag'],
+    ['Doe Meadow', 'plain'], ['Moonshadow Vale', 'forest'], ['Thornbrake', 'forest'], ["Tracker's Height", 'mountain']],
   // Minerva
-  [["Minerva's Aerie", 'keep'], ['Owlwood', 'forest'], ['Stillmirror Lake', 'lake'], ['Scriptorium Hills', 'highland'], ['Greyveil Marsh', 'swamp'], ['The Thinking Stones', 'crag']],
+  [["Minerva's Aerie", 'keep'], ['Owlwood', 'forest'], ['Stillmirror Lake', 'lake'], ['Scriptorium Hills', 'highland'], ['Greyveil Marsh', 'swamp'], ['The Thinking Stones', 'crag'],
+    ['Ink River', 'lake'], ['Parchment Downs', 'plain'], ['Olive Terraces', 'fields'], ['Sagewood', 'forest'], ['Aegis Bluff', 'crag'], ['The Loom', 'highland'],
+    ["Wisdom's Fen", 'swamp'], ['Athenaeum Rise', 'mountain'], ['Quillmoor', 'plain'], ['Shieldwall Heights', 'mountain']],
   // Mars
-  [['Castle Mars', 'keep'], ['The Furor', 'lake'], ['Metas Fens', 'swamp'], ['Wolfpine Wood', 'forest'], ['Deimos Crags', 'mountain'], ['Phobos Watch', 'highland']],
+  [['Castle Mars', 'keep'], ['The Furor', 'lake'], ['Metas Fens', 'swamp'], ['Wolfpine Wood', 'forest'], ['Deimos Crags', 'mountain'], ['Phobos Watch', 'highland'],
+    ["Howler's Den", 'forest'], ["Reaper's Field", 'plain'], ['Slingblade Gap', 'crag'], ['Ares Hollow', 'forest'], ['Bloodwater', 'lake'], ['Ironjaw Ridge', 'mountain'],
+    ['The Warrens', 'highland'], ['Red Moor', 'plain'], ["Titus's Pit", 'swamp'], ['Spearpoint', 'crag']],
   // Pluto
-  [['The Hollow Keep', 'keep'], ['Bonewood', 'deadwood'], ['Black Ice Mere', 'lake'], ['Frostfang Pass', 'snow'], ['Wraith Marsh', 'swamp'], ['Grave Tors', 'mountain']],
+  [['The Hollow Keep', 'keep'], ['Bonewood', 'deadwood'], ['Black Ice Mere', 'lake'], ['Frostfang Pass', 'snow'], ['Wraith Marsh', 'swamp'], ['Grave Tors', 'mountain'],
+    ['Styx Floe', 'lake'], ["Charon's Crossing", 'snow'], ["Deadman's Drift", 'snow'], ['Ashen Wood', 'deadwood'], ['Hades Scarp', 'crag'], ['Rimewatch', 'snow'],
+    ['Cerberus Den', 'mountain'], ['Pale Barrow', 'deadwood'], ['Shade Fen', 'swamp'], ['Winterteeth', 'mountain']],
   // Jupiter
-  [['Thunderhold', 'keep'], ["Eagle's Rest", 'mountain'], ['Rainpools', 'lake'], ['Stormbreak Moor', 'highland'], ['Oakfather Wood', 'forest'], ['Lightning Flats', 'plain']],
+  [['Thunderhold', 'keep'], ["Eagle's Rest", 'mountain'], ['Rainpools', 'lake'], ['Stormbreak Moor', 'highland'], ['Oakfather Wood', 'forest'], ['Lightning Flats', 'plain'],
+    ['Cloudspire', 'mountain'], ['Thunderhead Downs', 'plain'], ['Ganymede Grove', 'forest'], ['Io Marsh', 'swamp'], ['Tempest Rise', 'highland'], ['Bolt Crag', 'crag'],
+    ['Skyreach Fields', 'fields'], ["Titan's Seat", 'crag'], ['Callisto Tarn', 'lake'], ['Stormwood', 'forest']],
   // Ceres
-  [['The Ovens', 'keep'], ['Breadfields', 'fields'], ['Millrace', 'lake'], ['Orchard Rows', 'forest'], ["Sowers' Mire", 'swamp'], ['Harvest Terraces', 'fields']],
+  [['The Ovens', 'keep'], ['Breadfields', 'fields'], ['Millrace', 'lake'], ['Orchard Rows', 'forest'], ["Sowers' Mire", 'swamp'], ['Harvest Terraces', 'fields'],
+    ['Wheatsea', 'fields'], ['Granary Hill', 'highland'], ['Beehive Glen', 'forest'], ["Plowman's Rest", 'plain'], ['Threshing Floor', 'plain'], ['Cornucopia', 'fields'],
+    ['Rye Hollow', 'fields'], ['Scarecrow Crag', 'crag'], ['Honeywater', 'lake'], ["Demeter's Grove", 'forest']],
 ];
 
 export interface Territory {
@@ -61,34 +92,50 @@ export interface Territory {
   house: number;
   quadrant: number;
   isKeep: boolean;
+  row: number;
+  col: number;
+  /** Inner row: borders the chasm beneath Olympus. Sieges on Olympus launch from here. */
+  foot: boolean;
 }
-export const TERRITORIES: Territory[] = TERR_DEFS.flatMap((defs, h) =>
-  defs.map(([name, biome], s) => ({
-    id: h * TERR_PER_HOUSE + s, name, biome, house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0,
-  })),
-);
-export const NT = TERRITORIES.length; // 42
-export const keepOf = (house: number) => house * TERR_PER_HOUSE;
 
 // ---------------------------------------------------------------------------
 // Hex valley generation (deterministic).
 // Pointy-top axial hexes of size 1. World coords: x east, y north.
 
 export interface Hex { q: number; r: number; x: number; y: number; t: number; rad: number }
-export interface WorldMap {
+
+export interface Geo {
+  /** Player count this map was built for. */
+  n: number;
+  perHouse: number;
+  rows: number[];
+  territories: Territory[];
+  nt: number;
   hexes: Hex[];
   adj: number[][];
+  dist: number[][];
   centroid: [number, number][];
+  /** Reinforcement bonus for holding every territory of each quadrant. */
+  quadBonus: number[];
+  /** Inner-row territories, where assaults on Olympus launch from. */
+  foot: number[];
   R_IN: number;
   R_OUT: number;
+  keepOf(house: number): number;
 }
 
 const SQ3 = Math.sqrt(3);
 const W = (Math.PI * 2) / 7;
 const THETA0 = -W;
-export const R_IN = 7.5;
-export const R_OUT = 25;
+const HEX_AREA = (3 * SQ3) / 2;
+const CELL_AREA = 14 * HEX_AREA; // target territory size, in world units²
+const CHASM_HALF = 1.45;
+const PASS_HALF = 1.3;
 const HEX_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]];
+
+// Where the chasms between quadrants can be crossed: land bridges on these rows,
+// keyed by the House on the counter-clockwise side of the border.
+const PASSES: Record<number, number[]> = { 1: [0, 2], 3: [2], 4: [0], 6: [0, 2] };
 
 function hash(x: number, y: number) {
   let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
@@ -103,89 +150,111 @@ export function vnoise(x: number, y: number) {
   return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
 }
 
-// Where the chasms between quadrants can be crossed, as radius bands.
-const PASSES: Record<string, [number, number][]> = {
-  '0-1': [[9.2, 11.6], [20, 22.6]],
-  '1-2': [[22.2, 24.5]],
-  '2-3': [[9.4, 12.2]],
-  '0-3': [[9.2, 11.6], [20, 22.6]],
-};
-
-// Seed layout per House slot: [radius, fraction of the House's angular width].
-const SLOTS: [number, number][] = [
-  [16.4, -0.21], [11.4, -0.27], [11.4, 0.27], [16.4, 0.28], [21.4, -0.27], [21.4, 0.27],
-];
-
-function buildMap(): WorldMap {
-  const seeds: { x: number; y: number; t: number; q: number }[] = [];
-  for (let h = 0; h < 7; h++) {
-    const mirror = h % 2 ? -1 : 1;
-    const phi = THETA0 + (h + 0.5) * W;
-    SLOTS.forEach(([r, f], s) => {
-      const ff = s === 0 || s === 3 ? f * mirror : f;
-      const a = phi + ff * W;
-      seeds.push({ x: r * Math.cos(a), y: r * Math.sin(a), t: h * 6 + s, q: HOUSES[h].quadrant });
-    });
+/** Radial bands so every cell has about CELL_AREA, with R_IN picked to keep cells roughly square. */
+function bands(rows: number[]) {
+  const build = (rin: number) => {
+    const edges = [rin];
+    let cost = 0;
+    for (const c of rows) {
+      const r = edges[edges.length - 1];
+      const T = -r + Math.sqrt(r * r + (2 * CELL_AREA * c) / W);
+      const width = ((r + T / 2) * W) / c;
+      cost += Math.log(width / T) ** 2;
+      edges.push(r + T);
+    }
+    return { edges, cost };
+  };
+  let best = build(14);
+  for (let rin = 14; rin <= 34; rin += 0.25) {
+    const b = build(rin);
+    if (b.cost < best.cost) best = b;
   }
+  return best.edges;
+}
 
-  const cells = new Map<string, Hex & { quad: number }>();
+function buildGeo(n: number): Geo {
+  const rows = LAYOUTS[n];
+  const K = rows.reduce((a, b) => a + b, 0);
+  const keepRow = 1, keepCol = (rows[1] - 1) / 2;
+
+  // (row, col) → slot, nearest-the-Keep first.
+  const cellsOfHouse: { row: number; col: number; d: number }[] = [];
+  rows.forEach((c, row) => {
+    for (let col = 0; col < c; col++) {
+      const f = (col + 0.5) / c;
+      cellsOfHouse.push({ row, col, d: Math.hypot(row - keepRow, (f - 0.5) * 4) + row * 0.01 });
+    }
+  });
+  cellsOfHouse.sort((a, b) => a.d - b.d);
+  const slotOf = new Map(cellsOfHouse.map((c, s) => [`${c.row},${c.col}`, s]));
+  if (slotOf.get(`${keepRow},${keepCol}`) !== 0) throw new Error('keep must be slot 0');
+
+  const territories: Territory[] = [];
+  for (let h = 0; h < 7; h++) {
+    for (let s = 0; s < K; s++) {
+      const { row, col } = cellsOfHouse[s];
+      const [name, biome] = NAMES[h][s];
+      territories.push({ id: h * K + s, name, biome, house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0, row, col, foot: row === 0 });
+    }
+  }
+  const nt = territories.length;
+  const edges = bands(rows);
+  const R_IN = edges[0], R_OUT = edges[edges.length - 1];
+  // Column boundaries (as fractions of the House's angular width). The Keep's column is kept
+  // narrow so it can't brush the corner of an edge cell in the rows above and below.
+  const colCuts = rows.map((c, row) => {
+    if (row !== keepRow) return Array.from({ length: c + 1 }, (_, i) => i / c);
+    const kw = 0.075, side = keepCol;
+    const left = Array.from({ length: side + 1 }, (_, i) => (i / side) * (0.5 - kw));
+    const right = Array.from({ length: side + 1 }, (_, i) => 0.5 + kw + (i / side) * (0.5 - kw));
+    return [...left, ...right];
+  });
+
+  const cells = new Map<string, Hex & { house: number }>();
   const key = (q: number, r: number) => q + ',' + r;
-  for (let q = -20; q <= 20; q++) {
-    for (let r = -20; r <= 20; r++) {
+  const span = Math.ceil(R_OUT / 1.4) + 3;
+  for (let q = -span; q <= span; q++) {
+    for (let r = -span; r <= span; r++) {
       const x = SQ3 * (q + r / 2), y = 1.5 * r;
       const rad = Math.hypot(x, y);
-      const edge = (vnoise(x * 0.18 + 40, y * 0.18) - 0.5) * 2.4;
+      const outer = (vnoise(x * 0.18 + 40, y * 0.18) - 0.5) * 2.4;
       const inner = (vnoise(x * 0.3, y * 0.3 + 90) - 0.5) * 1.6;
-      if (rad > R_OUT + edge || rad < R_IN + inner) continue;
-      let ang = Math.atan2(y, x) + (vnoise(x * 0.12 + 7, y * 0.12 - 3) - 0.5) * 0.3;
+      if (rad > R_OUT + outer || rad < R_IN + inner) continue;
+      // Wobble the grid lines so borders look organic.
+      const nA = (vnoise(x * 0.2 + 7, y * 0.2 - 3) - 0.5) * 1.7;
+      const nR = (vnoise(x * 0.24 - 11, y * 0.24 + 5) - 0.5) * 1.8;
+      const ang = Math.atan2(y, x) + nA / rad;
       let rel = ang - THETA0;
       rel = ((rel % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
       const house = Math.floor(rel / W) % 7;
-      const quad = HOUSES[house].quadrant;
-      cells.set(key(q, r), { q, r, x, y, t: -1, rad, quad });
-    }
-  }
+      const frac = rel / W - Math.floor(rel / W);
 
-  // Carve chasms between quadrants, except inside the passes.
-  const carve: string[] = [];
-  for (const [k, c] of cells) {
-    for (const [dq, dr] of HEX_DIRS) {
-      const n = cells.get(key(c.q + dq, c.r + dr));
-      if (!n || n.quad === c.quad) continue;
-      const a = Math.min(c.quad, n.quad), b = Math.max(c.quad, n.quad);
-      if (c.quad !== a) continue; // carve only the lower-index side
-      const passes = PASSES[a + '-' + b] || [];
-      if (!passes.some(([lo, hi]) => c.rad >= lo && c.rad <= hi)) { carve.push(k); break; }
-    }
-  }
-  for (const k of carve) cells.delete(k);
-
-  // Weighted Voronoi: nudge seed weights so territories in a quadrant end up similar in size.
-  const weight = new Array(NT).fill(0);
-  const quadCells = [0, 1, 2, 3].map((q) => [...cells.values()].filter((c) => c.quad === q).length);
-  for (let iter = 0; iter < 40; iter++) {
-    const size = new Array(NT).fill(0);
-    for (const c of cells.values()) {
-      let best = -1, bd = Infinity;
-      for (const s of seeds) {
-        if (s.q !== c.quad) continue;
-        const d = Math.hypot(s.x - c.x, s.y - c.y) + vnoise(c.x * 0.35 + s.t * 3.1, c.y * 0.35 - s.t) * 2.2 - weight[s.t];
-        if (d < bd) { bd = d; best = s.t; }
+      // Chasms between quadrants, except on the land bridges.
+      const toCw = frac * W * rad, toCcw = (1 - frac) * W * rad;
+      const nbr = toCw < toCcw ? (house + 6) % 7 : (house + 1) % 7;
+      if (HOUSES[nbr].quadrant !== HOUSES[house].quadrant && Math.min(toCw, toCcw) < CHASM_HALF) {
+        const lowSide = toCw < toCcw ? nbr : house; // PASSES is keyed by the ccw-most House
+        const onBridge = (PASSES[lowSide] ?? []).some((row) => Math.abs(rad - (edges[row] + edges[row + 1]) / 2) < PASS_HALF);
+        if (!onBridge) continue;
       }
-      c.t = best;
-      size[best]++;
-    }
-    for (let t = 0; t < NT; t++) {
-      const q = HOUSES[Math.floor(t / 6)].quadrant;
-      const target = quadCells[q] / (QUADRANTS[q].houses.length * 6);
-      weight[t] += 0.12 * (target - size[t]) / Math.sqrt(target);
+
+      const rr = rad + nR;
+      let row = 0;
+      while (row < rows.length - 1 && rr > edges[row + 1]) row++;
+      const cuts = colCuts[row];
+      let col = 0;
+      while (col < rows[row] - 1 && frac > cuts[col + 1]) col++;
+      const t = house * K + slotOf.get(`${row},${col}`)!;
+      cells.set(key(q, r), { q, r, x, y, t, rad, house });
     }
   }
 
   // Keep only the largest connected blob of each territory; hand orphans to neighbours.
   for (let pass = 0; pass < 3; pass++) {
-    for (let t = 0; t < NT; t++) {
-      const mine = [...cells.values()].filter((c) => c.t === t);
+    const byT: (Hex & { house: number })[][] = Array.from({ length: nt }, () => []);
+    for (const c of cells.values()) byT[c.t].push(c);
+    for (let t = 0; t < nt; t++) {
+      const mine = byT[t];
       const seen = new Set<string>();
       const comps: (typeof mine)[] = [];
       for (const c of mine) {
@@ -199,8 +268,8 @@ function buildMap(): WorldMap {
           comp.push(cur);
           for (const [dq, dr] of HEX_DIRS) {
             const nk = key(cur.q + dq, cur.r + dr);
-            const n = cells.get(nk);
-            if (n && n.t === t && !seen.has(nk)) { seen.add(nk); stack.push(n); }
+            const nb = cells.get(nk);
+            if (nb && nb.t === t && !seen.has(nk)) { seen.add(nk); stack.push(nb); }
           }
         }
         comps.push(comp);
@@ -210,8 +279,8 @@ function buildMap(): WorldMap {
         for (const c of comp) {
           const counts = new Map<number, number>();
           for (const [dq, dr] of HEX_DIRS) {
-            const n = cells.get(key(c.q + dq, c.r + dr));
-            if (n && n.t !== t) counts.set(n.t, (counts.get(n.t) || 0) + 1);
+            const nb = cells.get(key(c.q + dq, c.r + dr));
+            if (nb && nb.t !== t && nb.house === c.house) counts.set(nb.t, (counts.get(nb.t) || 0) + 1);
           }
           if (counts.size === 0) { cells.delete(key(c.q, c.r)); continue; }
           c.t = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
@@ -221,36 +290,47 @@ function buildMap(): WorldMap {
   }
 
   const hexes: Hex[] = [...cells.values()].map(({ q, r, x, y, t, rad }) => ({ q, r, x, y, t, rad }));
-  const adjSet: Set<number>[] = Array.from({ length: NT }, () => new Set());
+  const adjSet: Set<number>[] = Array.from({ length: nt }, () => new Set());
   for (const c of cells.values()) {
     for (const [dq, dr] of HEX_DIRS) {
-      const n = cells.get(key(c.q + dq, c.r + dr));
-      if (n && n.t !== c.t) { adjSet[c.t].add(n.t); adjSet[n.t].add(c.t); }
+      const nb = cells.get(key(c.q + dq, c.r + dr));
+      if (nb && nb.t !== c.t) { adjSet[c.t].add(nb.t); adjSet[nb.t].add(c.t); }
     }
   }
-  const centroid: [number, number][] = Array.from({ length: NT }, (_, t) => {
-    const hs = hexes.filter((h) => h.t === t);
+  const byT: Hex[][] = Array.from({ length: nt }, () => []);
+  for (const h of hexes) byT[h.t].push(h);
+  const centroid: [number, number][] = byT.map((hs) => {
     const cx = hs.reduce((a, h) => a + h.x, 0) / hs.length;
     const cy = hs.reduce((a, h) => a + h.y, 0) / hs.length;
     // snap to the territory's hex nearest its centroid, so tokens never sit over a gap
     const best = hs.reduce((b, h) => (Math.hypot(h.x - cx, h.y - cy) < Math.hypot(b.x - cx, b.y - cy) ? h : b), hs[0]);
     return [best.x, best.y];
   });
-  return { hexes, adj: adjSet.map((s) => [...s].sort((a, b) => a - b)), centroid, R_IN, R_OUT };
+  const adj = adjSet.map((s) => [...s].sort((a, b) => a - b));
+  const dist = adj.map((_, from) => {
+    const d = new Array(nt).fill(Infinity);
+    d[from] = 0;
+    const q = [from];
+    while (q.length) {
+      const c = q.shift()!;
+      for (const x of adj[c]) if (d[x] === Infinity) { d[x] = d[c] + 1; q.push(x); }
+    }
+    return d;
+  });
+  // Two-House quadrants pay about one army per two territories; the walled-in Frostfangs less.
+  const quadBonus = QUADRANTS.map((q) => (q.houses.length > 1 ? Math.round(K * 0.55) : Math.round(K * 0.3)));
+  return {
+    n, perHouse: K, rows, territories, nt, hexes, adj, dist, centroid, quadBonus,
+    foot: territories.filter((t) => t.foot).map((t) => t.id),
+    R_IN, R_OUT, keepOf: (h: number) => h * K,
+  };
 }
 
-export const MAP: WorldMap = buildMap();
-export const ADJ = MAP.adj;
-
-/** BFS distances from `from` across the whole map (ignores ownership). */
-export function distances(from: number): number[] {
-  const d = new Array(NT).fill(Infinity);
-  d[from] = 0;
-  const q = [from];
-  while (q.length) {
-    const c = q.shift()!;
-    for (const n of ADJ[c]) if (d[n] === Infinity) { d[n] = d[c] + 1; q.push(n); }
-  }
-  return d;
+const CACHE = new Map<number, Geo>();
+/** The valley for a game of `n` players (built once, then cached). */
+export function geoFor(n: number): Geo {
+  const k = Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, n));
+  let g = CACHE.get(k);
+  if (!g) { g = buildGeo(k); CACHE.set(k, g); }
+  return g;
 }
-export const DIST: number[][] = Array.from({ length: NT }, (_, i) => distances(i));

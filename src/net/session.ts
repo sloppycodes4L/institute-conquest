@@ -2,7 +2,7 @@
 // browser, or an online game where the Supabase edge function is the authority.
 
 import { RealtimeClient } from '@supabase/realtime-js';
-import { act, actingSeat, createGame, viewFor, type Action, type GameState } from '../engine/engine.ts';
+import { act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameState } from '../engine/engine.ts';
 import { botAction } from '../engine/bot.ts';
 
 export const SUPABASE_URL = 'https://hflggavblnedfgyjqbsr.supabase.co';
@@ -85,16 +85,15 @@ export class LocalSession implements Session {
     clearTimeout(this.timer);
     const s = this.s;
     if (s.phase === 'over' || this.handoff != null) return;
-    const acting = actingSeat(s);
-    if (acting < 0 || !s.players[acting].ai) {
-      // Nobody human needs to press "timeout" locally: resolve instantly if the defender is AI.
-      return;
-    }
-    const delay = s.phase === 'attack' ? 650 : s.phase === 'passage' ? 300 : 420;
+    // AI seats answer invitations and siege votes even when it isn't their turn.
+    const duty = aiDuty(s);
+    const acting = duty >= 0 ? duty : actingSeat(s);
+    if (acting < 0 || !s.players[acting].ai) return;
+    const delay = duty >= 0 ? 900 : s.phase === 'attack' ? 650 : s.phase === 'passage' ? 300 : 420;
     this.timer = window.setTimeout(() => {
       const a = botAction(viewFor(s, acting), acting);
       let r = act(s, acting, a, { rng: secureRng, now: Date.now() });
-      if (!r.ok) {
+      if (!r.ok && duty < 0) {
         const fb: Action = s.reaction ? { type: 'react', card: null } : s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' };
         r = act(s, acting, fb, { rng: secureRng, now: Date.now() });
       }

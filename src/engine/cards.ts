@@ -1,4 +1,5 @@
-// The deck: Character cards (Passive when General, Active when played) and Proctor cards.
+// The deck: Character cards (Passive when General, Active when played), Proctor cards,
+// and siege-only Relics.
 // Canon Houses follow Red Rising (Book One); names marked `oc` are original fan characters
 // filling Houses the book barely names.
 
@@ -31,14 +32,19 @@ export type ActiveKind =
   | 'draw'        // draw n cards (locked until your next turn)
   | 'harvest'     // +1 army per territory you hold in the Lowlands, +n
   | 'fury'        // all your attack dice +1 for the rest of the turn
-  | 'counter';    // REACTION: +n phantom defenders and +1 to defense dice vs a Standard attack
+  | 'counter'     // REACTION: +n phantom defenders and +1 to defense dice vs a Standard attack
+  // Relics: only playable during a Siege on Olympus.
+  | 'siegeWalls'  // your next n assaults on Olympus ignore its walls
+  | 'siegeCut'    // kill n of Olympus's defenders
+  | 'siegeLevy'   // +n armies to place this turn
+  | 'siegeMoon';  // Olympus can't smite on your next turn; +1 to your highest attack die vs Olympus this turn
 
 export interface CardDef {
   id: string;
   name: string;
   title: string;
   house: number;
-  kind: 'character' | 'proctor';
+  kind: 'character' | 'proctor' | 'relic';
   oc?: boolean;
   passive?: { kind: PassiveKind; n: number; text: string };
   active: { kind: ActiveKind; n: number; bonus: number; text: string };
@@ -156,6 +162,15 @@ const PROCTORS: [string, string, HouseId, [ActiveKind, number, string], string][
   ['p-pluto', 'Proctor Pluto', 'pluto', ['counter', 6, 'Rigged Underworld (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'], 'The dead keep excellent secrets.'],
 ];
 
+// Relics: stolen war-gear that only matters once the valley turns on Olympus itself.
+const RELICS: [string, string, string, HouseId, [ActiveKind, number, number, string], string][] = [
+  ['r-gravboots', 'Stolen GravBoots', 'Relic of the Siege', 'mars', ['siegeWalls', 3, 2, 'SIEGE ONLY: your next {n} assaults on Olympus fly over its walls (no wall bonus).'], 'Fitchner left them lying around. On purpose, probably.'],
+  ['r-secrets', "The Proctors' Secrets", 'Relic of the Siege', 'minerva', ['siegeCut', 8, 3, 'SIEGE ONLY: {n} of Olympus\'s defenders are cut down in their beds.'], 'Every god has a back door. Owls find them.'],
+  ['r-levy', 'Levy of the Valley', 'Relic of the Siege', 'ceres', ['siegeLevy', 10, 3, 'SIEGE ONLY: +{n} armies this turn.'], 'Every farmboy with a pitchfork, marching uphill.'],
+  ['r-moon', "Hunter's Moon", 'Relic of the Siege', 'diana', ['siegeMoon', 0, 0, 'SIEGE ONLY: Olympus cannot smite on your next turn, and +1 to your highest attack die vs Olympus this turn.'], 'Dark enough to climb. Bright enough to aim.'],
+  ['r-bolt', 'Pulsefist of Jupiter', 'Relic of the Siege', 'jupiter', ['siegeCut', 5, 2, 'SIEGE ONLY: {n} of Olympus\'s defenders are blasted off the walls.'], 'Point the loud end at the gods.'],
+];
+
 export const CARDS: CardDef[] = [
   ...RAW.map(([id, name, title, house, p, a, quote, oc]): CardDef => ({
     id, name, title, house: HOUSE_INDEX[house], kind: 'character', oc,
@@ -167,7 +182,24 @@ export const CARDS: CardDef[] = [
     id, name, title: `Proctor of House ${house[0].toUpperCase() + house.slice(1)}`, house: HOUSE_INDEX[house], kind: 'proctor',
     active: { kind: a[0], n: a[1], bonus: 0, text: a[2] }, quote,
   })),
+  ...RELICS.map(([id, name, title, house, a, quote]): CardDef => ({
+    id, name, title, house: HOUSE_INDEX[house], kind: 'relic',
+    active: { kind: a[0], n: a[1], bonus: a[2], text: a[3] }, quote,
+  })),
 ];
+export const isSiegeCard = (c: CardDef) => c.active.kind.startsWith('siege');
+
+/** When the valley besieges Olympus, the Proctors of the attacking Houses become its Generals. */
+export interface OlympusPower { start: number; regen: number; smite: number; defHigh: number; text: string }
+export const OLYMPUS_POWER: Record<string, OlympusPower> = {
+  'p-mars': { start: 0, regen: 2, smite: 0, defHigh: 0, text: 'Interesting Children: +2 defenders every allied turn.' },
+  'p-apollo': { start: 0, regen: 0, smite: 0, defHigh: 1, text: 'Rigged Game: +1 to Olympus\'s highest defense die.' },
+  'p-jupiter': { start: 8, regen: 0, smite: 0, defHigh: 0, text: 'Supply Drop: +8 defenders when the siege begins.' },
+  'p-minerva': { start: 0, regen: 0, smite: 2, defHigh: 0, text: 'Counsel of the Owl: smites 2 more soldiers at the Foot every allied turn.' },
+  'p-diana': { start: 0, regen: 0, smite: 3, defHigh: 0, text: 'The Wild Hunt: smites 3 more soldiers at the Foot every allied turn.' },
+  'p-ceres': { start: 5, regen: 1, smite: 0, defHigh: 0, text: 'The Great Harvest: +5 defenders at the start, +1 every allied turn.' },
+  'p-pluto': { start: 6, regen: 0, smite: 1, defHigh: 0, text: 'Rigged Underworld: +6 defenders at the start, smites 1 more every allied turn.' },
+};
 export const CARD: Record<string, CardDef> = Object.fromEntries(CARDS.map((c) => [c.id, c]));
 export const CHARACTER_IDS = CARDS.filter((c) => c.kind === 'character').map((c) => c.id);
 export const ALL_CARD_IDS = CARDS.map((c) => c.id);

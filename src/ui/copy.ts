@@ -1,9 +1,12 @@
 // All the words. Original fan copy in the voice of the Institute: brutal, profane,
 // and full of the setting's own slurs (Pixie, slag, lowColor, gorydamn, bloodydamn...).
 
-import { HOUSES, TERRITORIES } from '../engine/data.ts';
+import { HOUSES, geoFor } from '../engine/data.ts';
 import { CARD } from '../engine/cards.ts';
-import type { GameEvent, GameState } from '../engine/engine.ts';
+import { geo, type GameEvent, type GameState } from '../engine/engine.ts';
+
+// Territory names come from the current game's valley (it grows with the player count).
+let T = geoFor(4).territories;
 
 const pick = <T>(a: T[], seed: number) => a[Math.abs(seed) % a.length];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -15,7 +18,7 @@ export function who(s: GameState, seat: number | null | undefined) {
   return `<b style="color:${h.color}">${esc(p.name)}</b>`;
 }
 export const house = (h: number) => `<b style="color:${HOUSES[h].color}">House ${HOUSES[h].name}</b>`;
-export const terr = (t: number) => `<i>${esc(TERRITORIES[t].name)}</i>`;
+export const terr = (t: number) => `<i>${esc(T[t]?.name ?? 'Olympus')}</i>`;
 const card = (id: string) => `<b class="cardref">${esc(CARD[id]?.name ?? id)}</b>`;
 
 export const TAGLINES = [
@@ -40,9 +43,75 @@ export function passageLine(general: string, killed: string, seed: number) {
   ], seed);
 }
 
+const genName = (s: GameState, seat: number) => {
+  const g = s.players[seat]?.general;
+  return g && g !== '?' ? CARD[g]?.name ?? 'their General' : 'their General';
+};
+
+/** The betrayer's General, explaining themselves. Sometimes badly. */
+export function betrayalLine(s: GameState, e: GameEvent): { speaker: string; line: string } {
+  const g = genName(s, e.seat), vg = genName(s, e.victim);
+  const vh = HOUSES[s.players[e.victim].house].name;
+  const lines = [
+    `Alliance? I thought we were just holding hands.`,
+    `Nothing personal, ${vg}. Actually, it's a little personal.`,
+    `I said I'd watch your back. I'm watching it right now. It's wide open.`,
+    `Oaths are for lowColors and poets.`,
+    `The Proctors gave me a knife. Was I supposed to NOT use it?`,
+    `We had a good run, House ${vh}. Three turns. Beautiful. Tragic.`,
+    `Break bread, break oaths. It's called efficiency.`,
+    `I'm not betraying you, ${vg}. I'm promoting you to enemy.`,
+    `In my defense, you looked very stabbable.`,
+    `Did you really think a ring and a handshake would stop me? Adorable.`,
+    `Friendship is a luxury. I'm on a budget.`,
+    `Tell Fitchner I said hi. He'll find this interesting.`,
+  ];
+  return { speaker: g, line: pick(lines, e.quip ?? e.id) };
+}
+
+/** Two Generals shaking on it. */
+export function allianceLine(s: GameState, e: GameEvent): string {
+  const a = genName(s, e.by), b = genName(s, e.joined === e.by ? e.members.find((m: number) => m !== e.by) : e.joined);
+  return pick([
+    `${a} and ${b} clasp forearms over a dead man's campfire.`,
+    `${a} offers ${b} half a stolen ration. That's basically marriage in the Institute.`,
+    `${b} spits in their palm. ${a} regrets the handshake immediately, but it's done.`,
+    `${a} and ${b} agree to kill everyone else first. Then, presumably, each other.`,
+  ], e.quip ?? e.id);
+}
+
 export function describe(s: GameState, e: GameEvent): string {
+  T = geo(s).territories;
   const sd = e.id * 7919;
+  const houses = (seats: number[]) => seats.map((x) => house(s.players[x].house)).join(' + ');
   switch (e.k) {
+    case 'unplace': return '';
+    case 'undoDraft': return `${who(s, e.seat)} thinks better of it and recalls ${e.n} soldiers.`;
+    case 'warBegun': return `⚔ ${who(s, e.seat)} draws first blood from ${who(s, e.def)}. The Houses may now whisper to each other. Quietly.`;
+    case 'invite': return e.from === s.me?.seat
+      ? `📜 You send a quiet ${e.pub ? 'public' : 'secret'} alliance offer to ${who(s, e.to)}.`
+      : `📜 ${who(s, e.from)} whispers an offer of ${e.pub ? 'open' : 'SECRET'} alliance.`;
+    case 'inviteDeclined': return `📜 ${who(s, e.to)} burns ${who(s, e.from)}'s letter.`;
+    case 'inviteVoid': return `📜 ${who(s, e.from)} and ${who(s, e.to)} are each sworn to other alliances. The offer is void.`;
+    case 'inviteExpired': return `📜 ${who(s, e.from)}'s offer to ${who(s, e.to)} goes stale.`;
+    case 'allianceFormed': return `${e.pub ? '🤝' : '🤫'} ${e.pub ? 'ALLIANCE' : 'SECRET PACT'}: ${houses(e.members)}. ${allianceLine(s, e)} Their Generals' Passives are now shared.`;
+    case 'allianceRevealed': return `🤝 ${who(s, e.seat)} reveals it to the valley: ${houses(e.members)} have been allies all along.`;
+    case 'allianceEnds': return `The alliance of ${houses(e.members)} falls apart. Too many funerals.`;
+    case 'betrayal': {
+      const b = betrayalLine(s, e);
+      return `🗡 BETRAYAL! ${who(s, e.seat)} turns on ${who(s, e.victim)}.${e.wasPublic ? '' : ' (A secret pact, now very public.)'} ${esc(b.speaker)}: <i>"${esc(b.line)}"</i> The alliance is dead.`;
+    }
+    case 'siegeProposed': return `🏛 ${who(s, e.seat)} calls for a SIEGE ON OLYMPUS. The alliance votes.`;
+    case 'siegeVote': return `🏛 ${who(s, e.seat)} votes ${e.yes ? '<b>STORM IT</b>' : '<b>not yet</b>'}.`;
+    case 'siegeRejected': return `🏛 The alliance loses its nerve. Olympus will wait.`;
+    case 'siegeBegins': return `🏛 TO OLYMPUS! ${houses(e.members)} march on the Proctors: <b>${e.garrison}</b> defenders behind the walls, commanded by ${e.proctors.map((p: string) => card(p)).join(', ')}. ${e.turns} allied turns to break it.`;
+    case 'olympusTurn': return `🏛 Olympus regroups (+${e.regen})${e.killed ? ` and smites ${e.killed} of ${who(s, e.seat)}'s soldiers at the Foot` : ''}. <b>${e.garrison}</b> hold the walls; ${e.turnsLeft} allied turns left.`;
+    case 'assault': return e.won
+      ? `🏛 ${who(s, e.seat)} storms the last wall from ${terr(e.from)}!`
+      : `🏛 ${who(s, e.seat)} assaults Olympus from ${terr(e.from)}${e.blitz ? ' (blitz)' : ''}${e.walls ? '' : ' over the walls'}: ${e.aLost} lost, ${e.dLost} Proctors' soldiers dead. <b>${e.garrison}</b> remain.`;
+    case 'siegeFailed': return `🏛 The siege FAILS with ${e.garrison} still on the walls. The Proctors laugh, and the alliance of ${houses(e.members)} shatters.`;
+    case 'siegeCollapsed': return `🏛 With the alliance broken, the siege of Olympus collapses.`;
+    case 'olympusFalls': return `♛ OLYMPUS FALLS to ${houses(e.members)}. ${who(s, e.seat)} struck the last blow. The Proctors kneel.`;
     case 'sorted':
       return `${who(s, e.seat)} is sorted into ${house(e.house)}, ${HOUSES[e.house].epithet}.`;
     case 'chosen':
@@ -68,6 +137,7 @@ export function describe(s: GameState, e: GameEvent): string {
       if (c.active.kind === 'raid') tail = ` ${e.targets?.length ?? 0} enemy camps bleed.`;
       if (c.active.kind === 'moveStd') tail = ` The Standard now flies over ${terr(e.t)}.`;
       if (c.active.kind === 'draw') tail = ` Drew ${e.drew}.`;
+      if (c.active.kind === 'siegeCut') tail = ` ${e.killed} of Olympus's defenders never wake up.`;
       return `${who(s, e.seat)} plays ${card(e.card)}: <i>${esc(c.active.text.replace(/\{n\}/g, String(e.n)))}</i>${tail}`;
     }
     case 'discardProctor': return `${who(s, e.seat)} spits on ${card(e.card)} and draws ${e.drew} cards. A Proctor you don't own is a Proctor you don't need.`;
@@ -124,10 +194,25 @@ export function describe(s: GameState, e: GameEvent): string {
 }
 
 /** Big banner headline for dramatic events. */
-export function headline(s: GameState, e: GameEvent): { title: string; sub: string; color: string } | null {
+export function headline(s: GameState, e: GameEvent): { title: string; sub: string; color: string; long?: boolean } | null {
   const hc = (seat: number) => (seat >= 0 ? HOUSES[s.players[seat].house].color : '#aaa');
+  T = geo(s).territories;
+  const names = (seats: number[]) => seats.map((x) => HOUSES[s.players[x].house].name).join(' & ');
   switch (e.k) {
-    case 'stdRaised': return { title: 'THE STANDARD IS RAISED', sub: `${s.players[e.seat].name} charges ${TERRITORIES[e.to].name}`, color: hc(e.seat) };
+    case 'warBegun': return { title: 'FIRST BLOOD', sub: `${s.players[e.seat].name} attacks ${s.players[e.def].name}. Alliances may now be whispered.`, color: hc(e.seat) };
+    case 'allianceFormed': return e.pub
+      ? { title: 'AN ALLIANCE IS FORGED', sub: `Houses ${names(e.members)} now fight as one. ${allianceLine(s, e)}`, color: hc(e.by), long: true }
+      : { title: 'A SECRET PACT', sub: `Houses ${names(e.members)}, sworn in the dark. Nobody else knows.`, color: '#9c7a36', long: true };
+    case 'allianceRevealed': return { title: 'THE PACT IS REVEALED', sub: `Houses ${names(e.members)} were allies all along`, color: hc(e.seat) };
+    case 'betrayal': {
+      const b = betrayalLine(s, e);
+      return { title: 'BETRAYAL', sub: `${b.speaker}: "${b.line}"`, color: '#e0262c', long: true };
+    }
+    case 'siegeProposed': return { title: 'A SIEGE IS CALLED', sub: `${s.players[e.seat].name} wants to storm Olympus. Vote.`, color: '#f3d27a' };
+    case 'siegeBegins': return { title: 'TO OLYMPUS!', sub: `${e.garrison} defenders. ${e.turns} allied turns. No second chances.`, color: '#f3d27a', long: true };
+    case 'siegeFailed': return { title: 'THE PROCTORS LAUGH', sub: 'The siege failed, and the alliance shatters', color: '#888', long: true };
+    case 'olympusFalls': return { title: 'OLYMPUS FALLS', sub: `Houses ${names(e.members)} rule the Institute together`, color: '#f3d27a', long: true };
+    case 'stdRaised': return { title: 'THE STANDARD IS RAISED', sub: `${s.players[e.seat].name} charges ${T[e.to].name}`, color: hc(e.seat) };
     case 'counter': return { title: 'AMBUSH', sub: `${CARD[e.card].name} springs the trap`, color: hc(e.seat) };
     case 'dominated': return e.captor >= 0
       ? { title: `HOUSE ${HOUSES[s.players[e.victim].house].name.toUpperCase()} KNEELS`, sub: `${s.players[e.victim].name} is dominated by ${s.players[e.captor].name}`, color: hc(e.captor) }
@@ -142,20 +227,39 @@ export const ERRORS_FLAVOR = ['Nope.', 'Gorydamn no.', 'The Proctors laugh at yo
 
 export const RULES_HTML = `
 <h2>How to Conquer the Institute</h2>
-<p>Every House gets a castle, a Standard, and a valley full of children with swords. Make one House out of many.</p>
+<p>Every House gets a castle, a Standard, and a slice of the valley full of children with swords. Make one House out of many.
+Up to <b>7 players</b>, one per House. The valley grows with the number of players.</p>
+<h3>Controls</h3>
+<p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
+<b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
 <h3>Winning</h3>
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
-A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.</p>
+A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.
+Or, with allies, <b>take House Olympus</b> (below) and share the win.</p>
 <h3>The Passage</h3>
-<p>You're dealt two Characters. Keep one as your <b>General</b>; the other dies. A General's <b>Passive</b> is always on.
-If the General is from your own House in the books, the Passive gets <b>+1</b>.</p>
+<p>You're dealt two Characters. Keep one as your <b>General</b> (your Primus); the other dies. A General's <b>Passive</b> is always on.
+If the card's House (its suit) matches your House, the Passive gets <b>+1</b>. Your General is always shown bottom-left; every rival Primus is in the roster.</p>
+<h3>The valley</h3>
+<p>You start holding your whole House slice, with your Keep in the middle, walled in by your own land. You can attack <b>any territory touching yours</b>.
+The quadrants are split by burning chasms you can only cross on the land bridges.</p>
 <h3>Your turn: Draft, Attack, Fortify</h3>
 <p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + quadrant bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your General.
+Click a territory to add armies; use <b>−</b>/<b>+</b> to adjust it, or <b>Undo</b> to take back everything you placed this Draft (Shift-click also removes).
 Play cards now: trade any <b>3 for 10 armies</b>, or play one for its <b>Active</b>. Cards of a House you own get a bonus.
 A Proctor card only works if you own its House; otherwise discard it for 2 cards (locked until next turn). Holding 5+ cards? Trade before you attack.</p>
-<p><b>Attack.</b> Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
+<p><b>Attack.</b> Pick one of your territories and every target it can hit lights up. Attack as often as you like.
+Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
 <b>Keeps</b> are fortresses: +1 to every defense die. Conquer at least one territory to earn a card.</p>
 <p><b>Fortify.</b> One army move through your connected land, plus one Standard move.</p>
+<h3>Alliances</h3>
+<p>Once one House has attacked another, Houses can send each other <b>quiet invitations</b> (the 🤝 button). An alliance is either <b>Public</b> (announced to everyone) or <b>Secret</b> (only its members know).
+Alliances change nothing except this: <b>allies share their Generals' Passives</b>. If an ally attacks an ally, the whole alliance is cancelled on the spot.</p>
+<h3>The Siege on Olympus</h3>
+<p>When an alliance is all that is left (every rival House dominated and every neutral Standard taken), any member can call a <b>Siege on Olympus</b>. Majority vote decides.
+Olympus is defended by the <b>Proctors of the attacking Houses</b>, and gets all of their powers. It holds about 11 soldiers per territory of a House slice (143 on the 4-player map), fights behind walls (+1 to its defense dice), regrows every allied turn, and smites troops at its Foot.
+Assault it from the <b>Foot of Olympus</b> (the inner ring, next to the chasm) with the normal dice; everyone rolls their own assaults and plays their own cards, including <b>Relics</b> that only work in the siege.
+Each ally gets 3 turns. Break it and the whole alliance wins. Fail and the Proctors laugh, and the alliance shatters.
+It usually takes three Houses, or two very large ones, so mass your armies at the Foot before you vote.</p>
 <h3>The Standard: high risk, high reward</h3>
 <p>From the territory holding your Standard you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your General's Active fires for free once per turn.
 There is <b>no retreat</b>. Win, and the territory is yours <b>and every defender you killed joins you as a slave</b>. Lose, and your Standard is captured: <b>your whole House goes to the defender</b>.</p>
@@ -164,5 +268,6 @@ Defenders holding a <b>REACTION</b> card get a few seconds to spring an ambush w
 <h3>Neutral Houses</h3>
 <p>Houses nobody plays hold their land as neutral garrisons. Take a neutral Keep to seize its Standard: you <b>own that House</b> (its Proctor, its card bonuses) and its remaining garrisons switch to you.</p>
 <h3>Quadrants</h3>
-<p>The Greatwoods (Apollo, Diana) +5 · The Highlands (Minerva, Mars) +5 · The Argos Lowlands (Jupiter, Ceres) +5 · The Frostfangs (Pluto) +2, and only two ways in.</p>
+<p>Hold a whole quadrant for a bonus that grows with the map: The Greatwoods (Apollo, Diana), The Highlands (Minerva, Mars), The Argos Lowlands (Jupiter, Ceres),
+and The Frostfangs (Pluto), which pays less but has only two ways in.</p>
 `;

@@ -3,8 +3,9 @@
 // then the new version is broadcast on Realtime so clients refetch their private view.
 // The engine lives in ./engine, copied verbatim from src/engine by scripts/sync-fn.mjs.
 
-import { act, actingSeat, createGame, viewFor, type Action, type GameState } from './engine/engine.ts';
+import { act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameState } from './engine/engine.ts';
 import { botAction } from './engine/bot.ts';
+import { MAX_PLAYERS } from './engine/data.ts';
 
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -14,7 +15,6 @@ const CORS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const MAX_PLAYERS = 4;
 
 interface LobbySeat { seat: number; name: string; ai?: boolean }
 interface GameRow { id: string; code: string; status: 'lobby' | 'playing' | 'over'; host_seat: number; lobby: LobbySeat[]; state: GameState | null; version: number }
@@ -78,6 +78,12 @@ async function broadcast(code: string, version: number) {
   } catch { /* clients also poll */ }
 }
 
+/** Wars started before the 7-House valley can't be loaded by the new engine. */
+function current(g: GameRow) {
+  if (g.state && (g.state as any).v !== 2) bad('This war was fought on the old, smaller valley and can no longer be loaded. Start a new one.', 410);
+  return g;
+}
+
 function payload(g: GameRow, seat: number | null) {
   return {
     id: g.id, code: g.code, status: g.status, hostSeat: g.host_seat, lobby: g.lobby, version: g.version, seat,
@@ -85,14 +91,16 @@ function payload(g: GameRow, seat: number | null) {
   };
 }
 
-/** Let AI seats take their moves until a human must act. */
+/** Let AI seats take their moves (and answer invitations and siege votes) until a human must act. */
 function runBots(s: GameState) {
-  for (let i = 0; i < 2000 && s.phase !== 'over'; i++) {
-    const seat = actingSeat(s);
+  for (let i = 0; i < 4000 && s.phase !== 'over'; i++) {
+    const duty = aiDuty(s);
+    const seat = duty >= 0 ? duty : actingSeat(s);
     if (seat < 0 || !s.players[seat]?.ai) return;
     const a = botAction(viewFor(s, seat), seat, rng);
     const r = act(s, seat, a, { rng, now: Date.now() });
     if (!r.ok) {
+      if (duty >= 0) return;
       const fb: Action = s.reaction ? { type: 'react', card: null } : s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' };
       if (!act(s, seat, fb, { rng, now: Date.now() }).ok) return;
     }
@@ -118,7 +126,7 @@ async function handle(body: any) {
     case 'join': {
       const g = await getGame(`code=eq.${String(body.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '')}`);
       if (g.status !== 'lobby') bad('That war already started. No latecomers.');
-      if (g.lobby.length >= MAX_PLAYERS) bad('Four Houses already. The valley is full.');
+      if (g.lobby.length >= MAX_PLAYERS) bad('Seven Houses already. The valley is full.');
       const token = newToken();
       const seat = g.lobby.length;
       const name = cleanName(body.name);
@@ -136,7 +144,7 @@ async function handle(body: any) {
       let lobby = g.lobby;
       if (body.op === 'addBot') {
         if (lobby.length >= MAX_PLAYERS) bad('Lobby full.');
-        const names = ['Proctor\'s Pet', 'Some Tall Bastard', 'A Very Angry Gold', 'The Draft Pick Nobody Wanted'];
+        const names = ['Proctor\'s Pet', 'Some Tall Bastard', 'A Very Angry Gold', 'The Draft Pick Nobody Wanted', 'Knife in a Nice Coat', 'Lord of Mud', 'The Quiet One'];
         lobby = [...lobby, { seat: lobby.length, name: names[lobby.length % names.length], ai: true }];
       } else {
         const last = lobby[lobby.length - 1];
@@ -160,14 +168,14 @@ async function handle(body: any) {
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
     case 'state': {
-      const g = await getGame(`id=eq.${gameId(body.game)}`);
+      const g = current(await getGame(`id=eq.${gameId(body.game)}`));
       const seat = await seatFor(g, body.token);
       if (body.since != null && body.since === g.version) return { unchanged: true, version: g.version };
       return payload(g, seat);
     }
     case 'act': {
       for (let attempt = 0; attempt < 3; attempt++) {
-        const g = await getGame(`id=eq.${gameId(body.game)}`);
+        const g = current(await getGame(`id=eq.${gameId(body.game)}`));
         const seat = await seatFor(g, body.token);
         if (!g.state) bad('Game has not started.');
         const s = g.state!;
