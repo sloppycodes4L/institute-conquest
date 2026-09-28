@@ -9,6 +9,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { HOUSES, vnoise, type Biome, type Geo } from '../engine/data.ts';
 import type { GameState, Siege } from '../engine/engine.ts';
+import { CARD } from '../engine/cards.ts';
 
 const BIOME: Record<Biome, { color: string; h: number; v: number }> = {
   keep: { color: '#7a6d60', h: 1.25, v: 0.12 },
@@ -71,7 +72,9 @@ export class World {
   topH: number[] = [];
   private decor: Decor[] = [];
   private castles: { t: number; mats: THREE.MeshStandardMaterial[]; base: THREE.Color[] }[] = [];
-  private tokens: { group: THREE.Group; base: THREE.Mesh; sprite: THREE.Sprite; key: string }[] = [];
+  private tokens: { group: THREE.Group; base: THREE.Mesh; sprite: THREE.Sprite; key: string; crown: THREE.Sprite | null; crownKey: string }[] = [];
+  private chasmMats: LineMaterial[] = [];
+  private chasmGlow: THREE.MeshBasicMaterial[] = [];
   private labels: THREE.Sprite[] = [];
   private labelAlpha = -1;
   private castleMeshes: THREE.Mesh[] = [];
@@ -146,7 +149,7 @@ export class World {
     });
     this.map.clear();
     this.meshes = []; this.mats = []; this.desat = []; this.tint = []; this.borderMats = []; this.decor = []; this.castles = [];
-    this.regionLines = []; this.regionLabels = []; this.lanes = [];
+    this.regionLines = []; this.regionLabels = []; this.lanes = []; this.chasmMats = []; this.chasmGlow = [];
     this.tokens = []; this.flags = []; this.olyMeshes = []; this.olyToken = null; this.olyKey = '';
     this.labels = []; this.labelAlpha = -1; this.castleMeshes = []; this.flashes.clear();
     this.topH = new Array(geo.nt).fill(1);
@@ -171,6 +174,7 @@ export class World {
     this.buildCastles();
     this.buildOlympus();
     this.buildPorts();
+    this.buildStraits();
     this.buildRegions();
     this.buildTokens();
     this.buildLabels();
@@ -541,6 +545,103 @@ export class World {
     }
   }
 
+  /**
+   * The straits between quadrants: a glowing chasm with red cliff edges where they can't be crossed, and a marked
+   * stone causeway (railings and a label) on every land bridge.
+   */
+  private buildStraits() {
+    const { hexes, straits, R_IN, R_OUT } = this.geo;
+    if (!straits?.length) return;
+    const SQ3 = Math.sqrt(3);
+    const dirs = [0, 60, 120, 180, 240, 300].map((d) => [SQ3 * Math.cos((d * Math.PI) / 180), SQ3 * Math.sin((d * Math.PI) / 180)]);
+    const hk = (x: number, y: number) => Math.round(x * 100) + ',' + Math.round(y * 100);
+    const land = new Set(hexes.map((h) => hk(h.x, h.y)));
+    const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+    // Cliff edges: land hex sides that face the empty strait.
+    const cliff: number[] = [];
+    for (const h of hexes) {
+      const top = this.hexHeight(h) + 0.12;
+      for (const [dx, dy] of dirs) {
+        if (land.has(hk(h.x + dx, h.y + dy))) continue;
+        const mx = h.x + dx / 2, my = h.y + dy / 2, rad = Math.hypot(mx, my);
+        if (rad < R_IN + 0.6 || rad > R_OUT - 0.6) continue;
+        if (!straits.some((st) => Math.abs(wrap(Math.atan2(my, mx) - st.angle)) * rad < 2.4)) continue;
+        const px = -dy / SQ3 * 0.5, py = dx / SQ3 * 0.5;
+        cliff.push(mx + px, top, -(my + py), mx - px, top, -(my - py));
+      }
+    }
+    if (cliff.length) {
+      const lg = new LineSegmentsGeometry();
+      lg.setPositions(cliff);
+      const lm = new LineMaterial({ color: 0xff4a1a, linewidth: 4.2, transparent: true, opacity: 0.95 });
+      const line = new LineSegments2(lg, lm);
+      line.renderOrder = 3;
+      this.map.add(line);
+      this.chasmMats.push(lm);
+    }
+    for (const st of straits) {
+      // The chasm floor: a black gash along the strait with a molten crack down its middle.
+      const len = R_OUT - R_IN + 3, mid = (R_IN + R_OUT) / 2;
+      const cx = Math.cos(st.angle) * mid, cy = Math.sin(st.angle) * mid;
+      const gash = new THREE.Mesh(new THREE.PlaneGeometry(len, 2.6), new THREE.MeshBasicMaterial({ color: '#070203' }));
+      gash.rotation.x = -Math.PI / 2;
+      gash.rotation.z = st.angle;
+      gash.position.copy(w2v(cx, cy, -0.46));
+      this.map.add(gash);
+      const glowMat = new THREE.MeshBasicMaterial({ color: '#ff3a0a', transparent: true, opacity: 0.85, depthWrite: false });
+      const crack = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.32), glowMat);
+      crack.rotation.x = -Math.PI / 2;
+      crack.rotation.z = st.angle;
+      crack.position.copy(w2v(cx, cy, -0.44));
+      this.map.add(crack);
+      this.chasmGlow.push(glowMat);
+      for (const b of st.bridges) {
+        // Stand the railings on the land either side of the crossing, running across the strait.
+        const rad = Math.hypot(b.x, b.y), ang = Math.atan2(b.y, b.x);
+        const near = hexes.reduce((best, h) => (Math.hypot(h.x - b.x, h.y - b.y) < Math.hypot(best.x - b.x, best.y - b.y) ? h : best), hexes[0]);
+        const top = this.hexHeight(near) + 0.5;
+        const tx = -Math.sin(ang), ty = Math.cos(ang); // across the strait
+        const half = Math.min(b.w, 4.5) / 2;
+        const rail: number[] = [];
+        for (const side of [-1, 1]) {
+          const ox = Math.cos(ang) * side * half, oy = Math.sin(ang) * side * half;
+          rail.push(b.x + ox - tx * 2.6, top, -(b.y + oy - ty * 2.6), b.x + ox + tx * 2.6, top, -(b.y + oy + ty * 2.6));
+          // posts
+          for (const k of [-2.6, -1.3, 0, 1.3, 2.6]) rail.push(b.x + ox + tx * k, top - 0.5, -(b.y + oy + ty * k), b.x + ox + tx * k, top + 0.05, -(b.y + oy + ty * k));
+        }
+        const lg = new LineSegmentsGeometry();
+        lg.setPositions(rail);
+        const lm = new LineMaterial({ color: 0xf3d27a, linewidth: 3.6, transparent: true, opacity: 0.95 });
+        const line = new LineSegments2(lg, lm);
+        line.renderOrder = 4;
+        this.map.add(line);
+        this.chasmMats.push(lm);
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.bridgeTexture(), depthTest: false, transparent: true }));
+        sprite.scale.set(7.2, 1.8, 1);
+        sprite.position.copy(w2v(b.x, b.y, top + 2.2));
+        sprite.renderOrder = 8;
+        this.map.add(sprite);
+        void rad;
+      }
+    }
+  }
+
+  private bridgeTex: THREE.Texture | null = null;
+  private bridgeTexture() {
+    if (this.bridgeTex) return this.bridgeTex;
+    const c = document.createElement('canvas');
+    c.width = 320; c.height = 80;
+    const g = c.getContext('2d')!;
+    g.fillStyle = 'rgba(20,12,6,0.85)'; g.strokeStyle = '#f3d27a'; g.lineWidth = 5;
+    g.beginPath(); g.roundRect(4, 4, 312, 72, 30); g.fill(); g.stroke();
+    g.fillStyle = '#f3d27a'; g.font = '700 34px "Cinzel", Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('⇄ LAND BRIDGE', 160, 42);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.bridgeTex = tex;
+    return tex;
+  }
+
   /** Bonus regions: a thick border round each, and a label with its name and bonus. */
   private buildRegions() {
     const { hexes, territories, regions, centroid } = this.geo;
@@ -654,7 +755,16 @@ export class World {
       group.position.copy(w2v(x, y, this.topH[t] + 0.02));
       group.visible = false;
       this.map.add(group);
-      this.tokens.push({ group, base, sprite, key: '' });
+      let crown: THREE.Sprite | null = null;
+      if (this.geo.territories[t].isKeep) {
+        crown = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true }));
+        crown.position.y = 2.55;
+        crown.renderOrder = 10;
+        crown.visible = false;
+        crown.userData.t = t;
+        group.add(crown);
+      }
+      this.tokens.push({ group, base, sprite, key: '', crown, crownKey: '' });
     }
   }
 
@@ -802,6 +912,23 @@ export class World {
     return tex;
   }
 
+  /** The Primus of a Keep: a gold crown and the Character's name, over its army count. */
+  private crownTexture(name: string, color: string) {
+    const c = document.createElement('canvas');
+    const g = c.getContext('2d')!;
+    const font = '700 34px "Barlow Condensed", "Arial Narrow", sans-serif';
+    g.font = font;
+    const w = Math.ceil(g.measureText(name).width) + 84;
+    c.width = w; c.height = 60;
+    g.fillStyle = 'rgba(30,18,6,0.9)'; g.strokeStyle = color; g.lineWidth = 5;
+    g.beginPath(); g.roundRect(3, 3, w - 6, 54, 22); g.fill(); g.stroke();
+    g.fillStyle = '#f3d27a'; g.font = 'bold 36px serif'; g.textBaseline = 'middle'; g.fillText('♛', 16, 32);
+    g.font = font; g.fillStyle = '#fff3d6'; g.fillText(name, 58, 32);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return { tex, aspect: w / 60 };
+  }
+
   private olympusTexture(n: number) {
     const c = document.createElement('canvas');
     c.width = 256; c.height = 96;
@@ -823,7 +950,7 @@ export class World {
   /** Title-screen look: an unclaimed valley. */
   idle() {
     this.lastState = null;
-    for (const t of this.tokens) { t.group.visible = false; t.key = ''; }
+    for (const t of this.tokens) { t.group.visible = false; t.key = ''; if (t.crown) { t.crown.visible = false; t.crownKey = ''; } }
     for (const f of this.flags) f.group.visible = false;
     for (let t = 0; t < this.geo.nt; t++) {
       this.mats[t].color.set('#ffffff');
@@ -860,6 +987,21 @@ export class World {
         tok.sprite.scale.set(guard ? 3.73 : 2.8, 1.4, 1);
         (tok.base.material as THREE.MeshStandardMaterial).color.set(col);
         tok.key = key;
+      }
+      if (tok.crown) {
+        const pr = s.primus?.[this.geo.territories[t].house];
+        const ck = pr ? `${pr.card}|${col}` : '';
+        if (ck !== tok.crownKey) {
+          tok.crownKey = ck;
+          tok.crown.visible = !!pr;
+          if (pr) {
+            const m = tok.crown.material as THREE.SpriteMaterial;
+            m.map?.dispose();
+            const { tex, aspect } = this.crownTexture(CARD[pr.card]?.name ?? 'Primus', col);
+            m.map = tex; m.needsUpdate = true;
+            tok.crown.scale.set(0.8 * aspect, 0.8, 1);
+          }
+        }
       }
     }
     for (const f of this.flags) {
@@ -1182,7 +1324,7 @@ export class World {
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     this.camera.position.copy(this.controls.target).addScaledVector(dir, fit);
     this.controls.maxDistance = fit * 1.25;
-    for (const m of [...this.borderMats, ...this.regionLines.map((r) => r.mat), ...this.lanes]) m.resolution.set(w, h);
+    for (const m of [...this.borderMats, ...this.regionLines.map((r) => r.mat), ...this.lanes, ...this.chasmMats]) m.resolution.set(w, h);
   }
 
   private frame() {
@@ -1219,6 +1361,7 @@ export class World {
     }
     this.updateLabels();
     for (const l of this.lanes) l.dashOffset = -t * 0.8;
+    for (const m of this.chasmGlow) m.opacity = 0.6 + 0.3 * Math.sin(t * 1.7);
     if (this.sea) this.sea.roughness = 0.2 + Math.sin(t * 0.7) * 0.05;
     this.fx = this.fx.filter((f) => {
       const k = (now - f.t0) / f.dur;

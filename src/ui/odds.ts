@@ -1,21 +1,25 @@
 // Battle odds: the exact chance that a blitz takes the target, using the engine's dice rules and modifiers.
 
-import { BALANCE, NEUTRAL, geo, passive, standardAt, terrainMods, type GameState } from '../engine/engine.ts';
+import {
+  BALANCE, attackMods, defenseMods, defenderDiceCap, isNeutralKeep, isWildGarrison, modifyDice, overwhelms, passive, standardAt, terrainMods,
+  type GameState, type Mods,
+} from '../engine/engine.ts';
 
-export interface Fight {
+export interface Fight extends Mods {
   /** Attacking units (armies that can fight; one always stays behind in a normal attack). */
   att: number;
   /** Defending units, honor guard included. */
   def: number;
   /** Most dice the defender may roll. */
   defCap: number;
-  atkHigh: number; atkAll: number; defHigh: number; defAll: number;
+  /** The garrison yields without a fight (a neutral facing twice its number). */
+  overwhelm?: boolean;
 }
 
 // One roll's outcomes for a dice matchup: [attacker losses, defender losses, probability].
 const ROLLS = new Map<string, [number, number, number][]>();
 function rollOutcomes(aDice: number, dDice: number, f: Fight): [number, number, number][] {
-  const key = `${aDice},${dDice},${f.atkHigh},${f.atkAll},${f.defHigh},${f.defAll}`;
+  const key = `${aDice},${dDice},${f.atkHigh},${f.atkLow},${f.atkAll},${f.defHigh},${f.defLow},${f.defAll}`;
   let out = ROLLS.get(key);
   if (out) return out;
   const tally = new Map<string, number>();
@@ -25,9 +29,9 @@ function rollOutcomes(aDice: number, dDice: number, f: Fight): [number, number, 
     let x = i;
     for (let k = 0; k < n; k++) { dice[k] = 1 + (x % 6); x = Math.floor(x / 6); }
     const a = dice.slice(0, aDice).sort((p, q) => q - p), d = dice.slice(aDice).sort((p, q) => q - p);
-    a[0] += f.atkHigh; d[0] += f.defHigh;
+    modifyDice(a, d, f);
     let al = 0, dl = 0;
-    for (let k = 0; k < Math.min(aDice, dDice); k++) (a[k] + f.atkAll > d[k] + f.defAll ? dl++ : al++);
+    for (let k = 0; k < Math.min(aDice, dDice); k++) (a[k] > d[k] ? dl++ : al++);
     const kk = `${al},${dl}`;
     tally.set(kk, (tally.get(kk) ?? 0) + 1);
   }
@@ -39,10 +43,11 @@ function rollOutcomes(aDice: number, dDice: number, f: Fight): [number, number, 
 const WINS = new Map<string, number>();
 /** Chance the attacker wipes out every defender before running out of attackers. */
 export function winChance(f: Fight): number {
+  if (f.overwhelm) return 1;
   const A = Math.max(0, Math.floor(f.att)), D = Math.max(0, Math.floor(f.def));
   if (D === 0) return 1;
   if (A === 0) return 0;
-  const key = `${A},${D},${f.defCap},${f.atkHigh},${f.atkAll},${f.defHigh},${f.defAll}`;
+  const key = `${A},${D},${f.defCap},${f.atkHigh},${f.atkLow},${f.atkAll},${f.defHigh},${f.defLow},${f.defAll}`;
   const hit = WINS.get(key);
   if (hit != null) return hit;
   // p[a][d]: chance to win from a attackers vs d defenders. Every roll costs at least one unit, so fill upward.
@@ -63,30 +68,25 @@ export function winChance(f: Fight): number {
 
 /** The fight as the engine would run `seat`'s blitz from `from` on `to` right now. */
 export function attackFight(s: GameState, seat: number, from: number, to: number): Fight {
-  const g = geo(s);
-  const def = s.owner[to];
   const h = standardAt(s, to);
   const guard = h >= 0 ? s.standards[h].guard : 0;
   const same = s.ts.battle?.key === `${from}>${to}`;
   const atkBuff = same ? s.ts.battle!.atk : s.ts.buffs.atk > 0;
   const breakLine = same ? s.ts.battle!.breakLine : s.ts.buffs.breakLine > 0;
-  const tm = terrainMods(s, from, to);
-  const keep = g.territories[to].isKeep;
   return {
     att: s.armies[from] - 1,
     def: s.armies[to] + guard,
-    defCap: breakLine ? 1 : h >= 0 ? BALANCE.stdDefDice : 2,
-    atkHigh: (atkBuff ? 1 : 0) + (def === NEUTRAL ? passive(s, seat, 'atkNeutral') : 0) + tm.atk,
-    atkAll: s.ts.buffs.fury ? 1 : 0,
-    defHigh: (keep && def >= 0 ? passive(s, def, 'defKeep') : 0) + tm.def,
-    defAll: keep ? BALANCE.keepWall : 0,
+    defCap: breakLine ? 1 : defenderDiceCap(s, to),
+    ...attackMods(s, seat, from, to, atkBuff),
+    ...defenseMods(s, to),
+    overwhelm: overwhelms(s, from, to),
   };
 }
 
 /** Raising the Standard with `commit` (plus its 3 phantoms). Leaves out the General's war cry, so it's a floor. */
 export function standardFight(s: GameState, seat: number, from: number, to: number, commit: number): Fight {
   const f = attackFight(s, seat, from, to);
-  return { ...f, att: commit + 3, atkHigh: f.atkHigh + passive(s, seat, 'atkStd') };
+  return { ...f, overwhelm: false, att: commit + 3, atkHigh: f.atkHigh + passive(s, seat, 'atkStd') };
 }
 
 /** Blitzing Olympus from the Foot. */
@@ -97,11 +97,21 @@ export function assaultFight(s: GameState, from: number): Fight {
     att: s.armies[from] - 1,
     def: sg.garrison,
     defCap: (same ? s.ts.battle!.breakLine : s.ts.buffs.breakLine > 0) ? 1 : 2,
-    atkHigh: ((same ? s.ts.battle!.atk : s.ts.buffs.atk > 0) ? 1 : 0) + s.ts.buffs.siegeAtk + terrainMods(s, from, -1).atk,
+    atkHigh: ((same ? s.ts.battle!.atk : s.ts.buffs.atk > 0) ? 1 : 0) + s.ts.buffs.siegeAtk,
+    atkLow: terrainMods(s, from, -1).atk,
     atkAll: s.ts.buffs.fury ? 1 : 0,
     defHigh: sg.defHigh,
-    defAll: s.ts.buffs.siegeWalls > 0 ? 0 : BALANCE.keepWall,
+    defLow: 0,
+    defAll: s.ts.buffs.siegeWalls > 0 ? 0 : BALANCE.olyWall,
   };
+}
+
+/** A short note on how the defender fights: "Overwhelm", "1 die" (a lone neutral garrison), or "Keep 10". */
+export function defenseNote(s: GameState, from: number, to: number): string {
+  if (overwhelms(s, from, to)) return 'Overwhelm';
+  if (isWildGarrison(s, to)) return '1 die';
+  if (isNeutralKeep(s, to)) return 'neutral Keep';
+  return '';
 }
 
 export const pct = (p: number) => (p > 0.995 && p < 1 ? '>99%' : p < 0.005 && p > 0 ? '<1%' : `${Math.round(p * 100)}%`);

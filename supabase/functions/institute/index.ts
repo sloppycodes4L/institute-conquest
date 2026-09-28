@@ -3,7 +3,7 @@
 // then the new version is broadcast on Realtime so clients refetch their private view.
 // The engine lives in ./engine, copied verbatim from src/engine by scripts/sync-fn.mjs.
 
-import { act, actingSeat, aiDuty, cleanSettings, createGame, viewFor, type Action, type GameState, type WarSettings } from './engine/engine.ts';
+import { act, actingSeat, aiDuty, cleanSettings, createGame, drainLog, kickToAI, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from './engine/engine.ts';
 import { botAction } from './engine/bot.ts';
 import { MAX_PLAYERS } from './engine/data.ts';
 
@@ -102,12 +102,64 @@ function runBots(s: GameState) {
     const a = botAction(viewFor(s, seat), seat, rng);
     const r = act(s, seat, a, { rng, now: Date.now() });
     if (!r.ok) {
-      if (duty >= 0) return;
+      if (duty >= 0) {
+        // An answer the AI can't give (say it was sworn elsewhere meanwhile): burn the letter instead of stalling.
+        const inv = s.invites.find((x) => x.to === seat);
+        if (!inv || !act(s, seat, { type: 'answer', invite: inv.id, accept: false }, { rng, now: Date.now() }).ok) return;
+        continue;
+      }
       const fb: Action = s.reaction ? { type: 'react', card: null } : s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' };
       if (!act(s, seat, fb, { rng, now: Date.now() }).ok) return;
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// The permanent War Log (ic_logs): every event, whole, kept 90 days. Only that war's players may read it.
+
+const LOG_DAYS = 90;
+/** Append events to a war's permanent log. A failure here never breaks the game. */
+async function persistLog(gameId: string, events: GameEvent[]) {
+  if (!events.length) return;
+  try {
+    for (let i = 0; i < events.length; i += 500) {
+      await rest('ic_logs', { method: 'POST', body: JSON.stringify(events.slice(i, i + 500).map((e) => ({ game_id: gameId, seq: e.id, event: e }))) });
+    }
+  } catch (e) { console.error('persistLog', (e as Error).message); }
+}
+/** Seq 0: who fought, on which map, and each seat's token hash (so players can still read the log after the game row is cleaned up). */
+async function persistMeta(g: GameRow, s: GameState) {
+  const seats = await rest(`ic_players?game_id=eq.${g.id}&select=seat,token_hash`);
+  const meta = {
+    id: 0, k: 'meta', code: g.code, opts: s.opts, started: new Date().toISOString(),
+    players: s.players.map((p) => ({ seat: p.seat, name: p.name, house: p.house, ai: !!p.ai })),
+    seats: seats.map((x: any) => ({ seat: x.seat, hash: x.token_hash })),
+  };
+  await persistLog(g.id, [meta as GameEvent]);
+}
+async function readLog(gameId: string): Promise<{ seq: number; event: any; created_at: string }[]> {
+  const out: any[] = [];
+  for (let off = 0; off < 200_000; off += 1000) {
+    const rows = await rest(`ic_logs?game_id=eq.${gameId}&select=seq,event,created_at&order=seq.asc,id.asc&limit=1000&offset=${off}`);
+    out.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
+/** A reader's seat: from the live game, or (after the game row is gone) from the log's own record of the seats. */
+async function logSeat(gameId: string, token: unknown, rows?: { event: any }[]): Promise<number> {
+  if (typeof token !== 'string' || token.length < 10) bad('Missing player token.', 401);
+  const hash = await sha(token as string);
+  const live = await rest(`ic_players?game_id=eq.${gameId}&token_hash=eq.${hash}&select=seat`);
+  if (live.length) return live[0].seat;
+  const list = rows ?? await readLog(gameId);
+  const meta = list.find((r) => r.event?.k === 'meta')?.event;
+  const kicked = new Set(list.filter((r) => r.event?.k === 'kicked').map((r) => r.event.seat));
+  const hit = meta?.seats?.find((x: any) => x.hash === hash && !kicked.has(x.seat));
+  if (!hit) bad('You did not fight in that war (or its log has expired).', 403);
+  return hit.seat;
+}
+const cleanNote = (n: unknown) => String(n ?? '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, 140);
 
 async function handle(body: any) {
   switch (body.op) {
@@ -115,6 +167,7 @@ async function handle(body: any) {
       const token = newToken();
       const name = cleanName(body.name);
       await rest(`ic_games?updated_at=lt.${new Date(Date.now() - 30 * 864e5).toISOString()}`, { method: 'DELETE' }).catch(() => {});
+      await rest(`ic_logs?created_at=lt.${new Date(Date.now() - LOG_DAYS * 864e5).toISOString()}`, { method: 'DELETE' }).catch(() => {});
       let g: GameRow | null = null;
       for (let i = 0; i < 5 && !g; i++) {
         try {
@@ -172,9 +225,13 @@ async function handle(body: any) {
       if (seat !== g.host_seat) bad('Only the host can start the war.', 403);
       if (g.status !== 'lobby') bad('Already started.');
       if (g.lobby.length < 2) bad('You need at least one rival. Add a human or an AI.');
+      drainLog();
       const s = createGame(g.lobby.map((l) => l.name), rng, { ai: g.lobby.map((l) => !!l.ai), settings: cleanSettings(g.opts ?? {}) });
       runBots(s);
+      const events = drainLog();
       if (!(await saveGame(g, g.version, { status: 'playing', state: s, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+      await persistMeta(g, s);
+      await persistLog(g.id, events);
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
@@ -190,16 +247,96 @@ async function handle(body: any) {
         const seat = await seatFor(g, body.token);
         if (!g.state) bad('Game has not started.');
         const s = g.state!;
+        drainLog();
         const r = act(s, seat, body.action as Action, { rng, now: Date.now() });
         if (!r.ok) return { ...payload(g, seat, body.tv), error: r.err };
         runBots(s);
+        const events = drainLog();
         const status = s.phase === 'over' ? 'over' : 'playing';
         if (await saveGame(g, g.version, { state: s, status, version: g.version + 1 })) {
           await broadcast(g.code, g.version + 1);
+          await persistLog(g.id, events);
           return payload({ ...g, state: s, status, version: g.version + 1 }, seat, body.tv);
         }
       }
       bad('The valley is busy. Try again.', 409);
+    }
+    case 'kick': {
+      const g = current(await getGame(`id=eq.${gameId(body.game)}`));
+      const seat = await seatFor(g, body.token);
+      if (seat !== g.host_seat) bad('Only the host can kick.', 403);
+      const k = Number(body.seat);
+      if (!Number.isInteger(k) || k === g.host_seat || !g.lobby.some((l) => l.seat === k)) bad('Pick another seat to kick.');
+      if (g.status === 'lobby') {
+        // The seat leaves the lobby; everyone after it moves up one.
+        const lobby = g.lobby.filter((l) => l.seat !== k).map((l, i) => ({ ...l, seat: i }));
+        if (!(await saveGame(g, g.version, { lobby, version: g.version + 1, host_seat: g.host_seat > k ? g.host_seat - 1 : g.host_seat }))) bad('Lobby changed, try again.', 409);
+        await rest(`ic_players?game_id=eq.${g.id}&seat=eq.${k}`, { method: 'DELETE' });
+        for (const l of g.lobby.filter((x) => x.seat > k).sort((a, b) => a.seat - b.seat)) {
+          await rest(`ic_players?game_id=eq.${g.id}&seat=eq.${l.seat}`, { method: 'PATCH', body: JSON.stringify({ seat: l.seat - 1 }) });
+        }
+        await broadcast(g.code, g.version + 1);
+        return payload(await getGame(`id=eq.${g.id}`), seat);
+      }
+      if (!g.state) bad('Game has not started.');
+      const s = g.state!;
+      drainLog();
+      const r = kickToAI(s, k, { rng, now: Date.now() });
+      if (!r.ok) bad(r.err);
+      runBots(s);
+      const events = drainLog();
+      const lobby = g.lobby.map((l) => (l.seat === k ? { ...l, ai: true } : l));
+      const status = s.phase === 'over' ? 'over' : 'playing';
+      if (!(await saveGame(g, g.version, { state: s, status, lobby, version: g.version + 1 }))) bad('The valley is busy. Try again.', 409);
+      // Their token stops working at once.
+      await rest(`ic_players?game_id=eq.${g.id}&seat=eq.${k}`, { method: 'DELETE' });
+      await broadcast(g.code, g.version + 1);
+      await persistLog(g.id, events);
+      return payload({ ...g, state: s, status, lobby, version: g.version + 1 }, seat);
+    }
+    case 'logs': {
+      const id = gameId(body.game);
+      const rows = await readLog(id);
+      if (!rows.length) bad('No War Log for that war (logs are kept 90 days).', 404);
+      const seat = await logSeat(id, body.token, rows);
+      const events = rows.filter((r) => !r.event?.vis || r.event.vis.includes(seat)).map((r) => {
+        if (r.event?.k === 'meta') { const { seats: _s, ...m } = r.event; return m; }
+        if (r.event?.k === 'flag') return { ...r.event, at: r.created_at };
+        return r.event;
+      });
+      return { seat, events };
+    }
+    case 'flag': {
+      const id = gameId(body.game);
+      const rows = await readLog(id);
+      const seat = await logSeat(id, body.token, rows);
+      const seq = Number(body.seq);
+      if (!rows.some((r) => r.seq === seq && r.event?.k !== 'flag' && (!r.event?.vis || r.event.vis.includes(seat)))) bad('No such line in the War Log.');
+      const note = cleanNote(body.note);
+      if (!note) bad('Write a short note first.');
+      if (rows.filter((r) => r.event?.k === 'flag').length >= 500) bad('This War Log has all the flags it can hold.');
+      const recent = rows.filter((r) => r.event?.k === 'flag' && r.event.seat === seat && Date.now() - Date.parse(r.created_at) < 5000);
+      if (recent.length) bad('One flag every few seconds, Pixie.');
+      await rest('ic_logs', { method: 'POST', body: JSON.stringify({ game_id: id, seq, event: { id: seq, k: 'flag', seat, note } }) });
+      return { ok: true };
+    }
+    case 'wars': {
+      // A summary of the wars this browser fought in (for the "Past wars" list).
+      const list = Array.isArray(body.wars) ? body.wars.slice(0, 30) : [];
+      const out = [];
+      for (const w of list) {
+        try {
+          const id = gameId(w?.game);
+          const meta = (await rest(`ic_logs?game_id=eq.${id}&seq=eq.0&select=event,created_at&limit=1`))[0];
+          if (!meta || meta.event?.k !== 'meta') continue;
+          const hash = await sha(String(w.token ?? ''));
+          if (!meta.event.seats?.some((x: any) => x.hash === hash)) continue;
+          const last = (await rest(`ic_logs?game_id=eq.${id}&select=event&order=id.desc&limit=40`)).map((r: any) => r.event);
+          const win = last.find((e: any) => e.k === 'win' || e.k === 'olympusFalls');
+          out.push({ game: id, code: meta.event.code, started: meta.created_at, players: meta.event.players, over: !!win, winners: win ? (win.members ?? (win.seat != null ? [win.seat] : [])) : [] });
+        } catch { /* skip that one */ }
+      }
+      return { wars: out };
     }
   }
   bad('Unknown op.');

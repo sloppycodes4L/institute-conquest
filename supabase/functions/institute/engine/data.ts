@@ -17,29 +17,32 @@ export interface House {
   id: HouseId;
   name: string;
   color: string;
-  quadrant: number;
   sigil: string;
   epithet: string;
 }
 
-// House index == its 1/7th slice of the valley ring, counter-clockwise from the east.
 export const HOUSES: House[] = [
-  { id: 'apollo', name: 'Apollo', color: '#e8b21e', quadrant: 0, sigil: '☉', epithet: 'the Sun-Fuckers' },
-  { id: 'diana', name: 'Diana', color: '#2fa36b', quadrant: 0, sigil: '☾', epithet: 'the Huntresses' },
-  { id: 'minerva', name: 'Minerva', color: '#3f86e0', quadrant: 1, sigil: '⌘', epithet: 'the Owls' },
-  { id: 'mars', name: 'Mars', color: '#d42a2a', quadrant: 1, sigil: '♂', epithet: 'the Wolves' },
-  { id: 'pluto', name: 'Pluto', color: '#8a5cc7', quadrant: 2, sigil: '♇', epithet: 'the Jackals' },
-  { id: 'jupiter', name: 'Jupiter', color: '#e8e4d8', quadrant: 3, sigil: '♃', epithet: 'the Storm-Born' },
-  { id: 'ceres', name: 'Ceres', color: '#e0782a', quadrant: 3, sigil: '⚳', epithet: 'the Bread-Bakers' },
+  { id: 'apollo', name: 'Apollo', color: '#e8b21e', sigil: '☉', epithet: 'the Sun-Fuckers' },
+  { id: 'diana', name: 'Diana', color: '#2fa36b', sigil: '☾', epithet: 'the Huntresses' },
+  { id: 'minerva', name: 'Minerva', color: '#3f86e0', sigil: '⌘', epithet: 'the Owls' },
+  { id: 'mars', name: 'Mars', color: '#d42a2a', sigil: '♂', epithet: 'the Wolves' },
+  { id: 'pluto', name: 'Pluto', color: '#8a5cc7', sigil: '♇', epithet: 'the Jackals' },
+  { id: 'jupiter', name: 'Jupiter', color: '#e8e4d8', sigil: '♃', epithet: 'the Storm-Born' },
+  { id: 'ceres', name: 'Ceres', color: '#e0782a', sigil: '⚳', epithet: 'the Bread-Bakers' },
 ];
 export const HOUSE_INDEX: Record<HouseId, number> = Object.fromEntries(HOUSES.map((h, i) => [h.id, i])) as any;
 
-export interface Quadrant { name: string; houses: number[] }
+/**
+ * The valley ring is cut into seven slices, counter-clockwise from the east. A slice keeps its land (names,
+ * biomes, regions, quadrant) from war to war; which House is dealt onto it changes (GameOpts.houses).
+ */
+export const SLICE_QUADRANT = [0, 0, 1, 1, 2, 3, 3];
+export interface Quadrant { name: string; slices: number[] }
 export const QUADRANTS: Quadrant[] = [
-  { name: 'The Greatwoods', houses: [0, 1] },
-  { name: 'The Highlands', houses: [2, 3] },
-  { name: 'The Frostfangs', houses: [4] },
-  { name: 'The Argos Lowlands', houses: [5, 6] },
+  { name: 'The Greatwoods', slices: [0, 1] },
+  { name: 'The Highlands', slices: [2, 3] },
+  { name: 'The Frostfangs', slices: [4] },
+  { name: 'The Argos Lowlands', slices: [5, 6] },
 ];
 
 export const MIN_PLAYERS = 2;
@@ -73,14 +76,12 @@ export const TERRAIN_OF: Record<Biome, Terrain> = {
 };
 export const TERRAIN_INFO: Record<Terrain, { icon: string; name: string; text: string }> = {
   open: { icon: '', name: 'Open ground', text: 'No special effect.' },
-  keep: { icon: '♜', name: 'Keep', text: 'Walls: +1 to every defense die.' },
-  mountain: { icon: '⛰', name: 'Mountains', text: 'High ground: +1 to your highest attack die when attacking from here. Fortify marches halt here.' },
-  forest: { icon: '🌲', name: 'Forest', text: 'Cover: +2 to the highest defense die when defending here.' },
-  water: { icon: '🌊', name: 'Water', text: 'Fortify marches halt here.' },
-  marsh: { icon: '🌾', name: 'Marsh', text: 'Fortify marches halt here.' },
+  keep: { icon: '♜', name: 'Keep', text: 'No walls: a Keep holds with its garrison, its honor guard and its Passives. A neutral Keep holds 10.' },
+  mountain: { icon: '⛰', name: 'Mountains', text: 'High ground: +1 to your lowest compared attack die when attacking from here (not against neutrals).' },
+  forest: { icon: '🌲', name: 'Forest', text: 'Cover: +1 to the lowest defense die when a House defends here (neutrals get no cover).' },
+  water: { icon: '🌊', name: 'Water', text: 'No special effect.' },
+  marsh: { icon: '🌾', name: 'Marsh', text: 'No special effect.' },
 };
-/** Terrain a fortify march can end on but never pass through. */
-export const isRough = (t: Terrain) => t === 'mountain' || t === 'water' || t === 'marsh';
 
 // Slot 0 of each House is its Keep. Later slots are handed out nearest-the-Keep first.
 const NAMES: [string, Biome][][] = [
@@ -126,7 +127,10 @@ export interface Territory {
   name: string;
   biome: Biome;
   terrain: Terrain;
+  /** The House dealt onto this territory's slice in this war. */
   house: number;
+  /** The slice of the valley ring it belongs to (fixed land, whatever House is dealt onto it). */
+  slice: number;
   quadrant: number;
   isKeep: boolean;
   row: number;
@@ -188,7 +192,20 @@ export interface Geo {
   foot: number[];
   R_IN: number;
   R_OUT: number;
+  /** The House dealt onto each slice (identity for wars from before the Houses were dealt). */
+  sliceHouse: number[];
+  /** The Keep of a House (wherever its slice is). */
   keepOf(house: number): number;
+  /** The Keep of a slice. */
+  keepOfSlice(slice: number): number;
+  /** The straits between quadrants: where their centre line runs, and where land bridges cross them. */
+  straits: Strait[];
+}
+export interface Strait {
+  /** Angle of the strait's centre line (world, radians). */
+  angle: number;
+  /** Land bridges across it: the crossing's midpoint (world x, y) and how wide it is. */
+  bridges: { x: number; y: number; w: number }[];
 }
 
 const SQ3 = Math.sqrt(3);
@@ -224,7 +241,7 @@ export function seededRng(seed: number) {
 function rollPasses(rows: number, rng: () => number): Record<number, Pass[]> {
   const out: Record<number, Pass[]> = {};
   for (const h of STRAITS) {
-    const frost = HOUSES[h].quadrant === 2 || HOUSES[(h + 1) % 7].quadrant === 2;
+    const frost = SLICE_QUADRANT[h] === 2 || SLICE_QUADRANT[(h + 1) % 7] === 2;
     const n = frost ? 1 : rng() < 0.6 ? 2 : 1;
     const pool = Array.from({ length: rows }, (_, i) => i);
     const picked: Pass[] = [];
@@ -296,7 +313,7 @@ function buildGeo(layout: number, seed?: number): Geo {
     for (let s = 0; s < K; s++) {
       const { row, col } = cellsOfHouse[s];
       const [name, biome] = NAMES[h][s];
-      territories.push({ id: h * K + s, name, biome, terrain: TERRAIN_OF[biome], house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0, row, col, foot: row === 0, region: -1, port: -1 });
+      territories.push({ id: h * K + s, name, biome, terrain: TERRAIN_OF[biome], house: h, slice: h, quadrant: SLICE_QUADRANT[h], isKeep: s === 0, row, col, foot: row === 0, region: -1, port: -1 });
     }
   }
   const nt = territories.length;
@@ -334,7 +351,7 @@ function buildGeo(layout: number, seed?: number): Geo {
       // Straits between quadrants, except on the land bridges.
       const toCw = frac * W * rad, toCcw = (1 - frac) * W * rad;
       const nbr = toCw < toCcw ? (house + 6) % 7 : (house + 1) % 7;
-      if (HOUSES[nbr].quadrant !== HOUSES[house].quadrant && Math.min(toCw, toCcw) < CHASM_HALF) {
+      if (SLICE_QUADRANT[nbr] !== SLICE_QUADRANT[house] && Math.min(toCw, toCcw) < CHASM_HALF) {
         const lowSide = toCw < toCcw ? nbr : house; // passes are keyed by the ccw-most House
         const onBridge = (passes[lowSide] ?? []).some((p) => {
           const mid = (edges[p.row] + edges[p.row + 1]) / 2 + p.nudge * (edges[p.row + 1] - edges[p.row]);
@@ -470,26 +487,74 @@ function buildGeo(layout: number, seed?: number): Geo {
       });
     });
   }
+  // Straits: where quadrants meet. Land bridges are the spots where land from both sides touches across one.
+  const straits: Strait[] = STRAITS.map((h) => {
+    const angle = THETA0 + (h + 1) * W;
+    const touch: { x: number; y: number; rad: number }[] = [];
+    for (const c of cells.values()) {
+      if (c.house !== h) continue;
+      for (const [dq, dr] of HEX_DIRS) {
+        const nb = cells.get(key(c.q + dq, c.r + dr));
+        if (nb && nb.house === (h + 1) % 7 && !(territories[c.t].port === nb.t)) touch.push({ x: (c.x + nb.x) / 2, y: (c.y + nb.y) / 2, rad: Math.hypot(c.x + nb.x, c.y + nb.y) / 2 });
+      }
+    }
+    touch.sort((a, b) => a.rad - b.rad);
+    const groups: (typeof touch)[] = [];
+    for (const p of touch) {
+      const last = groups[groups.length - 1];
+      if (last && p.rad - last[last.length - 1].rad < 2.5) last.push(p); else groups.push([p]);
+    }
+    const bridges = groups.map((gr) => ({
+      x: gr.reduce((a, p) => a + p.x, 0) / gr.length,
+      y: gr.reduce((a, p) => a + p.y, 0) / gr.length,
+      w: Math.max(1.8, gr[gr.length - 1].rad - gr[0].rad + 1.8),
+    }));
+    return { angle, bridges };
+  });
+
   return {
     layout, perHouse: K, rows, territories, nt, hexes, adj, dist, centroid, regions, ports, seed,
     foot: territories.filter((t) => t.foot).map((t) => t.id),
-    R_IN, R_OUT, keepOf: (h: number) => h * K,
+    R_IN, R_OUT, sliceHouse: [0, 1, 2, 3, 4, 5, 6], keepOf: (h: number) => h * K, keepOfSlice: (sl: number) => sl * K, straits,
   };
 }
 
+/** A valid slice → House deal (a permutation of the seven Houses), or null. */
+export function cleanSliceHouse(x: unknown): number[] | null {
+  if (!Array.isArray(x) || x.length !== 7) return null;
+  const a = x.map((v) => +v);
+  return a.every((v) => Number.isInteger(v) && v >= 0 && v < 7) && new Set(a).size === 7 ? a : null;
+}
+
+/** The same valley with Houses dealt onto its slices: every territory, region and Keep answers to its House. */
+function dealHouses(base: Geo, sliceHouse: number[]): Geo {
+  const K = base.perHouse;
+  const sliceOfHouse: number[] = [];
+  sliceHouse.forEach((h, sl) => { sliceOfHouse[h] = sl; });
+  const territories = base.territories.map((t) => ({ ...t, house: sliceHouse[t.slice] }));
+  const regions = base.regions.map((r) => ({ ...r, house: sliceHouse[r.house] }));
+  return { ...base, territories, regions, sliceHouse: [...sliceHouse], keepOf: (h: number) => sliceOfHouse[h] * K };
+}
+
 const CACHE = new Map<string, Geo>();
-/** The valley for one of the LAYOUTS and a war's map seed (built once, then cached). */
-export function mapGeo(layout: number, seed?: number): Geo {
-  const L = Math.max(0, Math.min(LAYOUTS.length - 1, layout | 0));
-  const k = `${L}:${seed ?? '-'}`;
+function cached(k: string, make: () => Geo) {
   let g = CACHE.get(k);
   if (!g) {
-    g = buildGeo(L, seed);
+    g = make();
     // The server sees many wars; keep only the latest few maps.
-    if (CACHE.size > 24) CACHE.delete(CACHE.keys().next().value!);
+    if (CACHE.size > 48) CACHE.delete(CACHE.keys().next().value!);
     CACHE.set(k, g);
   }
   return g;
+}
+/** The valley for one of the LAYOUTS, a war's map seed, and its deal of Houses onto slices (built once, then cached). */
+export function mapGeo(layout: number, seed?: number, sliceHouse?: number[] | null): Geo {
+  const L = Math.max(0, Math.min(LAYOUTS.length - 1, layout | 0));
+  const k = `${L}:${seed ?? '-'}`;
+  const base = cached(k, () => buildGeo(L, seed));
+  const deal = cleanSliceHouse(sliceHouse);
+  if (!deal || deal.every((h, i) => h === i)) return base;
+  return cached(`${k}:${deal.join('')}`, () => dealHouses(base, deal));
 }
 /** The valley for `n` players at a size offset from the recommended one. */
 export const geoFor = (n: number, size = 0, seed?: number): Geo => mapGeo(layoutFor(n, size), seed);

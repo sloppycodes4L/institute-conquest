@@ -1,6 +1,6 @@
 // Opening pace: in which round does the first player-vs-player battle happen? The goal is about two quiet
 // rounds of grabbing neutral land first. Usage: npx tsx scripts/pace-sim.ts [games-per-count] ['{"marchGarrison":5}'] [size] [troops]
-import { act, actingSeat, aiDuty, createGame, viewFor, BALANCE, spreadHouses, geo } from '../src/engine/engine.ts';
+import { act, actingSeat, aiDuty, createGame, viewFor, BALANCE, spreadSlices, geo } from '../src/engine/engine.ts';
 import { botAction } from '../src/engine/bot.ts';
 import { MIN_PLAYERS, MAX_PLAYERS, geoFor } from '../src/engine/data.ts';
 const games = +(process.argv[2] ?? 30);
@@ -11,7 +11,7 @@ for (let n = MIN_PLAYERS; n <= MAX_PLAYERS; n++) {
   let unfinished = 0;
   const g = geoFor(n, size);
   const houseSets = new Set<string>();
-  for (let i = 0; i < 400; i++) houseSets.add(spreadHouses(g, n, Math.random).join(''));
+  for (let i = 0; i < 400; i++) houseSets.add(spreadSlices(g, n, Math.random).join(''));
   for (let k = 0; k < games; k++) {
     const s = createGame(Array.from({ length: n }, (_, i) => 'B' + i), Math.random, { settings: { size, troops } });
     let now = 0, firstRound = 0;
@@ -26,5 +26,5 @@ for (let n = MIN_PLAYERS; n <= MAX_PLAYERS; n++) {
     rounds.push(Math.ceil(s.turn / n));
   }
   const q = (a: number[], p: number) => [...a].sort((x, y) => x - y)[Math.floor(a.length * p)];
-  console.log(`${n}p L${geo(createGame(Array.from({ length: n }, (_, i) => 'x' + i), Math.random, { settings: { size, troops } })).layout} (${g.nt} terr, ${houseSets.size} house sets): first PvP round p10/med/p90 ${q(first, 0.1)}/${q(first, 0.5)}/${q(first, 0.9)}   game rounds med ${q(rounds, 0.5)} p90 ${q(rounds, 0.9)}  unfinished ${unfinished}`);
+  console.log(`${n}p L${geo(createGame(Array.from({ length: n }, (_, i) => 'x' + i), Math.random, { settings: { size, troops } })).layout} (${g.nt} terr, ${houseSets.size} slice sets): first PvP round p10/med/p90 ${q(first, 0.1)}/${q(first, 0.5)}/${q(first, 0.9)}   game rounds med ${q(rounds, 0.5)} p90 ${q(rounds, 0.9)}  unfinished ${unfinished}`);
 }

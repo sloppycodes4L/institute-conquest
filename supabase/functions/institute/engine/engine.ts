@@ -1,14 +1,20 @@
 // The rules engine. `act()` validates and applies one action to a GameState in place.
 // Deterministic given the injected rng/now, so the server and local mode share it verbatim.
 
-import { HOUSES, MAX_PLAYERS, MIN_PLAYERS, isRough, layoutFor, mapGeo, type Geo } from './data.ts';
-import { CARD, CHARACTER_IDS, ALL_CARD_IDS, OLYMPUS_POWER, isSiegeCard, type CardDef, type PassiveKind } from './cards.ts';
+import { HOUSES, MAX_PLAYERS, MIN_PLAYERS, layoutFor, mapGeo, type Geo } from './data.ts';
+import { CARD, CHARACTER_IDS, ALL_CARD_IDS, EMOTES, OLYMPUS_POWER, isSiegeCard, type CardDef, type PassiveKind } from './cards.ts';
 
 export const NEUTRAL = -1;
 export const STD_PHANTOMS = 3;
 /** Tunables, exported so the balance simulator can sweep them. */
 export const BALANCE = {
-  keepWall: 1, stdGuard: 5, graceRounds: 1, stdDefDice: 3,
+  stdGuard: 5, graceRounds: 1,
+  /** Olympus's walls: + to every defense die of its garrison. */
+  olyWall: 1,
+  /** A neutral House's Keep: exactly this garrison at setup, no walls, no modifiers, and it never yields to Overwhelm. */
+  neutralKeep: 10,
+  /** Other neutral garrisons yield without a fight to this many times their number (and otherwise roll 1 die). */
+  overwhelm: 2,
   /**
    * Olympus garrison per territory of a House slice, so it grows with the map (143 on the 4-player map,
    * plus its Proctors). Behind its walls each defender costs ~1.9 attackers. In bot trials with armies
@@ -22,16 +28,20 @@ export const BALANCE = {
   olyRounds: 3,
   /** Rounds before a failed siege can be tried again. */
   olyCooldown: 2,
-  /** Attacking from Mountains: + to the highest attack die. */
+  /** Attacking from Mountains: + to the lowest attack die that gets compared. Never against neutrals. */
   mountainAtk: 1,
-  /** Defending a Forest: + to the highest defense die. */
-  forestDef: 2,
+  /** A House defending a Forest: + to the lowest defense die. Neutrals get no cover. */
+  forestDef: 1,
   /** Each player starts holding the territories of their slice this many steps from their Keep. */
   coreRadius: 1,
-  /** Neutral garrisons on the rest of a player's slice: inside, on marches by a neutral House, on fronts facing another player. */
+  /**
+   * Neutral garrisons on the rest of a player's slice: inside, on marches by a neutral House, on fronts facing another
+   * player. Fronts and marches are thick because lone neutrals roll one die and yield to twice their number: this keeps
+   * the first player-vs-player battle where it was before that rule (pace-sim: median round 3–4).
+   */
   sliceGarrison: 2,
-  marchGarrison: 3,
-  frontGarrison: 7,
+  marchGarrison: 6,
+  frontGarrison: 14,
 };
 export const TRADE_VALUE = 10;
 export const HAND_LIMIT = 5;
@@ -59,6 +69,8 @@ export interface GameOpts {
   seed?: number;
   /** Seconds per turn, 0 for none. */
   timer?: number;
+  /** Which House is dealt onto each slice of the valley (missing: slice i is House i). */
+  houses?: number[];
 }
 
 /** Recommended starting armies, spread over a player's starting core. */
@@ -98,11 +110,19 @@ export interface TurnState {
   conquered: number;
   fortifies: number;
   stdMoved: boolean;
+  /** The Standard can be raised once per turn. */
+  stdRaised?: boolean;
   warCry: boolean;
   buffs: Buffs;
   battle: Battle | null;
   mustMove: { from: number; to: number; min: number; max: number } | null;
+  /** Keeps conquered this turn (a Primus can be sworn in on the spot). */
+  keepsTaken?: number[];
 }
+/** A Character sworn in as Primus of a conquered Keep: its Passive works for the seat that holds the Keep. */
+export interface PrimusSlot { card: string; seat: number }
+/** A public call to arms by the strongest House: the first comers join its (public) alliance. */
+export interface Rally { by: number; slots: number; turn: number }
 export interface Reaction { defender: number; deadline: number; from: number; to: number; commit: number }
 /**
  * One accepted action, as the public map saw it: which territories changed hands or armies (t, owner, armies triples),
@@ -160,6 +180,13 @@ export interface GameState {
   vote: SiegeVote | null;
   siege: Siege | null;
   siegeCooldown: number;
+  /** Primus of each House's Keep, by House (missing on older wars). */
+  primus?: (PrimusSlot | null)[];
+  rally?: Rally | null;
+  /** A seat that walked out of an alliance can't join one until this turn number. */
+  allyBan?: number[];
+  /** When each seat last emoted (ms). */
+  lastEmote?: number[];
   /** When the current turn's timer runs out (ms since epoch), or null with no timer. */
   deadline?: number | null;
   handCounts: number[];
@@ -193,7 +220,15 @@ export type Action =
   | { type: 'reveal' }
   | { type: 'proposeSiege' }
   | { type: 'vote'; yes: boolean }
-  | { type: 'concede' };
+  | { type: 'concede' }
+  /** Swear a Character from your hand in as Primus of a Keep you conquered. */
+  | { type: 'primus'; keep: number; card: string }
+  | { type: 'leaveAlliance' }
+  | { type: 'cancelInvite'; invite: number }
+  | { type: 'openRally' }
+  | { type: 'joinRally' }
+  | { type: 'cancelRally' }
+  | { type: 'emote'; line: number };
 
 export interface Ctx { rng: () => number; now: number }
 export type Result = { ok: true } | { ok: false; err: string };
@@ -207,12 +242,16 @@ let NOW = 0;
 // ---------------------------------------------------------------------------
 // helpers
 
-export const geo = (s: GameState): Geo => mapGeo(s.opts?.layout ?? layoutFor(s.players.length), s.opts?.seed);
+export const geo = (s: GameState): Geo => mapGeo(s.opts?.layout ?? layoutFor(s.players.length), s.opts?.seed, s.opts?.houses);
 
 /** Wars saved before settings and replays existed get the old defaults. */
 export function norm(s: GameState): GameState {
   if (!s.opts) s.opts = { layout: layoutFor(s.players.length), troops: 0, alliances: true, siege: true };
   if (!s.trail) s.trail = [];
+  if (!s.primus) s.primus = HOUSES.map(() => null);
+  if (s.rally === undefined) s.rally = null;
+  if (!s.allyBan) s.allyBan = s.players.map(() => 0);
+  if (!s.lastEmote) s.lastEmote = s.players.map(() => -1e15);
   return s;
 }
 
@@ -225,8 +264,20 @@ export function shuffle<T>(a: T[], rng: () => number = R): T[] {
 }
 const d6 = () => 1 + Math.floor(R() * 6);
 
+/** Every event logged since the last drainLog(), whole (the game state keeps only the last few dice of a battle). */
+let FRESH: GameEvent[] = [];
+/** The full events logged since the last call, for the server's permanent War Log. */
+export function drainLog(): GameEvent[] {
+  const out = FRESH;
+  FRESH = [];
+  return out;
+}
+
 function log(s: GameState, ev: Omit<GameEvent, 'id'>) {
-  s.log.push({ id: ++s.seq, ...ev } as GameEvent);
+  const full = { id: ++s.seq, ...ev } as GameEvent;
+  FRESH.push(full);
+  if (FRESH.length > 20000) FRESH.splice(0, FRESH.length - 20000);
+  s.log.push(Array.isArray(full.rolls) && full.rolls.length > 4 ? { ...full, rolls: full.rolls.slice(-4) } : full);
   if (s.log.length > 360) s.log.splice(0, s.log.length - 360);
 }
 
@@ -261,10 +312,18 @@ export function generalPassive(s: GameState, seat: number, kind: PassiveKind): n
   if (!c?.passive || c.passive.kind !== kind) return 0;
   return c.passive.n + (c.house === p.house ? 1 : 0);
 }
-/** Passive value for a seat: its own General plus every ally's General (alliances share Passives). */
+/** The Primuses of the Keeps `seat` holds: [House of the Keep, card]. */
+export function primiOf(s: GameState, seat: number): { house: number; card: string }[] {
+  return (s.primus ?? []).flatMap((p, h) => (p && p.seat === seat ? [{ house: h, card: p.card }] : []));
+}
+/** A seat's Primuses' Passive (no House-match bonus, never shared with allies). */
+export function primusPassive(s: GameState, seat: number, kind: PassiveKind): number {
+  return primiOf(s, seat).reduce((a, p) => { const c = CARD[p.card]; return a + (c?.passive?.kind === kind ? c.passive.n : 0); }, 0);
+}
+/** Passive value for a seat: its own General plus every ally's General (alliances share Passives), plus its own Primuses. */
 export function passive(s: GameState, seat: number, kind: PassiveKind): number {
   if (seat < 0) return 0;
-  return [seat, ...allies(s, seat)].reduce((a, x) => a + generalPassive(s, x, kind), 0);
+  return [seat, ...allies(s, seat)].reduce((a, x) => a + generalPassive(s, x, kind), 0) + primusPassive(s, seat, kind);
 }
 export function passiveValue(card: CardDef, playerHouse: number) {
   return card.passive ? card.passive.n + (card.house === playerHouse ? 1 : 0) : 0;
@@ -327,43 +386,47 @@ export function attackBlocker(s: GameState, seat: number, from: number, to: numb
   return null;
 }
 
-/**
- * The march from `from` to `to` through `seat`'s land. Mountains, water and marsh can end a march but never be crossed:
- * if every route crosses one, the column halts on the first such territory (`stop`) and has to go on next turn.
- */
+/** The march from `from` to `to` through `seat`'s land (the shortest one). The column always arrives. */
 export function fortifyRoute(s: GameState, seat: number, from: number, to: number): { path: number[]; stop: number } | null {
-  const g = geo(s), T = g.territories;
+  const g = geo(s);
   if (!(from >= 0 && from < g.nt && to >= 0 && to < g.nt) || from === to || s.owner[from] !== seat || s.owner[to] !== seat) return null;
-  const search = (blockRough: boolean) => {
-    const prev = new Map<number, number>([[from, -1]]);
-    const q = [from];
-    for (let i = 0; i < q.length; i++) {
-      const c = q[i];
-      if (c === to) break;
-      if (blockRough && c !== from && isRough(T[c].terrain)) continue;
-      for (const n of g.adj[c]) if (s.owner[n] === seat && !prev.has(n)) { prev.set(n, c); q.push(n); }
-    }
-    if (!prev.has(to)) return null;
-    const path = [to];
-    while (path[0] !== from) path.unshift(prev.get(path[0])!);
-    return path;
-  };
-  const clear = search(true);
-  if (clear) return { path: clear, stop: to };
-  const path = search(false);
-  if (!path) return null;
-  const halt = path.findIndex((t, i) => i > 0 && t !== to && isRough(T[t].terrain));
-  return { path, stop: path[halt] };
+  const prev = new Map<number, number>([[from, -1]]);
+  const q = [from];
+  for (let i = 0; i < q.length; i++) {
+    const c = q[i];
+    if (c === to) break;
+    for (const n of g.adj[c]) if (s.owner[n] === seat && !prev.has(n)) { prev.set(n, c); q.push(n); }
+  }
+  if (!prev.has(to)) return null;
+  const path = [to];
+  while (path[0] !== from) path.unshift(prev.get(path[0])!);
+  return { path, stop: to };
 }
 
-/** Terrain bonuses for a fight: +high ground for the attacker, +cover for the defender. */
+/**
+ * Terrain bonuses for a fight: the high ground (+1 to the attacker's lowest compared die) and forest cover (+1 to the
+ * defender's lowest die). The wilds know their own ground: terrain never counts when the defender is neutral.
+ * `to` of -1 is Olympus.
+ */
 export function terrainMods(s: GameState, from: number, to: number) {
   const T = geo(s).territories;
+  if (to >= 0 && s.owner[to] === NEUTRAL) return { atk: 0, def: 0 };
   return {
     atk: from >= 0 && T[from].terrain === 'mountain' ? BALANCE.mountainAtk : 0,
     def: to >= 0 && T[to].terrain === 'forest' ? BALANCE.forestDef : 0,
   };
 }
+
+/** A neutral House's Keep: 10 behind no walls, 2 dice, no modifiers, and it never yields. */
+export const isNeutralKeep = (s: GameState, t: number) => t >= 0 && s.owner[t] === NEUTRAL && geo(s).territories[t].isKeep;
+/** Any other neutral garrison rolls a single die, and yields to twice its number. */
+export const isWildGarrison = (s: GameState, t: number) => t >= 0 && s.owner[t] === NEUTRAL && !geo(s).territories[t].isKeep;
+/** Would attacking `to` from `from` right now make the garrison yield without a fight? */
+export function overwhelms(s: GameState, from: number, to: number) {
+  return isWildGarrison(s, to) && s.armies[from] - 1 >= BALANCE.overwhelm * s.armies[to];
+}
+/** How many dice a defender may roll (before Break the Line). */
+export const defenderDiceCap = (s: GameState, to: number) => (isWildGarrison(s, to) ? 1 : 2);
 
 export function reinforcementBreakdown(s: GameState, seat: number) {
   const g = geo(s);
@@ -408,28 +471,49 @@ function takeFromHand(s: GameState, seat: number, id: string, allowLocked = fals
 // setup
 
 /**
- * Which Houses get players: a random pick among the sets with the fewest next-door neighbours (players whose
- * slices touch), so the first rounds are spent taking neutral land rather than fighting each other.
+ * Which slices of the valley get players: the sets whose Keeps are furthest apart (the largest smallest Keep-to-Keep
+ * distance), then with the fewest pairs of slices that touch, picked at random among the ties. The first rounds are
+ * spent taking neutral land rather than fighting each other.
  */
-export function spreadHouses(g: Geo, n: number, rng: () => number = R): number[] {
-  const keeps = HOUSES.map((_, h) => g.keepOf(h));
-  const near = Math.min(...keeps.flatMap((a, i) => keeps.filter((_, j) => j !== i).map((b) => g.dist[a][b])));
-  const sets: { hs: number[]; close: number }[] = [];
-  const walk = (from: number, hs: number[]) => {
-    if (hs.length === n) {
-      let close = 0;
-      for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) if (g.dist[keeps[hs[i]]][keeps[hs[j]]] <= near) close++;
-      sets.push({ hs: [...hs], close });
+export function spreadSlices(g: Geo, n: number, rng: () => number = R): number[] {
+  const keeps = HOUSES.map((_, sl) => g.keepOfSlice(sl));
+  const touch = HOUSES.map(() => HOUSES.map(() => false));
+  for (const t of g.territories) for (const x of g.adj[t.id]) {
+    const u = g.territories[x];
+    if (u.slice !== t.slice && t.port !== x) touch[t.slice][u.slice] = true;
+  }
+  const sets: { sl: number[]; far: number; close: number }[] = [];
+  const walk = (from: number, sl: number[]) => {
+    if (sl.length === n) {
+      let far = Infinity, close = 0;
+      for (let i = 0; i < sl.length; i++) for (let j = i + 1; j < sl.length; j++) {
+        far = Math.min(far, g.dist[keeps[sl[i]]][keeps[sl[j]]]);
+        if (touch[sl[i]][sl[j]]) close++;
+      }
+      sets.push({ sl: [...sl], far, close });
       return;
     }
-    for (let h = from; h < HOUSES.length; h++) walk(h + 1, [...hs, h]);
+    for (let h = from; h < HOUSES.length; h++) walk(h + 1, [...sl, h]);
   };
   walk(0, []);
-  const best = Math.min(...sets.map((x) => x.close));
-  let pool = sets.filter((x) => x.close === best);
-  // Too few choices means the same Houses every game: allow one more pair of neighbours.
-  if (pool.length < 4) pool = sets.filter((x) => x.close <= best + 1);
-  return pool[Math.floor(rng() * pool.length)].hs;
+  const far = Math.max(...sets.map((x) => x.far));
+  const close = Math.min(...sets.filter((x) => x.far === far).map((x) => x.close));
+  const pool = sets.filter((x) => x.far === far && x.close === close);
+  return pool[Math.floor(rng() * pool.length)].sl;
+}
+
+/**
+ * Deal the Houses: the players' slices are spread out, each player gets a random House from all seven, and the
+ * Houses nobody drew fill the other slices as neutrals. Returns the slice → House deal and each player's House.
+ */
+export function dealHouses(g: Geo, n: number, rng: () => number = R): { sliceHouse: number[]; playerHouses: number[] } {
+  const slices = shuffle(spreadSlices(g, n, rng), rng);
+  const houses = shuffle(HOUSES.map((_, h) => h), rng);
+  const sliceHouse = new Array(HOUSES.length).fill(-1);
+  slices.forEach((sl, i) => { sliceHouse[sl] = houses[i]; });
+  const rest = houses.slice(n);
+  for (let sl = 0; sl < sliceHouse.length; sl++) if (sliceHouse[sl] < 0) sliceHouse[sl] = rest.shift()!;
+  return { sliceHouse, playerHouses: houses.slice(0, n) };
 }
 
 export function createGame(names: string[], rng: () => number, opts: { ai?: boolean[]; settings?: Partial<WarSettings> } = {}): GameState {
@@ -437,8 +521,10 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
   const n = names.length;
   if (n < MIN_PLAYERS || n > MAX_PLAYERS) throw new Error(`${MIN_PLAYERS} to ${MAX_PLAYERS} players`);
   const o: GameOpts = { ...resolveSettings(n, opts.settings), seed: 1 + Math.floor(rng() * 2 ** 30) };
-  const g = mapGeo(o.layout, o.seed);
-  const houses = shuffle(spreadHouses(g, n));
+  const deal = dealHouses(mapGeo(o.layout, o.seed), n);
+  o.houses = deal.sliceHouse;
+  const g = mapGeo(o.layout, o.seed, o.houses);
+  const houses = deal.playerHouses;
   const players: Player[] = names.map((name, seat) => ({
     seat, name: name.slice(0, 24) || `Gold ${seat + 1}`, house: houses[seat], general: null, alive: true, dominatedBy: null, ai: opts.ai?.[seat] || undefined,
   }));
@@ -476,6 +562,8 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
       armies[pick]++;
     }
   }
+  // Every House nobody drew holds its Keep with exactly this many.
+  for (let h = 0; h < HOUSES.length; h++) if (!playerHouses.has(h)) armies[g.keepOf(h)] = BALANCE.neutralKeep;
 
   const s: GameState = {
     v: 2, version: 0, opts: o, trail: [], phase: 'passage', players, order: shuffle(players.map((p) => p.seat)), cur: -1, turn: 0,
@@ -483,6 +571,7 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
     standards: HOUSES.map((_, h) => ({ at: g.keepOf(h), captured: false, by: null, guard: playerHouses.has(h) ? BALANCE.stdGuard : 0 })),
     killed: [], ts: freshTurn(), reaction: null, winner: null, winners: [], log: [], seq: 0, uid: 0,
     warBegun: false, alliances: [], invites: [], vote: null, siege: null, siegeCooldown: 0,
+    primus: HOUSES.map(() => null), rally: null, allyBan: players.map(() => 0), lastEmote: players.map(() => -1e15),
     handCounts: [], deckCount: 0,
     priv: { deck, discard: [], hands: players.map(() => []), passage },
   };
@@ -494,8 +583,9 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
 
 function freshTurn(): TurnState {
   return {
-    reinforcements: 0, placed: {}, conquered: 0, fortifies: 0, stdMoved: false, warCry: false,
+    reinforcements: 0, placed: {}, conquered: 0, fortifies: 0, stdMoved: false, stdRaised: false, warCry: false,
     buffs: { atk: 0, breakLine: 0, longStrike: 0, fortifyAll: false, fury: false, siegeWalls: 0, siegeAtk: 0 }, battle: null, mustMove: null,
+    keepsTaken: [],
   };
 }
 
@@ -516,6 +606,8 @@ function startTurn(s: GameState, seat: number) {
   // Your quiet invitations expire when your next turn comes around.
   for (const inv of s.invites.filter((i) => i.from === seat)) log(s, { k: 'inviteExpired', from: inv.from, to: inv.to, vis: [inv.from, inv.to] });
   s.invites = s.invites.filter((i) => i.from !== seat);
+  // So does your Rally.
+  if (s.rally?.by === seat) { log(s, { k: 'rallyClosed', by: seat, why: 'expired' }); s.rally = null; }
   if (s.siege?.members.includes(seat)) olympusTurn(s, seat);
   const st = s.standards[p.house];
   if (!st.captured) st.guard = BALANCE.stdGuard + passive(s, seat, 'stdGuard');
@@ -545,14 +637,24 @@ function advance(s: GameState) {
 // ---------------------------------------------------------------------------
 // combat
 
-interface Mods { atkHigh: number; atkAll: number; defHigh: number; defAll: number }
+/**
+ * Dice modifiers. High: the highest die. atkLow: the lowest attack die that gets compared (index min(aDice, dDice) − 1).
+ * defLow: the lowest defense die. All: every die. Dice are sorted high to low first, modified, then compared in
+ * that order (no re-sort).
+ */
+export interface Mods { atkHigh: number; atkLow: number; atkAll: number; defHigh: number; defLow: number; defAll: number }
+export function modifyDice(a: number[], d: number[], m: Mods) {
+  a[0] += m.atkHigh; d[0] += m.defHigh;
+  a[Math.min(a.length, d.length) - 1] += m.atkLow;
+  d[d.length - 1] += m.defLow;
+  for (let i = 0; i < a.length; i++) a[i] += m.atkAll;
+  for (let i = 0; i < d.length; i++) d[i] += m.defAll;
+}
 function roll(aDice: number, dDice: number, m: Mods) {
   const a = Array.from({ length: aDice }, d6).sort((x, y) => y - x);
   const d = Array.from({ length: dDice }, d6).sort((x, y) => y - x);
   const raw = { a: [...a], d: [...d] };
-  a[0] += m.atkHigh; d[0] += m.defHigh;
-  for (let i = 0; i < a.length; i++) a[i] += m.atkAll;
-  for (let i = 0; i < d.length; i++) d[i] += m.defAll;
+  modifyDice(a, d, m);
   let aLoss = 0, dLoss = 0;
   for (let i = 0; i < Math.min(a.length, d.length); i++) (a[i] > d[i] ? dLoss++ : aLoss++);
   return { a, d, raw, aLoss, dLoss };
@@ -569,13 +671,26 @@ function startBattle(s: GameState, key: string, longStrike: boolean): Battle {
   return battle;
 }
 
-/** Keeps are fortresses: walls add to every defense die, and the General's defKeep adds to the highest. */
-function defenseMods(s: GameState, to: number, extraAll = 0): { defHigh: number; defAll: number } {
+/**
+ * The defender's side of the dice. Keeps have no walls: a House's Keep gets only its Passives (defKeep on the highest
+ * die), forests their cover on the lowest die, and neutrals nothing at all.
+ */
+export function defenseMods(s: GameState, to: number, extraAll = 0): { defHigh: number; defLow: number; defAll: number } {
   const def = s.owner[to];
   const keep = geo(s).territories[to].isKeep;
   return {
-    defHigh: (keep && def >= 0 ? passive(s, def, 'defKeep') : 0) + terrainMods(s, -1, to).def,
-    defAll: (keep ? BALANCE.keepWall : 0) + extraAll,
+    defHigh: keep && def >= 0 ? passive(s, def, 'defKeep') : 0,
+    defLow: terrainMods(s, -1, to).def,
+    defAll: extraAll,
+  };
+}
+
+/** The attacker's side of the dice in a normal attack (the battle's card buffs, Passives vs neutrals, the high ground). */
+export function attackMods(s: GameState, seat: number, from: number, to: number, atkBuff: boolean): { atkHigh: number; atkLow: number; atkAll: number } {
+  return {
+    atkHigh: (atkBuff ? 1 : 0) + (s.owner[to] === NEUTRAL ? passive(s, seat, 'atkNeutral') : 0),
+    atkLow: terrainMods(s, from, to).atk,
+    atkAll: s.ts.buffs.fury ? 1 : 0,
   };
 }
 
@@ -609,15 +724,16 @@ function captureStandard(s: GameState, h: number, captor: number) {
   }
 }
 
-function leaveAlliance(s: GameState, seat: number) {
+/** Take `seat` out of its alliance (it died, walked out, or answered a Rally). `leaver` logs a walk-out. */
+function leaveAlliance(s: GameState, seat: number, leaver = false) {
   s.invites = s.invites.filter((i) => i.from !== seat && i.to !== seat);
   const a = allianceOf(s, seat);
   if (!a) return;
+  const before = [...a.members];
   a.members = a.members.filter((m) => m !== seat);
-  if (a.members.length < 2) {
-    s.alliances = s.alliances.filter((x) => x !== a);
-    log(s, { k: 'allianceEnds', members: [...a.members, seat], vis: a.public ? undefined : [...a.members, seat] });
-  }
+  const dissolved = a.members.length < 2;
+  if (dissolved) s.alliances = s.alliances.filter((x) => x !== a);
+  if (dissolved || leaver) log(s, { k: 'allianceEnds', members: before, ...(leaver ? { leaver: seat } : {}), dissolved, vis: a.public ? undefined : before });
   if (s.vote && !s.alliances.some((x) => x.id === s.vote!.alliance)) s.vote = null;
   if (s.siege) {
     s.siege.members = s.siege.members.filter((m) => m !== seat);
@@ -636,6 +752,7 @@ function dominate(s: GameState, victim: number, captor: number) {
   else s.priv!.discard.push(...cards.map((c) => c.id));
   s.standards.forEach((st) => { if (st.captured && st.by === victim) st.by = captor; });
   log(s, { k: 'dominated', victim, captor, terr, cards: cards.length });
+  if (s.rally?.by === victim) { log(s, { k: 'rallyClosed', by: victim, why: 'fallen' }); s.rally = null; }
   leaveAlliance(s, victim);
   const alive = s.players.filter((p) => p.alive);
   if (alive.length <= 1) {
@@ -650,11 +767,18 @@ function dominate(s: GameState, victim: number, captor: number) {
   }
 }
 
+/** A Keep changed hands this turn: its new holder may swear in a Primus on the spot. */
+function noteKeep(s: GameState, to: number) {
+  if (!geo(s).territories[to].isKeep) return;
+  (s.ts.keepsTaken ??= []).push(to);
+}
+
 function conquer(s: GameState, seat: number, from: number, to: number, minMove: number) {
   const prev = s.owner[to];
   s.owner[to] = seat;
   s.armies[to] = 0;
   s.ts.conquered++;
+  noteKeep(s, to);
   const bonus = s.ts.conquered === 1 ? passive(s, seat, 'conquest') : 0;
   s.armies[to] += bonus;
   log(s, { k: 'conquer', seat, from, to, prev, bonus });
@@ -679,7 +803,16 @@ function attack(s: GameState, seat: number, a: Extract<Action, { type: 'attack' 
   checkAttack(s, seat, from, to);
   if (a.commit != null) return standardAttack(s, seat, from, to, a.commit);
   onHostility(s, seat, s.owner[to]);
-  const battle = startBattle(s, `${from}>${to}`, !geo(s).adj[from].includes(to));
+  const reach = !geo(s).adj[from].includes(to);
+  // A small neutral garrison facing twice its number lays down its arms: no dice, no losses.
+  if (overwhelms(s, from, to)) {
+    if (reach && s.ts.battle?.key !== `${from}>${to}`) s.ts.buffs.longStrike--;
+    const n = s.armies[from] - 1, garrison = s.armies[to];
+    log(s, { k: 'overwhelm', seat, from, to, n, garrison });
+    conquer(s, seat, from, to, Math.max(1, Math.min(3, a.dice ?? 3, n)));
+    return;
+  }
+  const battle = startBattle(s, `${from}>${to}`, reach);
   const def = s.owner[to];
   const tm = terrainMods(s, from, to);
   const rolls: any[] = [];
@@ -687,12 +820,8 @@ function attack(s: GameState, seat: number, a: Extract<Action, { type: 'attack' 
   do {
     const dice = Math.max(1, Math.min(3, a.dice ?? 3, s.armies[from] - 1));
     const dUnits = s.armies[to] + guardAt(s, to);
-    const dDice = battle.breakLine ? 1 : Math.min(standardAt(s, to) >= 0 ? BALANCE.stdDefDice : 2, dUnits);
-    const m: Mods = {
-      atkHigh: (battle.atk ? 1 : 0) + (def === NEUTRAL ? passive(s, seat, 'atkNeutral') : 0) + tm.atk,
-      atkAll: s.ts.buffs.fury ? 1 : 0,
-      ...defenseMods(s, to),
-    };
+    const dDice = battle.breakLine ? 1 : Math.min(defenderDiceCap(s, to), dUnits);
+    const m: Mods = { ...attackMods(s, seat, from, to, battle.atk), ...defenseMods(s, to) };
     const r = roll(dice, dDice, m);
     s.armies[from] -= r.aLoss;
     let dl = r.dLoss;
@@ -703,12 +832,12 @@ function attack(s: GameState, seat: number, a: Extract<Action, { type: 'attack' 
     aLost += r.aLoss; dLost += r.dLoss;
     rolls.push({ a: r.a, d: r.d, raw: r.raw, aLoss: r.aLoss, dLoss: r.dLoss });
     if (s.armies[to] === 0 && guardAt(s, to) === 0) {
-      log(s, { k: 'battle', seat, def, from, to, rolls: rolls.slice(-4), n: rolls.length, aLost, dLost, won: true, blitz: !!a.blitz, tA: tm.atk, tD: tm.def });
+      log(s, { k: 'battle', seat, def, from, to, rolls, n: rolls.length, aLost, dLost, won: true, blitz: !!a.blitz, tA: tm.atk, tD: tm.def });
       conquer(s, seat, from, to, dice);
       return;
     }
   } while (a.blitz && s.armies[from] >= 2);
-  log(s, { k: 'battle', seat, def, from, to, rolls: rolls.slice(-4), n: rolls.length, aLost, dLost, won: false, blitz: !!a.blitz, tA: tm.atk, tD: tm.def });
+  log(s, { k: 'battle', seat, def, from, to, rolls, n: rolls.length, aLost, dLost, won: false, blitz: !!a.blitz, tA: tm.atk, tD: tm.def });
 }
 
 function counterCards(s: GameState, seat: number) {
@@ -718,8 +847,10 @@ function counterCards(s: GameState, seat: number) {
 function standardAttack(s: GameState, seat: number, from: number, to: number, commit: number) {
   const h = s.players[seat].house;
   if (standardAt(s, from) !== h) fail('Your Standard is not in that territory.');
+  if (s.ts.stdRaised) fail('You already raised the Standard this turn. It can be raised once per turn.');
   if (!Number.isInteger(commit) || commit < 1 || commit > s.armies[from] - 1) fail('Commit between 1 and all-but-one of your armies.');
   const def = s.owner[to];
+  s.ts.stdRaised = true;
   onHostility(s, seat, def);
   if (def >= 0 && counterCards(s, def).length) {
     s.reaction = { defender: def, deadline: NOW + REACTION_MS, from, to, commit };
@@ -770,17 +901,20 @@ function resolveStandard(s: GameState, seat: number, from: number, to: number, c
     log(s, { k: 'warCry', seat, general: g.id, effect });
   }
   const dStart = dReal;
+  const am = attackMods(s, seat, from, to, battle.atk || wcAtk);
   const m: Mods = {
-    atkHigh: passive(s, seat, 'atkStd') + (battle.atk || wcAtk ? 1 : 0) + (def === NEUTRAL ? passive(s, seat, 'atkNeutral') : 0) + terrainMods(s, from, to).atk,
+    ...am,
+    atkHigh: am.atkHigh + passive(s, seat, 'atkStd'),
     atkAll: s.ts.buffs.fury || wcFury ? 1 : 0,
     ...defenseMods(s, to, defAll),
   };
   const rolls: any[] = [];
   const stdH = standardAt(s, to);
+  const cap = defenderDiceCap(s, to);
   let guard = 0;
   while (aReal + aPh > 0 && dReal + dPh > 0 && guard++ < 500) {
     const aDice = Math.min(3, aReal + aPh);
-    const dDice = battle.breakLine || wcBreak ? 1 : Math.min(stdH >= 0 ? BALANCE.stdDefDice : 2, dReal + dPh);
+    const dDice = battle.breakLine || wcBreak ? 1 : Math.min(cap, dReal + dPh);
     const r = roll(aDice, dDice, m);
     let al = r.aLoss, dl = r.dLoss;
     const ar = Math.min(al, aReal); aReal -= ar; aPh -= al - ar;
@@ -794,12 +928,13 @@ function resolveStandard(s: GameState, seat: number, from: number, to: number, c
     s.armies[to] = Math.max(1, aReal + enslaved);
     s.standards[me.house].at = to;
     s.ts.conquered++;
+    noteKeep(s, to);
     if (s.ts.conquered === 1) s.armies[to] += passive(s, seat, 'conquest');
-    log(s, { k: 'stdBattle', seat, def, from, to, rolls: rolls.slice(-4), n: rolls.length, won: true, enslaved, survivors: aReal, aLost: commit - aReal, dLost: dStart });
+    log(s, { k: 'stdBattle', seat, def, from, to, rolls, n: rolls.length, won: true, enslaved, survivors: aReal, aLost: commit - aReal, dLost: dStart });
     if (stdH >= 0 && stdH !== me.house) captureStandard(s, stdH, seat);
   } else {
     s.armies[to] = Math.max(1, dReal);
-    log(s, { k: 'stdBattle', seat, def, from, to, rolls: rolls.slice(-4), n: rolls.length, won: false, aLost: commit, dLost: dStart - dReal });
+    log(s, { k: 'stdBattle', seat, def, from, to, rolls, n: rolls.length, won: false, aLost: commit, dLost: dStart - dReal });
     captureStandard(s, me.house, def);
     if (s.phase !== 'over') advance(s);
   }
@@ -815,24 +950,82 @@ export function inviteBlocker(s: GameState, seat: number, to: number): string | 
   if (!s.warBegun) return 'Diplomacy opens once one House has attacked another.';
   if (!s.players[seat]?.alive || !s.players[to]?.alive || seat === to) return 'Pick a living rival.';
   if (allied(s, seat, to)) return 'You are already allies.';
+  if (banned(s, seat)) return 'You walked out of an alliance. No one will have you for a round.';
   // Only a *public* rival alliance blocks the offer, so the error never gives away a secret pact.
   // (If the target turns out to be secretly sworn elsewhere, they simply can't accept.)
-  if (allianceOf(s, seat) && allianceOf(s, to)?.public) return 'They are sworn to another alliance.';
+  if (allianceOf(s, to)?.public) return 'They are sworn to another alliance.';
   if (s.invites.some((i) => (i.from === seat && i.to === to) || (i.from === to && i.to === seat))) return 'A message is already on its way between you.';
   if (s.invites.filter((i) => i.from === seat).length >= MAX_INVITES) return `You can have at most ${MAX_INVITES} invitations out at once.`;
   if (s.siege) return 'The valley is at war with Olympus.';
   return null;
 }
 
+/** A seat that walked out of an alliance sits out a full round before it can join another. */
+const banned = (s: GameState, seat: number) => (s.allyBan?.[seat] ?? 0) > s.turn;
+
+/** One alliance per House: the invitee joins the inviter's alliance (or they found one together). */
 function joinAlliance(s: GameState, inv: Invite) {
-  const A = allianceOf(s, inv.from), B = allianceOf(s, inv.to);
-  let al: Alliance, joined: number;
-  if (A) { A.members.push(inv.to); al = A; joined = inv.to; }
-  else if (B) { B.members.push(inv.from); al = B; joined = inv.from; }
-  else { al = { id: ++s.uid, members: [inv.from, inv.to], public: inv.public, since: s.turn }; s.alliances.push(al); joined = inv.to; }
+  const A = allianceOf(s, inv.from);
+  let al: Alliance;
+  if (A) { A.members.push(inv.to); al = A; }
+  else { al = { id: ++s.uid, members: [inv.from, inv.to], public: inv.public, since: s.turn }; s.alliances.push(al); }
   // Pending invites that can no longer be honoured are withdrawn.
-  s.invites = s.invites.filter((i) => !allied(s, i.from, i.to) && !(allianceOf(s, i.from) && allianceOf(s, i.to)));
-  log(s, { k: 'allianceFormed', members: [...al.members], joined, by: inv.from, pub: al.public, quip: Math.floor(R() * 1000), vis: al.public ? undefined : [...al.members] });
+  s.invites = s.invites.filter((i) => !allied(s, i.from, i.to));
+  log(s, { k: 'allianceFormed', members: [...al.members], joined: inv.to, by: inv.from, pub: al.public, quip: Math.floor(R() * 1000), vis: al.public ? undefined : [...al.members] });
+}
+
+/** Total armies per seat. */
+export const armyTotal = (s: GameState, seat: number) => s.owner.reduce((a, o, t) => (o === seat ? a + s.armies[t] : a), 0);
+/** The living House with the most armies, or -1 on a tie. */
+export function strongestSeat(s: GameState): number {
+  const living = s.players.filter((p) => p.alive).map((p) => ({ seat: p.seat, n: armyTotal(s, p.seat) })).sort((a, b) => b.n - a.n);
+  if (!living.length || (living[1] && living[1].n === living[0].n)) return -1;
+  return living[0].seat;
+}
+/** How many Houses a Rally may gather, the rallier included. */
+export const rallySlots = (s: GameState) => Math.floor(s.players.filter((p) => p.alive).length / 2);
+
+/** Why `seat` can't call a Rally Against Olympus right now, or null if it can. */
+export function rallyBlocker(s: GameState, seat: number): string | null {
+  if (s.phase === 'passage' || s.phase === 'over') return 'Not now.';
+  if (!s.opts.alliances) return 'Alliances are off in this war.';
+  if (!s.players[seat]?.alive) return 'The dead rally no one.';
+  if (!s.warBegun) return 'Diplomacy opens once one House has attacked another.';
+  if (s.siege) return 'The valley is already at war with Olympus.';
+  if (s.rally) return s.rally.by === seat ? 'Your Rally is already open.' : 'Another Rally is already open.';
+  if (strongestSeat(s) !== seat) return 'Only the strongest House (the most armies, no ties) may call a Rally.';
+  const slots = rallySlots(s);
+  if (slots < 2) return 'Too few Houses still stand for a Rally.';
+  if ((allianceOf(s, seat)?.members.length ?? 1) >= slots) return 'Your alliance is already as large as a Rally allows.';
+  return null;
+}
+/** Why `seat` can't answer the open Rally, or null if it can. */
+export function joinRallyBlocker(s: GameState, seat: number): string | null {
+  const r = s.rally;
+  if (!r) return 'There is no Rally to answer.';
+  if (!s.players[seat]?.alive) return 'The dead answer no one.';
+  if (seat === r.by) return 'It is your own Rally.';
+  if (allied(s, seat, r.by)) return 'You already stand with them.';
+  if (banned(s, seat)) return 'You walked out of an alliance. No one will have you for a round.';
+  if ((allianceOf(s, r.by)?.members.length ?? 1) >= r.slots) return 'The Rally is full.';
+  return null;
+}
+
+function joinRally(s: GameState, seat: number) {
+  const r = s.rally!;
+  const old = allianceOf(s, seat);
+  if (old) {
+    // Answering the Rally means walking out on your old allies: they hear about it as a betrayal.
+    log(s, { k: 'defect', seat, by: r.by, members: [...old.members], wasPublic: old.public, quip: Math.floor(R() * 1000), vis: old.public ? undefined : [...old.members] });
+    leaveAlliance(s, seat);
+  }
+  let al = allianceOf(s, r.by);
+  if (!al) { al = { id: ++s.uid, members: [r.by], public: true, since: s.turn }; s.alliances.push(al); }
+  al.members.push(seat);
+  al.public = true;
+  s.invites = s.invites.filter((i) => !allied(s, i.from, i.to));
+  log(s, { k: 'rallyJoined', seat, by: r.by, members: [...al.members], slots: r.slots });
+  if (al.members.length >= r.slots) { log(s, { k: 'rallyClosed', by: r.by, why: 'full' }); s.rally = null; }
 }
 
 /** Why `seat` can't call a Siege on Olympus right now, or null if it can. */
@@ -878,6 +1071,7 @@ export function olympusPreview(s: GameState, members: number[]) {
 function beginSiege(s: GameState, a: Alliance) {
   const o = olympusPreview(s, a.members);
   a.public = true;
+  s.rally = null;
   s.siege = {
     alliance: a.id, members: [...a.members], garrison: o.garrison, start: o.garrison, proctors: o.proctors,
     regen: o.regen, smite: o.smite, defHigh: o.defHigh, turnsLeft: o.turns, shield: [],
@@ -922,7 +1116,7 @@ function assault(s: GameState, seat: number, a: Extract<Action, { type: 'assault
   if (!(from >= 0 && from < g.nt) || !g.territories[from].foot || s.owner[from] !== seat) fail('Assault from the Foot of Olympus: an inner-ring territory you hold.');
   if (s.armies[from] < 2) fail('Need at least 2 armies to assault.');
   const battle = startBattle(s, `${from}>O`, false);
-  const walls = s.ts.buffs.siegeWalls > 0 ? 0 : BALANCE.keepWall;
+  const walls = s.ts.buffs.siegeWalls > 0 ? 0 : BALANCE.olyWall;
   if (s.ts.buffs.siegeWalls > 0) s.ts.buffs.siegeWalls--;
   const rolls: any[] = [];
   let aLost = 0, dLost = 0;
@@ -930,9 +1124,11 @@ function assault(s: GameState, seat: number, a: Extract<Action, { type: 'assault
     const dice = Math.max(1, Math.min(3, a.dice ?? 3, s.armies[from] - 1));
     const dDice = battle.breakLine ? 1 : Math.min(2, sg.garrison);
     const m: Mods = {
-      atkHigh: (battle.atk ? 1 : 0) + s.ts.buffs.siegeAtk + terrainMods(s, from, -1).atk,
+      atkHigh: (battle.atk ? 1 : 0) + s.ts.buffs.siegeAtk,
+      atkLow: terrainMods(s, from, -1).atk,
       atkAll: s.ts.buffs.fury ? 1 : 0,
       defHigh: sg.defHigh,
+      defLow: 0,
       defAll: walls,
     };
     const r = roll(dice, dDice, m);
@@ -942,7 +1138,7 @@ function assault(s: GameState, seat: number, a: Extract<Action, { type: 'assault
     rolls.push({ a: r.a, d: r.d, raw: r.raw, aLoss: r.aLoss, dLoss: r.dLoss });
   } while (a.blitz && s.armies[from] >= 2 && sg.garrison > 0);
   const won = sg.garrison <= 0;
-  log(s, { k: 'assault', seat, from, rolls: rolls.slice(-4), n: rolls.length, aLost, dLost, garrison: Math.max(0, sg.garrison), won, blitz: !!a.blitz, walls: walls > 0 });
+  log(s, { k: 'assault', seat, from, rolls, n: rolls.length, aLost, dLost, garrison: Math.max(0, sg.garrison), won, blitz: !!a.blitz, walls: walls > 0 });
   if (won) {
     sg.garrison = 0;
     s.phase = 'over';
@@ -1035,12 +1231,40 @@ function playCard(s: GameState, seat: number, a: Extract<Action, { type: 'play' 
 // dispatcher
 
 export function act(s: GameState, seat: number, a: Action, ctx: Ctx): Result {
+  return commit(s, seat, ctx, () => apply(s, seat, a));
+}
+
+/** The host hands a seat to an AI Primus (a kicked player): the House fights on without them. */
+export function kickToAI(s: GameState, seat: number, ctx: Ctx): Result {
+  return commit(s, seat, ctx, () => {
+    const p = s.players[seat];
+    if (!p) fail('No such seat.');
+    if (p.ai) fail('That seat is already an AI.');
+    p.ai = true;
+    log(s, { k: 'kicked', seat, alive: p.alive });
+  });
+}
+
+/** A Primus whose Keep is lost dies with it: the card goes to the discard pile. */
+function slayPrimi(s: GameState) {
+  const g = geo(s);
+  (s.primus ?? []).forEach((p, h) => {
+    if (!p || s.owner[g.keepOf(h)] === p.seat) return;
+    s.primus![h] = null;
+    s.priv?.discard.push(p.card);
+    log(s, { k: 'primusSlain', seat: p.seat, card: p.card, t: g.keepOf(h), by: s.owner[g.keepOf(h)] });
+  });
+}
+
+function commit(s: GameState, seat: number, ctx: Ctx, fn: () => void): Result {
   R = ctx.rng;
   NOW = ctx.now;
   norm(s);
   const owner0 = s.owner.slice(), armies0 = s.armies.slice(), std0 = s.standards.map((x) => x.at + (x.captured ? 'c' : ''));
+  const mark = FRESH.length;
   try {
-    apply(s, seat, a);
+    fn();
+    slayPrimi(s);
     // Announce every bonus region that just fell wholly into one House's hands.
     for (const r of geo(s).regions) {
       const o = s.owner[r.terr[0]];
@@ -1056,13 +1280,51 @@ export function act(s: GameState, seat: number, a: Action, ctx: Ctx): Result {
     if (s.trail.length > TRAIL_MAX) s.trail.splice(0, s.trail.length - TRAIL_MAX);
     return { ok: true };
   } catch (e) {
-    if (e instanceof RuleError) return { ok: false, err: e.message };
+    if (e instanceof RuleError) { FRESH.length = Math.min(FRESH.length, mark); return { ok: false, err: e.message }; }
     throw e;
   }
 }
 
+export const EMOTE_COOLDOWN_MS = 15_000;
+
+/** Why `seat` can't swear `card` in as Primus of the Keep `keep` right now, or null if it can. */
+export function primusBlocker(s: GameState, seat: number, keep: number, card?: string): string | null {
+  const g = geo(s), T = g.territories, me = s.players[seat];
+  if (!me?.alive) return 'The dead swear no one in.';
+  if (s.cur !== seat || !['draft', 'attack', 'fortify'].includes(s.phase)) return 'Only on your own turn.';
+  if (s.reaction) return 'Waiting on the defender to react.';
+  if (!(keep >= 0 && keep < g.nt) || !T[keep].isKeep) return 'Pick a Keep.';
+  if (s.owner[keep] !== seat) return `You do not hold ${T[keep].name}.`;
+  if (keep === g.keepOf(me.house)) return 'Your home Keep answers to your General, not a Primus.';
+  const h = T[keep].house;
+  if (s.primus?.[h]) return `${T[keep].name} already has a Primus.`;
+  if (s.phase !== 'draft' && !s.ts.keepsTaken?.includes(keep)) return 'Swear in a Primus when you take the Keep, or in a later Draft.';
+  const hand = s.priv ? s.priv.hands[seat] : s.me?.seat === seat ? s.me.hand : [];
+  const fits = hand.filter((c) => !c.locked && CARD[c.id]?.kind === 'character' && CARD[c.id].house === h);
+  if (!fits.length) return `You hold no House ${HOUSES[h].name} Character to swear in.`;
+  if (card != null && !fits.some((c) => c.id === card)) return `Only a House ${HOUSES[h].name} Character from your hand (not locked) can be its Primus.`;
+  return null;
+}
+
+/** Keeps where `seat` could swear in a Primus right now, with the cards that fit. */
+export function primusOptions(s: GameState, seat: number): { keep: number; cards: string[] }[] {
+  const g = geo(s);
+  const hand = s.priv ? s.priv.hands[seat] : s.me?.seat === seat ? s.me.hand : [];
+  return g.territories.filter((t) => t.isKeep && s.owner[t.id] === seat && !primusBlocker(s, seat, t.id))
+    .map((t) => ({ keep: t.id, cards: hand.filter((c) => !c.locked && CARD[c.id]?.kind === 'character' && CARD[c.id].house === t.house).map((c) => c.id) }));
+}
+
 function apply(s: GameState, seat: number, a: Action) {
   if (!s.players[seat]) fail('No such seat.');
+  // Emotes: a short line to the War Log, any time, from anyone at the table.
+  if (a.type === 'emote') {
+    if (!Number.isInteger(a.line) || a.line < 0 || a.line >= EMOTES.length) fail('No such line.');
+    const last = s.lastEmote![seat] ?? -1e15;
+    if (NOW - last < EMOTE_COOLDOWN_MS) fail(`Catch your breath: one emote every ${EMOTE_COOLDOWN_MS / 1000} seconds.`);
+    s.lastEmote![seat] = NOW;
+    log(s, { k: 'emote', seat, line: a.line });
+    return;
+  }
   if (s.phase === 'over') fail('The game is over.');
 
   if (a.type === 'choose') {
@@ -1117,10 +1379,45 @@ function apply(s: GameState, seat: number, a: Action) {
       if (!inv || inv.to !== seat) fail('That invitation is gone.');
       if (a.accept && !s.opts.alliances) fail('Alliances are off in this war.');
       if (a.accept && (!s.players[inv.from].alive || !s.players[seat].alive)) fail('Too late. Someone died.');
+      if (a.accept && allianceOf(s, seat)) fail('You are already sworn to an alliance. Leave it first, or burn the letter.');
+      if (a.accept && (banned(s, seat) || banned(s, inv.from))) fail('You walked out of an alliance. No one will have you for a round.');
       s.invites = s.invites.filter((i) => i !== inv);
       if (!a.accept) { log(s, { k: 'inviteDeclined', from: inv.from, to: inv.to, vis: [inv.from, inv.to] }); return; }
-      if (allianceOf(s, inv.from) && allianceOf(s, inv.to)) { log(s, { k: 'inviteVoid', from: inv.from, to: inv.to, vis: [inv.from, inv.to] }); return; }
       joinAlliance(s, inv);
+      return;
+    }
+    case 'cancelInvite': {
+      const inv = s.invites.find((i) => i.id === a.invite);
+      if (!inv || inv.from !== seat) fail('That invitation is gone.');
+      s.invites = s.invites.filter((i) => i !== inv);
+      log(s, { k: 'inviteCancelled', from: inv.from, to: inv.to, vis: [inv.from, inv.to] });
+      return;
+    }
+    case 'leaveAlliance': {
+      if (!allianceOf(s, seat)) fail('You are not in an alliance.');
+      leaveAlliance(s, seat, true);
+      s.allyBan![seat] = s.turn + s.players.filter((p) => p.alive).length;
+      return;
+    }
+    case 'openRally': {
+      const err = rallyBlocker(s, seat);
+      if (err) fail(err);
+      const al = allianceOf(s, seat);
+      if (al && !al.public) { al.public = true; log(s, { k: 'allianceRevealed', seat, members: [...al.members], quip: Math.floor(R() * 1000) }); }
+      s.rally = { by: seat, slots: rallySlots(s), turn: s.turn };
+      log(s, { k: 'rallyOpened', seat, slots: s.rally.slots });
+      return;
+    }
+    case 'joinRally': {
+      const err = joinRallyBlocker(s, seat);
+      if (err) fail(err);
+      joinRally(s, seat);
+      return;
+    }
+    case 'cancelRally': {
+      if (s.rally?.by !== seat) fail('You have no Rally open.');
+      log(s, { k: 'rallyClosed', by: seat, why: 'cancelled' });
+      s.rally = null;
       return;
     }
     case 'reveal': {
@@ -1215,6 +1512,16 @@ function apply(s: GameState, seat: number, a: Action) {
       return;
     }
     case 'play': return playCard(s, seat, a);
+    case 'primus': {
+      const err = primusBlocker(s, seat, a.keep, a.card);
+      if (err) fail(err);
+      const h = hand(s, seat);
+      h.splice(h.findIndex((c) => c.id === a.card && !c.locked), 1);
+      const house = g.territories[a.keep].house;
+      s.primus![house] = { card: a.card, seat };
+      log(s, { k: 'primus', seat, card: a.card, t: a.keep, house });
+      return;
+    }
     case 'discardProctor': {
       if (s.phase !== 'draft') fail('Only during the Draft.');
       const c = CARD[a.card];
@@ -1261,9 +1568,9 @@ function apply(s: GameState, seat: number, a: Action) {
       if (!route) fail('Those territories are not connected by your land.');
       const n = Math.floor(a.n);
       if (n < 1 || n > s.armies[a.from] - 1) fail('Bad army count (leave at least 1 behind).');
-      const { path, stop } = route!;
-      s.armies[a.from] -= n; s.armies[stop] += n; ts.fortifies++;
-      log(s, { k: 'fortify', seat, from: a.from, to: stop, n, path: path.slice(0, path.indexOf(stop) + 1), ...(stop !== a.to ? { aim: a.to } : {}) });
+      const { path } = route!;
+      s.armies[a.from] -= n; s.armies[a.to] += n; ts.fortifies++;
+      log(s, { k: 'fortify', seat, from: a.from, to: a.to, n, path });
       return;
     }
     case 'moveStd': {

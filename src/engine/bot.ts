@@ -3,8 +3,9 @@
 
 import { CARD, isSiegeCard } from './cards.ts';
 import {
-  type Action, type GameState, BALANCE, NEUTRAL, activeValue, allianceOf, allied, attackTargets, connectedOwned, geo,
-  inviteBlocker, olympusPreview, ownsHouse, passive, reinforcementBreakdown, siegeBlocker, standardAt, terrainMods, territoriesOf,
+  type Action, type GameState, BALANCE, NEUTRAL, activeValue, allianceOf, allied, armyTotal, attackTargets, connectedOwned, geo,
+  inviteBlocker, isNeutralKeep, isWildGarrison, joinRallyBlocker, olympusPreview, overwhelms, ownsHouse, passive, primusOptions,
+  rallyBlocker, reinforcementBreakdown, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from './engine.ts';
 
 const armiesOf = (v: GameState, seat: number) => territoriesOf(v, seat).reduce((a, t) => a + v.armies[t], 0);
@@ -36,9 +37,10 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
     const living = v.players.filter((p) => p.alive);
     const strength = (x: number) => armiesOf(v, x);
     const strongest = living.reduce((b, p) => (strength(p.seat) > strength(b.seat) ? p : b), living[0]).seat;
-    // The strongest House needs no friends, and nobody trusts a crowd.
-    const size = (allianceOf(v, inv.from) ?? allianceOf(v, seat))?.members.length ?? 1;
-    return { type: 'answer', invite: inv.id, accept: strongest !== inv.from && strongest !== seat && size < 3 && rng() < 0.75 };
+    // The strongest House needs no friends, and nobody trusts a crowd. One alliance at a time.
+    const size = allianceOf(v, inv.from)?.members.length ?? 1;
+    const free = !allianceOf(v, seat) && (v.allyBan?.[seat] ?? 0) <= v.turn && (v.allyBan?.[inv.from] ?? 0) <= v.turn;
+    return { type: 'answer', invite: inv.id, accept: free && strongest !== inv.from && strongest !== seat && size < 3 && rng() < 0.75 };
   }
   if (v.vote && !v.vote.yes.includes(seat) && !v.vote.no.includes(seat)) {
     const a = allianceOf(v, seat);
@@ -66,9 +68,25 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
   };
   const bestFoot = myFoot.reduce((b, t) => (b < 0 || v.armies[t] > v.armies[b] ? t : b), -1);
 
+  // A conquered Keep with a matching Character in hand gets a Primus: the one with the biggest Passive.
+  if (!v.ts.mustMove) {
+    const opt = primusOptions(v, seat)[0];
+    if (opt) {
+      const card = opt.cards.reduce((b, c) => ((CARD[c].passive?.n ?? 0) > (CARD[b].passive?.n ?? 0) ? c : b), opt.cards[0]);
+      return { type: 'primus', keep: opt.keep, card };
+    }
+  }
+
   if (v.phase === 'draft') {
     const a = allianceOf(v, seat);
     if (a && !siegeBlocker(v, seat) && readyForOlympus(v, a.members)) return { type: 'proposeSiege' };
+    // The strongest House calls the valley to its banner now and then.
+    if (!rallyBlocker(v, seat) && rng() < 0.2) return { type: 'openRally' };
+    // Answer a Rally when the rallier's side is clearly stronger than ours.
+    if (v.rally && !joinRallyBlocker(v, seat)) {
+      const side = (x: number) => (allianceOf(v, x)?.members ?? [x]).reduce((s, m) => s + armyTotal(v, m), 0);
+      if (side(v.rally.by) + armyTotal(v, seat) > side(seat) * 1.4 && rng() < 0.8) return { type: 'joinRally' };
+    }
     if ((a?.members.length ?? 1) < 3 && v.warBegun && rng() < 0.12) {
       const living = v.players.filter((p) => p.alive && p.seat !== seat);
       const strongest = living.reduce((b, p) => (armiesOf(v, p.seat) > armiesOf(v, b.seat) ? p : b), living[0]);
@@ -142,17 +160,18 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
         const defStd = standardAt(v, to);
         if (defStd >= 0 && v.owner[to] >= 0 && v.turn <= v.players.length) continue;
         const def = v.armies[to] + (defStd >= 0 ? v.standards[defStd].guard : 0);
-        // Forests are worth about a third more defenders; the high ground, a bit more attackers.
+        // Forests and the high ground are worth a little; a lone neutral garrison rolls one die, and yields to twice its number.
         const tm = terrainMods(v, from, to);
-        const ratio = ((v.armies[from] - 1) * (tm.atk ? 1.15 : 1)) / Math.max(1, def * (tm.def ? 1.35 : 1));
-        if (ratio < 1.4) continue;
+        const free = overwhelms(v, from, to);
+        const ratio = free ? 9 : ((v.armies[from] - 1) * (tm.atk ? 1.1 : 1)) / Math.max(1, def * (tm.def ? 1.15 : 1) * (isWildGarrison(v, to) ? 0.6 : 1));
+        if (ratio < (isNeutralKeep(v, to) ? 1.5 : 1.4)) continue;
         let score = ratio + (defStd >= 0 ? 4 : 0) + (g.territories[to].isKeep ? 1.5 : 0) + (v.owner[to] === NEUTRAL ? 0 : 0.5) + regionPull(to);
         if (from === stdAt && enemyAdj(from).length === 1 && v.armies[from] - 1 < def + 2) score -= 3; // don't strip the Standard
         if (!best || score > best.score) best = { from, to, score };
       }
     }
     if (best) {
-      if (best.from === stdAt && v.armies[best.from] >= 2 * v.armies[best.to] + 6 && rng() < 0.35) {
+      if (best.from === stdAt && !v.ts.stdRaised && !overwhelms(v, best.from, best.to) && v.armies[best.from] >= 2 * v.armies[best.to] + 6 && rng() < 0.35) {
         return { type: 'attack', from: best.from, to: best.to, commit: v.armies[best.from] - 1 };
       }
       return { type: 'attack', from: best.from, to: best.to, blitz: true };

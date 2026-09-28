@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { geoFor, mapGeo, HOUSES, LAYOUTS, MAX_PLAYERS, MIN_PLAYERS, isRough } from '../src/engine/data.ts';
-import { CARDS } from '../src/engine/cards.ts';
+import { geoFor, mapGeo, HOUSES, LAYOUTS, MAX_PLAYERS, MIN_PLAYERS } from '../src/engine/data.ts';
+import { CARD, CARDS, EMOTES } from '../src/engine/cards.ts';
 import {
   act, actingSeat, aiDuty, allianceOf, attackTargets, BALANCE, createGame, geo, olympusPreview, passive, reinforcementBreakdown, viewFor,
-  type GameState, type Action, NEUTRAL, clone, attackBlocker, fortifyRoute, resolveSettings, spreadHouses, TRAIL_MAX, territoriesOf,
+  type GameState, type Action, NEUTRAL, clone, attackBlocker, fortifyRoute, resolveSettings, spreadSlices, TRAIL_MAX, territoriesOf,
+  drainLog, kickToAI, primusBlocker, rallyBlocker, joinRallyBlocker, strongestSeat, rallySlots, modifyDice, inviteBlocker, EMOTE_COOLDOWN_MS,
 } from '../src/engine/engine.ts';
+import { attackFight, winChance } from '../src/ui/odds.ts';
 import { botAction } from '../src/engine/bot.ts';
 
 function mulberry(seed: number) {
@@ -128,12 +130,65 @@ describe('setup', () => {
     s.warBegun = true;
     expect(act(s, s.cur, { type: 'invite', to: (s.cur + 1) % 3, public: true }, ctx(rng))).toEqual({ ok: false, err: 'Alliances are off in this war.' });
   });
-  it('spreads the players out so neighbours are as rare as possible', () => {
-    const g = geoFor(3);
-    for (let i = 0; i < 20; i++) {
-      const hs = spreadHouses(g, 3, Math.random);
-      for (const a of hs) for (const b of hs) if (a !== b) expect(g.dist[g.keepOf(a)][g.keepOf(b)]).toBeGreaterThan(5);
+  it('spreads the players out: Keeps as far apart as possible, then the fewest touching slices', () => {
+    for (const n of [2, 3, 4]) {
+      const g = geoFor(n);
+      const keeps = HOUSES.map((_, sl) => g.keepOfSlice(sl));
+      // The best possible smallest Keep-to-Keep distance for n slices, by brute force.
+      let best = 0;
+      const walk = (from: number, pick: number[]) => {
+        if (pick.length === n) { let m = Infinity; for (const a of pick) for (const b of pick) if (a < b) m = Math.min(m, g.dist[keeps[a]][keeps[b]]); best = Math.max(best, m); return; }
+        for (let x = from; x < 7; x++) walk(x + 1, [...pick, x]);
+      };
+      walk(0, []);
+      for (let i = 0; i < 15; i++) {
+        const sl = spreadSlices(g, n, Math.random);
+        expect(new Set(sl).size).toBe(n);
+        let m = Infinity;
+        for (const a of sl) for (const b of sl) if (a !== b) m = Math.min(m, g.dist[keeps[a]][keeps[b]]);
+        expect(m).toBe(best);
+      }
     }
+    const g3 = geoFor(3);
+    for (let i = 0; i < 20; i++) {
+      const hs = spreadSlices(g3, 3, Math.random);
+      for (const a of hs) for (const b of hs) if (a !== b) expect(g3.dist[g3.keepOfSlice(a)][g3.keepOfSlice(b)]).toBeGreaterThan(5);
+    }
+  });
+  it('deals random Houses onto the spread slices, and neutral Houses fill the rest', () => {
+    const seen = new Set<number>();
+    for (let k = 0; k < 30; k++) {
+      const rng = mulberry(500 + k);
+      const s = createGame(['A', 'B', 'C'], rng);
+      const g = geo(s);
+      const deal = s.opts.houses!;
+      expect([...deal].sort()).toEqual([0, 1, 2, 3, 4, 5, 6]);
+      for (const p of s.players) {
+        seen.add(p.house);
+        const sl = deal.indexOf(p.house);
+        expect(g.keepOf(p.house)).toBe(g.keepOfSlice(sl));
+        expect(g.territories[g.keepOf(p.house)].house).toBe(p.house);
+        expect(s.standards[p.house].at).toBe(g.keepOf(p.house));
+        expect(s.owner[g.keepOf(p.house)]).toBe(p.seat);
+      }
+      // Slices keep their land: names and quadrants don't move with the House.
+      expect(g.territories.map((t) => t.name)).toEqual(mapGeo(s.opts.layout, s.opts.seed).territories.map((t) => t.name));
+      expect(g.territories.every((t) => t.house === deal[t.slice])).toBe(true);
+      for (const r of g.regions) expect(r.house).toBe(deal[g.territories[r.terr[0]].slice]);
+      for (let h = 0; h < 7; h++) if (!s.players.some((p) => p.house === h)) {
+        expect(s.owner[g.keepOf(h)]).toBe(NEUTRAL);
+        expect(s.armies[g.keepOf(h)]).toBe(BALANCE.neutralKeep);
+      }
+    }
+    expect(seen.size).toBeGreaterThanOrEqual(6); // any House can be drawn
+  });
+  it('wars without a deal keep House i on slice i', () => {
+    const rng = mulberry(77);
+    const s = createGame(['A', 'B'], rng);
+    delete s.opts.houses;
+    const g = geo(s);
+    expect(g.sliceHouse).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(g.keepOf(3)).toBe(g.keepOfSlice(3));
   });
   it('the Passage kills one card per player and starts the war', () => {
     const rng = mulberry(5);
@@ -385,17 +440,135 @@ describe('alliances', () => {
     expect(viewFor(s, c).log.some((e) => e.k === 'allianceFormed')).toBe(false);
   });
 
-  it('inviting someone in a secret pact never gives the pact away', () => {
+  it('one alliance per House: an invite to someone in a secret pact goes out, but they can\'t accept it', () => {
     const { s, a, b, c, rng } = threeWay();
     ally(s, b, c, rng, false);
-    s.alliances.push({ id: 999, members: [a], public: false, since: 0 }); // a is secretly sworn elsewhere too
     const r = act(s, a, { type: 'invite', to: b, public: true }, ctx(rng));
-    expect(r).toEqual({ ok: true }); // no "sworn to another alliance" error
+    expect(r).toEqual({ ok: true }); // no "sworn to another alliance" error: the pact stays secret
     const inv = s.invites.find((i) => i.from === a && i.to === b)!;
-    expect(act(s, b, { type: 'answer', invite: inv.id, accept: true }, ctx(rng))).toEqual({ ok: true });
-    expect(allianceOf(s, b)?.members.sort()).toEqual([b, c].sort()); // voided, not merged
-    expect(s.log.at(-1)!.k).toBe('inviteVoid');
+    const before = clone(s);
+    const res = act(s, b, { type: 'answer', invite: inv.id, accept: true }, ctx(rng));
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.err).toMatch(/^You are already sworn to an alliance/);
+    expect(s).toEqual(before);
+    expect(allianceOf(s, b)?.members.sort()).toEqual([b, c].sort());
     expect(viewFor(s, a).alliances.some((x) => x.members.includes(b))).toBe(false);
+    expect(act(s, b, { type: 'answer', invite: inv.id, accept: false }, ctx(rng)).ok).toBe(true);
+  });
+
+  it('members can still invite unallied Houses in', () => {
+    const { s, a, b, c, rng } = threeWay();
+    ally(s, a, b, rng);
+    ally(s, b, c, rng);
+    expect(allianceOf(s, a)?.members.sort()).toEqual([a, b, c].sort());
+  });
+
+  it('a public alliance blocks invites into it from outside', () => {
+    const { s, a, b, c, rng } = threeWay();
+    ally(s, b, c, rng, true);
+    expect(inviteBlocker(s, a, b)).toMatch(/sworn to another alliance/);
+  });
+
+  it('leaving an alliance is logged, and you sit out a full round', () => {
+    const { s, a, b, c, rng } = threeWay();
+    ally(s, a, b, rng, false);
+    expect(act(s, a, { type: 'leaveAlliance' }, ctx(rng))).toEqual({ ok: true });
+    expect(allianceOf(s, a)).toBeNull();
+    expect(allianceOf(s, b)).toBeNull();
+    const ev = s.log.at(-1)!;
+    expect(ev).toMatchObject({ k: 'allianceEnds', leaver: a, dissolved: true });
+    expect(ev.vis?.sort()).toEqual([a, b].sort()); // it was a secret pact
+    expect(act(s, a, { type: 'leaveAlliance' }, ctx(rng)).ok).toBe(false);
+    // Banned: can't invite or accept for a round.
+    expect(inviteBlocker(s, a, c)).toMatch(/walked out/);
+    s.invites.push({ id: 900, from: c, to: a, public: true, turn: s.turn });
+    expect(act(s, a, { type: 'answer', invite: 900, accept: true }, ctx(rng)).ok).toBe(false);
+    s.turn += 3;
+    expect(act(s, a, { type: 'answer', invite: 900, accept: true }, ctx(rng))).toEqual({ ok: true });
+    expect(allianceOf(s, a)?.members.sort()).toEqual([a, c].sort());
+  });
+
+  it('a sender can cancel a pending invite, and both sides hear of it', () => {
+    const { s, a, b, c, rng } = threeWay();
+    s.warBegun = true;
+    act(s, a, { type: 'invite', to: b, public: false }, ctx(rng));
+    const inv = s.invites[0];
+    expect(act(s, b, { type: 'cancelInvite', invite: inv.id }, ctx(rng)).ok).toBe(false);
+    expect(act(s, a, { type: 'cancelInvite', invite: inv.id }, ctx(rng))).toEqual({ ok: true });
+    expect(s.invites).toHaveLength(0);
+    expect(s.log.at(-1)).toMatchObject({ k: 'inviteCancelled', from: a, to: b, vis: [a, b] });
+    expect(viewFor(s, c).log.some((e) => e.k === 'inviteCancelled')).toBe(false);
+  });
+
+  it('only the strongest House may open a Rally, capped at half the living Houses', () => {
+    const { s, rng, g } = threeWay();
+    // Seven Houses: floor(7/2) = 3 slots.
+    const s7 = createGame(['A', 'B', 'C', 'D', 'E', 'F', 'G'], rng);
+    passage(s7, rng);
+    s7.warBegun = true;
+    const big = s7.players[2].seat;
+    const t = s7.owner.findIndex((o) => o === big);
+    s7.armies[t] += 500;
+    expect(strongestSeat(s7)).toBe(big);
+    expect(rallySlots(s7)).toBe(3);
+    expect(rallyBlocker(s7, 0)).toMatch(/strongest/);
+    expect(act(s7, 0, { type: 'openRally' }, ctx(rng)).ok).toBe(false);
+    expect(act(s7, big, { type: 'openRally' }, ctx(rng))).toEqual({ ok: true });
+    expect(s7.rally).toMatchObject({ by: big, slots: 3 });
+    expect(act(s7, 0, { type: 'openRally' }, ctx(rng)).ok).toBe(false); // one at a time
+    // An existing secret ally of seat 1 answers: it's a betrayal to its old allies, and it joins a public alliance.
+    s7.alliances.push({ id: 77, members: [1, 3], public: false, since: 0 });
+    expect(act(s7, 1, { type: 'joinRally' }, ctx(rng))).toEqual({ ok: true });
+    const defect = s7.log.find((e) => e.k === 'defect')!;
+    expect(defect).toMatchObject({ seat: 1, by: big });
+    expect(defect.vis?.sort()).toEqual([1, 3]);
+    expect(allianceOf(s7, 3)).toBeNull(); // the old pact dissolved
+    expect(allianceOf(s7, 1)).toMatchObject({ public: true });
+    expect(allianceOf(s7, 1)!.members.sort()).toEqual([1, big].sort());
+    expect(act(s7, 1, { type: 'joinRally' }, ctx(rng)).ok).toBe(false); // already in
+    expect(act(s7, 4, { type: 'joinRally' }, ctx(rng))).toEqual({ ok: true });
+    expect(allianceOf(s7, big)!.members.length).toBe(3);
+    expect(s7.rally).toBeNull(); // full
+    expect(s7.log.at(-1)).toMatchObject({ k: 'rallyClosed', why: 'full' });
+    expect(act(s7, 5, { type: 'joinRally' }, ctx(rng)).ok).toBe(false);
+    // Three Houses: floor(3/2) = 1 slot, so no Rally at all.
+    s.warBegun = true;
+    expect(rallySlots(s)).toBe(1);
+    expect(g.nt).toBeGreaterThan(0);
+  });
+
+  it('a Rally expires at the rallier\'s next turn, and the rallier can cancel it', () => {
+    const rng = mulberry(61);
+    const s = createGame(['A', 'B', 'C', 'D'], rng);
+    passage(s, rng);
+    s.warBegun = true;
+    const big = s.cur;
+    s.armies[s.owner.findIndex((o) => o === big)] += 300;
+    expect(act(s, big, { type: 'openRally' }, ctx(rng))).toEqual({ ok: true });
+    const other = s.order.find((x) => x !== big)!;
+    expect(act(s, other, { type: 'cancelRally' }, ctx(rng)).ok).toBe(false);
+    expect(act(s, big, { type: 'cancelRally' }, ctx(rng))).toEqual({ ok: true });
+    expect(s.rally).toBeNull();
+    expect(act(s, big, { type: 'openRally' }, ctx(rng))).toEqual({ ok: true });
+    // Play the round out: when the rallier's turn comes back around, the Rally is gone.
+    for (let i = 0; i < 40 && s.rally; i++) {
+      const seat = s.cur;
+      if (s.phase === 'draft') { act(s, seat, { type: 'place', t: s.owner.findIndex((o) => o === seat), n: s.ts.reinforcements }, ctx(rng)); s.priv!.hands[seat] = []; act(s, seat, { type: 'endDraft' }, ctx(rng)); }
+      act(s, seat, { type: 'endTurn' }, ctx(rng));
+    }
+    expect(s.rally).toBeNull();
+    expect(s.cur).toBe(big);
+    expect(s.log.some((e) => e.k === 'rallyClosed' && e.why === 'expired')).toBe(true);
+  });
+
+  it('a Rally needs alliances switched on', () => {
+    const rng = mulberry(62);
+    const s = createGame(['A', 'B', 'C', 'D'], rng, { settings: { alliances: false } });
+    passage(s, rng);
+    s.warBegun = true;
+    s.armies[s.owner.findIndex((o) => o === s.cur)] += 300;
+    expect(rallyBlocker(s, s.cur)).toMatch(/Alliances are off/);
+    expect(joinRallyBlocker(s, s.cur)).toMatch(/no Rally/);
   });
 
   it('allies share their Generals\' Passives', () => {
@@ -507,35 +680,72 @@ function runBotGame(n: number, seed: number) {
   return { s, steps, errors };
 }
 
-describe('terrain', () => {
-  it('forests add cover, and it shows in the log', () => {
+describe('terrain and dice', () => {
+  const Z = { atkHigh: 0, atkLow: 0, atkAll: 0, defHigh: 0, defLow: 0, defAll: 0 };
+  it('mountains add 1 to the lowest COMPARED attack die; forests 1 to the lowest defense die', () => {
+    const a = [6, 4, 2], d = [5, 3];
+    modifyDice(a, d, { ...Z, atkLow: 1, defLow: 1 });
+    expect(a).toEqual([6, 5, 2]); // index min(3, 2) - 1 = 1, the third die isn't compared
+    expect(d).toEqual([5, 4]);
+    const a1 = [3], d1 = [5, 2];
+    modifyDice(a1, d1, { ...Z, atkLow: 1, atkHigh: 1 });
+    expect(a1).toEqual([5]); // one die: it's both the highest and the lowest compared
+    const a2 = [5, 5], d2 = [6];
+    modifyDice(a2, d2, { ...Z, atkLow: 1 });
+    expect(a2).toEqual([6, 5]);
+  });
+  function houseFight(terrain: 'forest' | 'mountain') {
     const { s, seat, rng, g } = setupDuel();
-    const forest = g.territories.find((t) => t.terrain === 'forest')!.id;
-    const from = beside(s, seat, forest);
-    s.owner[forest] = NEUTRAL; s.armies[forest] = 3; s.armies[from] = 10;
-    expect(act(s, seat, { type: 'attack', from, to: forest }, ctx(rng)).ok).toBe(true);
+    const foe = s.players.find((p) => p.seat !== seat)!.seat;
+    const T = g.territories;
+    if (terrain === 'forest') {
+      const to = T.find((t) => t.terrain === 'forest' && !t.isKeep)!.id;
+      const from = g.adj[to].find((x) => T[x].terrain !== 'mountain')!;
+      return { s, seat, rng, g, from, to, foe };
+    }
+    const from = T.find((t) => t.terrain === 'mountain')!.id;
+    const to = g.adj[from].find((x) => T[x].terrain !== 'forest' && !T[x].isKeep)!;
+    return { s, seat, rng, g, from, to, foe };
+  }
+  it('a House defending a forest gets cover on its lowest die, and it shows in the log', () => {
+    const { s, seat, rng, from, to, foe } = houseFight('forest');
+    s.owner[from] = seat; s.owner[to] = foe; s.armies[to] = 3; s.armies[from] = 10;
+    expect(act(s, seat, { type: 'attack', from, to }, ctx(rng)).ok).toBe(true);
     const ev = [...s.log].reverse().find((e) => e.k === 'battle')!;
     expect(ev.tD).toBe(BALANCE.forestDef);
-    expect(ev.rolls[0].d[0] - ev.rolls[0].raw.d[0]).toBe(BALANCE.forestDef);
+    const r = ev.rolls[0];
+    expect(r.d.at(-1) - r.raw.d.at(-1)).toBe(1);
+    if (r.d.length > 1) expect(r.d[0]).toBe(r.raw.d[0]);
   });
-  it('mountains give the high ground', () => {
-    const { s, seat, rng, g } = setupDuel();
-    const mtn = g.territories.find((t) => t.terrain === 'mountain')!.id;
-    const to = g.adj[mtn].find((x) => g.territories[x].terrain !== 'forest' && !g.territories[x].isKeep)!;
-    s.owner[mtn] = seat; s.armies[mtn] = 10; s.owner[to] = NEUTRAL; s.armies[to] = 3;
-    expect(act(s, seat, { type: 'attack', from: mtn, to }, ctx(rng)).ok).toBe(true);
+  it('attacking from the mountains lifts the lowest compared attack die', () => {
+    const { s, seat, rng, from, to, foe } = houseFight('mountain');
+    s.owner[from] = seat; s.armies[from] = 10; s.owner[to] = foe; s.armies[to] = 3;
+    expect(act(s, seat, { type: 'attack', from, to }, ctx(rng)).ok).toBe(true);
     const ev = [...s.log].reverse().find((e) => e.k === 'battle')!;
     expect(ev.tA).toBe(BALANCE.mountainAtk);
-    expect(ev.rolls[0].a[0] - ev.rolls[0].raw.a[0]).toBe(BALANCE.mountainAtk);
+    const r = ev.rolls[0];
+    const k = Math.min(r.a.length, r.d.length) - 1;
+    expect(r.a[k] - r.raw.a[k]).toBe(1);
+    expect(r.a[2] - r.raw.a[2]).toBe(k === 2 ? 1 : 0);
   });
-  it('a fortify march halts on mountains, water or marsh it has to cross', () => {
+  it('terrain never counts against a neutral defender', () => {
+    for (const kind of ['forest', 'mountain'] as const) {
+      const { s, seat, rng, from, to } = houseFight(kind);
+      s.owner[from] = seat; s.armies[from] = 10; s.owner[to] = NEUTRAL; s.armies[to] = 8;
+      expect(act(s, seat, { type: 'attack', from, to }, ctx(rng)).ok).toBe(true);
+      const ev = [...s.log].reverse().find((e) => e.k === 'battle')!;
+      expect([ev.tA, ev.tD]).toEqual([0, 0]);
+      expect(ev.rolls[0].a).toEqual(ev.rolls[0].raw.a);
+      expect(ev.rolls[0].d).toEqual(ev.rolls[0].raw.d);
+    }
+  });
+  it('a fortify march never halts on rough ground', () => {
     const { s, seat, rng, g } = setupDuel();
     const T = g.territories;
     s.phase = 'fortify';
-    // find a → rough → b where a and b don't touch
     let a = -1, rough = -1, b = -1;
     for (const t of T) {
-      if (!isRough(t.terrain)) continue;
+      if (!['mountain', 'water', 'marsh'].includes(t.terrain)) continue;
       const ns = g.adj[t.id];
       for (const x of ns) for (const y of ns) if (x !== y && !g.adj[x].includes(y) && a < 0) { a = x; rough = t.id; b = y; }
     }
@@ -543,12 +753,250 @@ describe('terrain', () => {
     s.owner = s.owner.map(() => NEUTRAL);
     for (const t of [a, rough, b]) s.owner[t] = seat;
     s.armies[a] = 10; s.armies[rough] = 1; s.armies[b] = 1;
-    expect(fortifyRoute(s, seat, a, b)).toEqual({ path: [a, rough, b], stop: rough });
+    expect(fortifyRoute(s, seat, a, b)).toEqual({ path: [a, rough, b], stop: b });
     expect(act(s, seat, { type: 'fortify', from: a, to: b, n: 6 }, ctx(rng))).toEqual({ ok: true });
-    expect([s.armies[a], s.armies[rough], s.armies[b]]).toEqual([4, 7, 1]);
-    expect(s.log.at(-1)).toMatchObject({ k: 'fortify', from: a, to: rough, aim: b, path: [a, rough] });
-    // …and it can march on from the rough ground next turn
-    expect(fortifyRoute(s, seat, rough, b)!.stop).toBe(b);
+    expect([s.armies[a], s.armies[rough], s.armies[b]]).toEqual([4, 1, 7]);
+    expect(s.log.at(-1)).toMatchObject({ k: 'fortify', from: a, to: b, path: [a, rough, b] });
+    expect(s.log.at(-1)!.aim).toBeUndefined();
+  });
+});
+
+describe('neutrals and Keeps', () => {
+  /** A neutral territory next to one of `seat`'s, that isn't a Keep. */
+  function wild(s: GameState, seat: number) {
+    const g = geo(s);
+    const to = g.territories.find((t) => !t.isKeep && s.owner[t.id] === NEUTRAL && g.adj[t.id].some((x) => !g.territories[x].isKeep))!.id;
+    const from = g.adj[to].find((x) => !g.territories[x].isKeep)!;
+    s.owner[from] = seat;
+    return { from, to };
+  }
+  it('a neutral garrison facing twice its number yields: no dice, no losses', () => {
+    const { s, seat, rng } = setupDuel();
+    const { from, to } = wild(s, seat);
+    s.armies[to] = 4; s.armies[from] = 9; // 8 attackers ≥ 2 × 4
+    drainLog();
+    expect(act(s, seat, { type: 'attack', from, to }, ctx(rng))).toEqual({ ok: true });
+    expect(s.owner[to]).toBe(seat);
+    expect(s.log.some((e) => e.k === 'battle' && e.to === to)).toBe(false);
+    expect(s.log.find((e) => e.k === 'overwhelm')).toMatchObject({ seat, from, to, n: 8, garrison: 4 });
+    const moved = s.ts.mustMove ? s.ts.mustMove.max : 0;
+    expect(s.armies[from] + s.armies[to] + moved - (s.ts.mustMove ? moved : 0)).toBe(9); // nobody died
+    expect(attackFight(s, seat, from, to).overwhelm).toBeFalsy();
+  });
+  it('one short of twice: it fights, with a single defense die', () => {
+    const { s, seat, rng } = setupDuel();
+    const { from, to } = wild(s, seat);
+    s.armies[to] = 4; s.armies[from] = 8; // 7 attackers < 8
+    expect(attackFight(s, seat, from, to)).toMatchObject({ overwhelm: false, defCap: 1 });
+    expect(act(s, seat, { type: 'attack', from, to }, ctx(rng)).ok).toBe(true);
+    const ev = s.log.find((e) => e.k === 'battle')!;
+    expect(ev.rolls[0].d.length).toBe(1);
+    expect(s.log.some((e) => e.k === 'overwhelm')).toBe(false);
+  });
+  it('a neutral Keep: exactly 10, no walls or modifiers, 2 dice, never overwhelmed', () => {
+    const rng = mulberry(71);
+    const s = createGame(['A', 'B'], rng);
+    passage(s, rng);
+    const g = geo(s);
+    const seat = s.cur;
+    const nh = [0, 1, 2, 3, 4, 5, 6].find((h) => !s.players.some((p) => p.house === h))!;
+    const keep = g.keepOf(nh);
+    expect(s.armies[keep]).toBe(10);
+    expect(s.standards[nh].guard).toBe(0);
+    const from = g.adj[keep][0];
+    s.owner[from] = seat; s.armies[from] = 200;
+    s.phase = 'attack'; s.turn = 10;
+    s.players[seat].general = 'cassius'; // defKeep: only for Keeps a House holds
+    const f = attackFight(s, seat, from, keep);
+    expect(f).toMatchObject({ overwhelm: false, defCap: 2, defHigh: 0, defLow: 0, defAll: 0, atkLow: 0, def: 10 });
+    expect(act(s, seat, { type: 'attack', from, to: keep }, ctx(rng)).ok).toBe(true);
+    const ev = s.log.find((e) => e.k === 'battle')!;
+    expect(ev.rolls[0].d.length).toBe(2);
+    expect(ev.rolls[0].d).toEqual(ev.rolls[0].raw.d);
+    // 15 armies (14 attacking) against the 10: about 83%.
+    const z = { atkHigh: 0, atkLow: 0, atkAll: 0, defHigh: 0, defLow: 0, defAll: 0 };
+    expect(winChance({ ...z, att: 14, def: 10, defCap: 2 })).toBeCloseTo(0.83, 1);
+  });
+  it('a House\'s Keep has no walls and rolls 2 dice, even with its Standard and honor guard', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const foe = s.players.find((p) => p.seat !== seat)!;
+    const keep = g.keepOf(foe.house);
+    const from = beside(s, seat, keep);
+    s.armies[from] = 10; s.armies[keep] = 1; s.standards[foe.house].guard = 5;
+    s.players[foe.seat].general = 'pax'; // no defKeep
+    const f = attackFight(s, seat, from, keep);
+    expect(f).toMatchObject({ def: 6, defCap: 2, defAll: 0, defHigh: 0, defLow: 0 });
+    expect(winChance(f)).toBeCloseTo(0.8, 1); // 10 against 1 + 5 guard
+    expect(act(s, seat, { type: 'attack', from, to: keep }, ctx(rng)).ok).toBe(true);
+    const ev = s.log.find((e) => e.k === 'battle')!;
+    expect(ev.rolls[0].d.length).toBeLessThanOrEqual(2);
+    expect(ev.rolls[0].d).toEqual(ev.rolls[0].raw.d);
+    // Its General's defKeep still counts.
+    s.players[foe.seat].general = 'cassius';
+    expect(attackFight(s, seat, from, keep).defHigh).toBe(1);
+  });
+  it('the odds in the UI run the engine\'s own dice rules', () => {
+    const { s, seat, rng } = setupDuel();
+    const { from, to } = wild(s, seat);
+    s.armies[to] = 3; s.armies[from] = 5;
+    const p = winChance(attackFight(s, seat, from, to));
+    let wins = 0;
+    const N = 1500;
+    for (let i = 0; i < N; i++) {
+      const c = clone(s);
+      act(c, seat, { type: 'attack', from, to, blitz: true }, ctx(rng));
+      if (c.owner[to] === seat) wins++;
+    }
+    expect(Math.abs(wins / N - p)).toBeLessThan(0.05);
+  });
+});
+
+describe('the Standard', () => {
+  it('can be raised once per turn', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const me = s.players[seat];
+    const from = g.keepOf(me.house);
+    const [a, b] = g.adj[from];
+    s.owner[a] = NEUTRAL; s.armies[a] = 2; s.owner[b] = NEUTRAL; s.armies[b] = 2;
+    s.armies[from] = 300;
+    expect(act(s, seat, { type: 'attack', from, to: a, commit: 50 }, ctx(rng))).toEqual({ ok: true });
+    expect(s.ts.stdRaised).toBe(true);
+    const at = s.standards[me.house].at;
+    s.owner[b] = NEUTRAL;
+    const next = g.adj[at].find((x) => s.owner[x] !== seat)!;
+    s.owner[next] = NEUTRAL; s.armies[next] = 2;
+    const r = act(s, seat, { type: 'attack', from: at, to: next, commit: 10 }, ctx(rng));
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.err).toMatch(/once per turn/);
+  });
+});
+
+describe('Primus', () => {
+  /** Hand `seat` a conquered neutral Keep and a matching Character. */
+  function keepWithCard(seed = 91) {
+    const rng = mulberry(seed);
+    const s = createGame(['A', 'B'], rng);
+    passage(s, rng);
+    const g = geo(s);
+    const seat = s.cur;
+    const nh = [0, 1, 2, 3, 4, 5, 6].find((h) => !s.players.some((p) => p.house === h) && CARDS.some((c) => c.kind === 'character' && c.house === h && c.passive?.kind === 'draft'))
+      ?? [0, 1, 2, 3, 4, 5, 6].find((h) => !s.players.some((p) => p.house === h))!;
+    const keep = g.keepOf(nh);
+    const card = CARDS.find((c) => c.kind === 'character' && c.house === nh)!.id;
+    const from = g.adj[keep][0];
+    s.owner[from] = seat; s.armies[from] = 300;
+    s.phase = 'attack'; s.turn = 10;
+    s.priv!.hands[seat] = [{ id: card, locked: false }];
+    for (const h of s.priv!.hands) if (h !== s.priv!.hands[seat]) h.splice(0);
+    return { s, seat, rng, g, keep, card, nh, from };
+  }
+  it('conquering a Keep lets you swear in a matching Character; its Passive stacks, unshared', () => {
+    const { s, seat, rng, g, keep, card, nh, from } = keepWithCard();
+    expect(primusBlocker(s, seat, keep, card)).toMatch(/do not hold/);
+    expect(act(s, seat, { type: 'attack', from, to: keep, blitz: true }, ctx(rng)).ok).toBe(true);
+    expect(s.owner[keep]).toBe(seat);
+    if (s.ts.mustMove) act(s, seat, { type: 'move', n: s.ts.mustMove.max }, ctx(rng));
+    expect(s.ts.keepsTaken).toContain(keep);
+    const kind = CARD[card].passive!.kind;
+    const before = passive(s, seat, kind);
+    // Wrong suit refused.
+    const wrong = CARDS.find((c) => c.kind === 'character' && c.house !== nh)!.id;
+    s.priv!.hands[seat].push({ id: wrong, locked: false });
+    expect(act(s, seat, { type: 'primus', keep, card: wrong }, ctx(rng)).ok).toBe(false);
+    expect(act(s, seat, { type: 'primus', keep: g.keepOf(s.players[seat].house), card }, ctx(rng)).ok).toBe(false); // not the home Keep
+    expect(act(s, seat, { type: 'primus', keep, card }, ctx(rng))).toEqual({ ok: true });
+    expect(s.primus![nh]).toEqual({ card, seat });
+    expect(s.priv!.hands[seat].some((c) => c.id === card)).toBe(false); // it leaves your hand
+    expect(passive(s, seat, kind)).toBe(before + CARD[card].passive!.n); // no House-match bonus
+    expect(s.log.at(-1)).toMatchObject({ k: 'primus', seat, card, t: keep, house: nh });
+    // One Primus per Keep.
+    s.priv!.hands[seat].push({ id: card, locked: false });
+    expect(act(s, seat, { type: 'primus', keep, card }, ctx(rng)).ok).toBe(false);
+    // Not shared with allies.
+    const other = s.players.find((p) => p.seat !== seat)!.seat;
+    const alone = passive(s, other, kind);
+    s.alliances.push({ id: 5, members: [seat, other], public: true, since: 0 });
+    const withAlly = passive(s, other, kind);
+    const general = s.players[seat].general ? CARD[s.players[seat].general!] : null;
+    const shared = general?.passive?.kind === kind ? general.passive.n + (general.house === s.players[seat].house ? 1 : 0) : 0;
+    expect(withAlly - alone).toBe(shared);
+  });
+  it('can wait for a later Draft, but not past the turn you took it outside the Draft', () => {
+    const { s, seat, rng, keep, card, from } = keepWithCard(92);
+    act(s, seat, { type: 'attack', from, to: keep, blitz: true }, ctx(rng));
+    if (s.ts.mustMove) act(s, seat, { type: 'move', n: s.ts.mustMove.min }, ctx(rng));
+    s.ts.keepsTaken = []; // as if it was taken on an earlier turn
+    expect(primusBlocker(s, seat, keep, card)).toMatch(/later Draft/);
+    s.phase = 'draft';
+    expect(primusBlocker(s, seat, keep, card)).toBeNull();
+    const other = s.players.find((p) => p.seat !== seat)!.seat;
+    expect(primusBlocker(s, other, keep, card)).toMatch(/your own turn/);
+  });
+  it('dies with its Keep', () => {
+    const { s, seat, rng, keep, card, nh, from } = keepWithCard(93);
+    act(s, seat, { type: 'attack', from, to: keep, blitz: true }, ctx(rng));
+    if (s.ts.mustMove) act(s, seat, { type: 'move', n: s.ts.mustMove.min }, ctx(rng));
+    expect(act(s, seat, { type: 'primus', keep, card }, ctx(rng))).toEqual({ ok: true });
+    const foe = s.players.find((p) => p.seat !== seat)!.seat;
+    // The foe takes the Keep back.
+    s.cur = foe; s.phase = 'attack';
+    const src = geo(s).adj[keep].find((x) => x !== from)!;
+    s.owner[src] = foe; s.armies[src] = 300; s.armies[keep] = 1;
+    expect(act(s, foe, { type: 'attack', from: src, to: keep, blitz: true }, ctx(rng)).ok).toBe(true);
+    expect(s.owner[keep]).toBe(foe);
+    expect(s.primus![nh]).toBeNull();
+    expect(s.priv!.discard).toContain(card);
+    expect(s.log.find((e) => e.k === 'primusSlain')).toMatchObject({ seat, card, t: keep, by: foe });
+  });
+});
+
+describe('host tools and table talk', () => {
+  it('a kicked seat is handed to an AI Primus and the war goes on', () => {
+    const rng = mulberry(101);
+    const s = createGame(['A', 'B', 'C'], rng);
+    passage(s, rng);
+    const seat = s.cur;
+    expect(kickToAI(s, seat, ctx(rng))).toEqual({ ok: true });
+    expect(s.players[seat].ai).toBe(true);
+    expect(s.log.at(-1)).toMatchObject({ k: 'kicked', seat });
+    expect(kickToAI(s, seat, ctx(rng)).ok).toBe(false);
+    // The bot can take the turn from here.
+    for (let i = 0; i < 200 && s.cur === seat; i++) {
+      const r = act(s, seat, botAction(viewFor(s, seat), seat, rng), ctx(rng, i * 1000));
+      if (!r.ok) act(s, seat, s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' }, ctx(rng));
+    }
+    expect(s.cur).not.toBe(seat);
+  });
+  it('emotes: a fixed menu, public, one every 15 seconds, any time', () => {
+    const rng = mulberry(102);
+    const s = createGame(['A', 'B'], rng);
+    expect(EMOTES.length).toBeGreaterThan(20);
+    for (const e of EMOTES) expect(e.split(/\s+/).length).toBeLessThanOrEqual(12);
+    const off = s.order[1];
+    expect(act(s, off, { type: 'emote', line: 0 }, ctx(rng, 1000))).toEqual({ ok: true }); // during the Passage, off-turn
+    expect(s.log.at(-1)).toMatchObject({ k: 'emote', seat: off, line: 0 });
+    expect(s.log.at(-1)!.vis).toBeUndefined();
+    expect(act(s, off, { type: 'emote', line: 1 }, ctx(rng, 1000 + EMOTE_COOLDOWN_MS - 1)).ok).toBe(false);
+    expect(act(s, off, { type: 'emote', line: 1 }, ctx(rng, 1000 + EMOTE_COOLDOWN_MS))).toEqual({ ok: true });
+    expect(act(s, off, { type: 'emote', line: EMOTES.length }, ctx(rng, 1e9)).ok).toBe(false);
+  });
+  it('the full log keeps every die, while the game state keeps the last few', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const foe = s.players.find((p) => p.seat !== seat)!.seat;
+    const to = g.territories.find((t) => !t.isKeep && s.owner[t.id] === NEUTRAL)!.id;
+    const from = beside(s, seat, to);
+    s.owner[to] = foe; s.armies[to] = 60; s.armies[from] = 200;
+    drainLog();
+    expect(act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng)).ok).toBe(true);
+    const full = drainLog().find((e) => e.k === 'battle')!;
+    const kept = s.log.find((e) => e.k === 'battle')!;
+    expect(full.rolls.length).toBe(full.n);
+    expect(full.n).toBeGreaterThan(4);
+    expect(kept.rolls.length).toBe(4);
+    expect(kept.id).toBe(full.id);
+    // A refused action leaves nothing behind.
+    expect(act(s, seat, { type: 'attack', from: to, to: from }, ctx(rng)).ok).toBe(false);
+    expect(drainLog()).toHaveLength(0);
   });
 });
 

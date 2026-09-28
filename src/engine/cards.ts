@@ -205,3 +205,25 @@ export const CHARACTER_IDS = CARDS.filter((c) => c.kind === 'character').map((c)
 export const ALL_CARD_IDS = CARDS.map((c) => c.id);
 
 export const fmt = (text: string, n: number) => text.replace(/\{n\}/g, String(n));
+
+/** A few short lines of the Institute's own. */
+const CATCHPHRASES = [
+  'Break the chains.',
+  'Hail Reaper!',
+  'Per aspera ad astra.',
+  'Gorydamn Pixies, the lot of you.',
+  'Bloodydamn right.',
+  'I live for the Dream.',
+  'Well played, slag. Well played.',
+  'Mercy is for lowColors.',
+  'Come get some.',
+  'Oops.',
+];
+/**
+ * What a player can shout into the War Log: every card and Proctor quote of twelve words or fewer, then the
+ * catchphrases. The order is fixed, so an emote is sent as its index.
+ */
+export const EMOTES: string[] = [
+  ...CARDS.map((c) => c.quote).filter((q) => q.split(/\s+/).length <= 12),
+  ...CATCHPHRASES,
+];

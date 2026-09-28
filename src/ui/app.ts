@@ -3,16 +3,16 @@
 import { World, OLYMPUS, type OlympusMode } from '../render/scene.ts';
 import { DiceTray } from '../render/dice.ts';
 import { HOUSES, MAX_PLAYERS, QUADRANTS, TERRAIN_INFO, geoFor, layoutFor, mapGeo } from '../engine/data.ts';
-import { CARD, CARDS, OLYMPUS_POWER, fmt, isSiegeCard } from '../engine/cards.ts';
+import { CARD, CARDS, EMOTES, OLYMPUS_POWER, fmt, isSiegeCard } from '../engine/cards.ts';
 import {
-  type Action, type Frame, type GameEvent, type GameState, type WarSettings, DEFAULT_SETTINGS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue,
-  allianceOf, allied, attackBlocker, attackTargets, connectedOwned, fortifyRoute, geo, housesOwned, inviteBlocker, mustTrade, olympusPreview,
-  ownsHouse, passive, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
+  type Action, type Frame, type GameEvent, type GameState, type WarSettings, DEFAULT_SETTINGS, EMOTE_COOLDOWN_MS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue, drainLog,
+  allianceOf, allied, attackBlocker, attackTargets, connectedOwned, fortifyRoute, geo, housesOwned, inviteBlocker, joinRallyBlocker, mustTrade, olympusPreview,
+  ownsHouse, passive, primiOf, primusOptions, rallyBlocker, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from '../engine/engine.ts';
-import { LocalSession, OnlineSession, savedCreds, type LobbySeat, type Session } from '../net/session.ts';
+import { LocalSession, OnlineSession, allCreds, fetchWarLog, fetchWars, flagLine, savedCreds, type Creds, type LobbySeat, type Session } from '../net/session.ts';
 import { ERRORS_FLAVOR, PASSAGE_INTRO, RULES_HTML, TAGLINES, describe, headline } from './copy.ts';
 import { VERSION } from '../version.ts';
-import { assaultFight, attackFight, oddsClass, pct, standardFight, winChance } from './odds.ts';
+import { assaultFight, attackFight, defenseNote, oddsClass, pct, standardFight, winChance } from './odds.ts';
 import { swordClash } from './sound.ts';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -39,8 +39,8 @@ interface UIState {
   inspect: string | null;
   /** A hand card under the mouse: its targets glow on the map. */
   hoverCard: string | null;
-  /** A card play waiting on "Confirm", with the territories it changes. */
-  confirm: { action: Extract<Action, { type: 'play' }>; targets: number[] } | null;
+  /** A card play being previewed: the map shows `preview` (the outcome) until Back or Commit. */
+  confirm: { action: Extract<Action, { type: 'play' }>; targets: number[]; preview: GameState | null } | null;
   placeAmt: number | 'all';
   dice: number;
   commit: number;
@@ -56,6 +56,10 @@ interface UIState {
   spot: number | null;
   /** A region row under the mouse: its land glows. */
   hoverRegion: number | null;
+  /** A Keep whose Primus prompt the player opened from the Draft bar. */
+  primusOpen: number | null;
+  /** The emote menu is open. */
+  emotes: boolean;
 }
 
 export class App {
@@ -113,7 +117,7 @@ export class App {
   }
 
   private freshUI(): UIState {
-    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false, regionsMin: window.innerHeight < 760, spot: null, hoverRegion: null };
+    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false, regionsMin: window.innerHeight < 760, spot: null, hoverRegion: null, primusOpen: null, emotes: false };
   }
 
   // =========================================================================
@@ -142,6 +146,7 @@ export class App {
           <div class="row"><input class="field" id="code" maxlength="5" placeholder="CODE" style="text-transform:uppercase;letter-spacing:.2em;text-align:center"><button class="btn big" data-a="join">Join</button></div>
           ${last && savedCreds(last) ? `<button class="btn gold" data-a="rejoin">Rejoin war ${esc(last)}</button>` : ''}
           <button class="btn" data-a="local">Local · Hot-seat & AI</button>
+          ${allCreds().length ? '<button class="btn ghost" data-a="wars">📜 Past wars (War Logs)</button>' : ''}
           <button class="btn ghost" data-a="rules">How to Play</button>
           <button class="btn ghost" data-a="codex">The Codex (all cards)</button>
         </div>
@@ -162,9 +167,135 @@ export class App {
       }
       if (a === 'rejoin' && last) this.resume(last);
       if (a === 'local') this.showLocalSetup();
+      if (a === 'wars') this.showWars();
       if (a === 'rules') this.modalRules();
       if (a === 'codex') this.modalCodex();
     });
+  }
+
+  /** Every online war fought from this browser whose War Log the server still keeps (90 days). */
+  async showWars() {
+    const creds = allCreds();
+    const scr = this.setScreen(`<div class="screen"><div class="menu card-panel wide"><h2>📜 Past wars</h2><p class="fine">Reading the archives…</p></div></div>`)!;
+    let wars: Awaited<ReturnType<typeof fetchWars>> = [];
+    try { wars = await fetchWars(creds); } catch (e) { this.toast((e as Error).message); }
+    if (this.screen !== scr) return;
+    wars.sort((a, b) => b.started.localeCompare(a.started));
+    const credOf = (id: string) => creds.find((c) => c.game === id)!;
+    scr.innerHTML = `<div class="menu card-panel wide">
+      <h2>📜 Past wars</h2>
+      <p class="fine" style="margin:0 0 10px">Wars this browser fought in. Their full War Logs (every die) are kept for 90 days. Wars from before version .004 have no log.</p>
+      ${wars.length ? wars.map((w) => {
+        const me = credOf(w.game).seat;
+        return `<div class="war-row">
+          <div><b class="code">${esc(w.code)}</b> <span class="fine">${new Date(w.started).toLocaleString()}</span>
+            <div class="war-houses">${w.players.map((p) => `<span class="${w.winners.includes(p.seat) ? 'won' : ''}">${sig(p.house, 'sig sm')} ${esc(p.name)}${p.seat === me ? ' <span class="you">YOU</span>' : ''}${w.winners.includes(p.seat) ? ' ♛' : ''}</span>`).join('')}</div>
+            <div class="fine" style="margin:0">${w.over ? 'Decided' : 'Still raging (or abandoned)'}</div></div>
+          <button class="btn primary" data-a="readlog" data-game="${w.game}">Read the War Log</button>
+        </div>`;
+      }).join('') : '<p class="prose">No War Logs yet. Fight an online war first.</p>'}
+      <div class="row" style="margin-top:12px"><button class="btn" data-a="back">◂ Back</button></div>
+    </div>`;
+    scr.onclick = (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
+      if (b?.dataset.a === 'back') this.showTitle();
+      if (b?.dataset.a === 'readlog') this.showWarLog(credOf(b.dataset.game!));
+    };
+  }
+
+  /** One war's full War Log: filter by turn or House, export it as text, and flag a line with a public note. */
+  async showWarLog(c: Creds) {
+    const scr = this.setScreen(`<div class="screen"><div class="menu card-panel logview"><h2>📜 War Log ${esc(c.code)}</h2><p class="fine">Unrolling the scroll…</p></div></div>`)!;
+    let data: { seat: number; events: GameEvent[] };
+    try { data = await fetchWarLog(c); } catch (e) { this.toast((e as Error).message); return this.showWars(); }
+    if (this.screen !== scr) return;
+    const meta = data.events.find((e) => e.k === 'meta');
+    if (!meta) { this.toast('That War Log is missing its first page.'); return this.showWars(); }
+    const events = data.events.filter((e) => e.k !== 'meta' && e.k !== 'flag');
+    const flags = data.events.filter((e) => e.k === 'flag');
+    // A stand-in game for the War Log's words: the players, the map, and whose eyes are reading.
+    const st = {
+      players: meta.players.map((p: any) => ({ ...p, general: null, alive: true, dominatedBy: null })),
+      opts: meta.opts, me: { seat: data.seat, hand: [], passage: null }, log: [], standards: [],
+    } as unknown as GameState;
+    for (const e of events) if (e.k === 'passage' && st.players[e.seat]) st.players[e.seat].general = e.general;
+    // Which turn (and whose) each event belongs to.
+    let turn = 0, whose = -1;
+    const rows = events.map((e) => {
+      if (e.k === 'turn') { turn = e.turn; whose = e.seat; }
+      return { e, turn, whose };
+    });
+    const turns = [...new Set(rows.map((r) => r.turn))];
+    const seatsIn = (e: GameEvent): number[] => {
+      if (e.k.startsWith('invite')) return [e.from, e.to];
+      return [e.seat, e.def, e.victim, e.captor, e.by, e.leaver, ...(e.members ?? [])].filter((x) => typeof x === 'number' && x >= 0);
+    };
+    const dice = (e: GameEvent) => {
+      if (!Array.isArray(e.rolls) || !e.rolls.length) return '';
+      const one = (r: any) => `${r.a.map((x: number, i: number) => (x !== r.raw.a[i] ? `${r.raw.a[i]}<sup>+${x - r.raw.a[i]}</sup>` : `${x}`)).join(' ')} <span class="vs">vs</span> ${r.d.map((x: number, i: number) => (x !== r.raw.d[i] ? `${r.raw.d[i]}<sup>+${x - r.raw.d[i]}</sup>` : `${x}`)).join(' ')}`;
+      return `<details class="dice"><summary>🎲 ${e.rolls.length} roll${e.rolls.length === 1 ? '' : 's'}</summary>${e.rolls.map((r: any, i: number) => `<div>${i + 1}. ${one(r)} <span class="fine">(−${r.aLoss} / −${r.dLoss})</span></div>`).join('')}</details>`;
+    };
+    const text = (html: string) => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent ?? ''; };
+    const f = { turn: 'all', seat: 'all' };
+    const visible = () => rows.filter((r) => (f.turn === 'all' || r.turn === +f.turn) && (f.seat === 'all' || seatsIn(r.e).includes(+f.seat)));
+    const draw = () => {
+      const list = visible().map((r) => {
+        const line = describe(st, r.e);
+        if (!line) return '';
+        const fl = flags.filter((x) => x.id === r.e.id);
+        return `<div class="lv-line" data-seq="${r.e.id}"><span class="lv-t">T${r.turn}</span><div class="lv-body">${line}${dice(r.e)}
+          ${fl.map((x) => `<div class="lv-flag">⚑ ${sig(st.players[x.seat]?.house ?? 0, 'sig sm')} <b>${esc(st.players[x.seat]?.name ?? '?')}</b>: ${esc(x.note)}</div>`).join('')}</div>
+          <button class="btn sm ghost" data-a="flag" data-seq="${r.e.id}" title="Pin a short public note to this line">⚑ Flag</button></div>`;
+      }).join('');
+      const body = scr.querySelector('#lvList');
+      if (body) body.innerHTML = list || '<p class="fine">Nothing matches.</p>';
+    };
+    scr.innerHTML = `<div class="menu card-panel logview">
+      <h2>📜 War Log ${esc(c.code)}</h2>
+      <div class="war-houses">${st.players.map((p) => `<span>${sig(p.house, 'sig sm')} ${esc(p.name)}${p.seat === data.seat ? ' <span class="you">YOU</span>' : ''}</span>`).join('')}</div>
+      <div class="row lv-filters">
+        <label>Turn <select id="lvTurn"><option value="all">All ${turns.length}</option>${turns.filter((t) => t > 0).map((t) => { const r = rows.find((x) => x.turn === t)!; return `<option value="${t}">T${t}${r.whose >= 0 ? ` · ${esc(st.players[r.whose].name)}` : ''}</option>`; }).join('')}</select></label>
+        <label>House <select id="lvSeat"><option value="all">Everyone</option>${st.players.map((p) => `<option value="${p.seat}">${esc(p.name)} (${HOUSES[p.house].name})</option>`).join('')}</select></label>
+        <span class="grow"></span>
+        <button class="btn sm" data-a="export">⤓ Export text</button>
+        <button class="btn sm" data-a="back">◂ Past wars</button>
+      </div>
+      <div class="lv-list" id="lvList"></div>
+    </div>`;
+    draw();
+    scr.querySelector<HTMLSelectElement>('#lvTurn')!.onchange = (e) => { f.turn = (e.target as HTMLSelectElement).value; draw(); };
+    scr.querySelector<HTMLSelectElement>('#lvSeat')!.onchange = (e) => { f.seat = (e.target as HTMLSelectElement).value; draw(); };
+    scr.onclick = async (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-a]');
+      if (!b) return;
+      if (b.dataset.a === 'back') return this.showWars();
+      if (b.dataset.a === 'export') {
+        const out = visible().map((r) => {
+          const line = text(describe(st, r.e));
+          if (!line) return '';
+          const rolls = Array.isArray(r.e.rolls) ? r.e.rolls.map((x: any) => `    dice ${x.a.join(' ')} vs ${x.d.join(' ')} (raw ${x.raw.a.join(' ')} vs ${x.raw.d.join(' ')})`).join('\n') : '';
+          const fl = flags.filter((x) => x.id === r.e.id).map((x) => `    FLAG ${st.players[x.seat]?.name}: ${x.note}`).join('\n');
+          return [`T${r.turn}  ${line}`, rolls, fl].filter(Boolean).join('\n');
+        }).filter(Boolean).join('\n');
+        const blob = new Blob([`Institute Conquest · War Log ${c.code}\n${st.players.map((p) => `${p.name} (House ${HOUSES[p.house].name})`).join(', ')}\n\n${out}\n`], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `war-log-${c.code}.txt`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        return;
+      }
+      if (b.dataset.a === 'flag') {
+        const note = prompt('A short note for everyone in this war (140 characters):')?.trim();
+        if (!note) return;
+        try {
+          await flagLine(c, +b.dataset.seq!, note.slice(0, 140));
+          flags.push({ id: +b.dataset.seq!, k: 'flag', seat: data.seat, note: note.slice(0, 140) });
+          draw();
+          this.toast('Flagged. Everyone in this war can see it.');
+        } catch (err) { this.toast((err as Error).message); }
+      }
+    };
   }
 
   showJoin(code: string) {
@@ -276,7 +407,7 @@ export class App {
         <div class="fine" style="margin:0">Share this code or link. Up to ${MAX_PLAYERS} Houses; the valley grows with every House.</div>
         <div class="code-big">${s.code}</div>
         <div class="row" style="margin-bottom:14px"><input class="field" readonly value="${esc(link)}"><button class="btn" data-a="copy" style="flex:0 0 auto">Copy link</button></div>
-        ${s.lobby.map((l) => `<div class="seat-row"><span class="nm">${esc(l.name)} ${l.seat === s.seat ? '<span class="you">YOU</span>' : ''} ${l.ai ? '<span class="ai-tag">AI</span>' : ''}</span>${l.seat === s.hostSeat ? '<span class="fine" style="margin:0">host</span>' : ''}</div>`).join('')}
+        ${s.lobby.map((l) => `<div class="seat-row"><span class="nm">${esc(l.name)} ${l.seat === s.seat ? '<span class="you">YOU</span>' : ''} ${l.ai ? '<span class="ai-tag">AI</span>' : ''}</span>${l.seat === s.hostSeat ? '<span class="fine" style="margin:0">host</span>' : host && !l.ai ? `<button class="btn sm ghost" data-a="kickSeat" data-seat="${l.seat}">Kick</button>` : ''}</div>`).join('')}
         ${host ? `<div class="row" style="margin-top:10px">
             <button class="btn" data-a="addBot" ${s.lobby.length >= MAX_PLAYERS ? 'disabled' : ''}>+ AI Primus</button>
             <button class="btn" data-a="removeBot" ${!s.lobby[s.lobby.length - 1]?.ai ? 'disabled' : ''}>− AI</button></div>` : ''}
@@ -298,6 +429,11 @@ export class App {
       const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
       if (a === 'copy') { navigator.clipboard?.writeText(link).then(() => this.toast('Link copied. Go recruit.'), () => this.toast(link)); }
       if (a === 'addBot' || a === 'removeBot' || a === 'start') { const err = await s.hostOp(a); if (err) this.toast(err); }
+      if (a === 'kickSeat') {
+        const seat = +(e.target as HTMLElement).closest<HTMLElement>('[data-seat]')!.dataset.seat!;
+        const who = s.lobby.find((l) => l.seat === seat);
+        if (who && confirm(`Kick ${who.name} from the War Council?`)) { const err = await s.hostOp('kick', undefined, seat); if (err) this.toast(err); }
+      }
       if (a === 'leave') this.showTitle();
     });
   }
@@ -316,6 +452,7 @@ export class App {
     // Local AI seats wait while the screen is still replaying their earlier moves.
     s.hold = () => this.playing || this.showcaseOpen || this.wheelOpen;
     if (s instanceof OnlineSession) {
+      s.onGone = (msg) => { this.showTitle(); this.toast(msg); };
       store.set('ic-last-code', s.code);
       history.replaceState(null, '', `${location.pathname}?join=${s.code}`);
     }
@@ -384,6 +521,7 @@ export class App {
     this.processEvents(v);
     this.world.update(v);
     this.validateUI(v);
+    if (this.ui.confirm?.preview) this.world.update(this.ui.confirm.preview);
     this.render();
   }
 
@@ -448,6 +586,16 @@ export class App {
           await this.showBattle(d, e);
           await w(1000);
           shown = true;
+          break;
+        case 'overwhelm':
+          cam([e.from, e.to]);
+          this.world.arrow(e.from, e.to, '#f3d27a');
+          this.world.burst(e.to, HOUSES[d.players[e.seat].house].color);
+          this.whisper(describe(d, e));
+          await w(900); this.world.clearArrow(); shown = true;
+          break;
+        case 'emote':
+          this.whisper(describe(d, e));
           break;
         case 'place':
           cam([e.t]);
@@ -558,7 +706,9 @@ export class App {
           <button class="icon-btn" data-a="olympus" id="btnOly" title="Olympus: solid / see-through / hidden (O)">⛰</button>
           <button class="icon-btn" data-a="diplo" id="btnDiplo" title="Diplomacy &amp; alliances">🤝<span class="dot hidden"></span></button>
           <button class="icon-btn" data-a="settings" title="Settings: camera and sound">⚙</button>
+          <button class="icon-btn" data-a="emotes" id="btnEmote" title="Emote: shout a line into the War Log">💬</button>
         </div>
+        <div class="emotes hidden" id="emotes"></div>
         <div class="corner right mobile-tabs">
           <button class="icon-btn" data-a="tab-roster" title="Houses &amp; your General">♜</button>
           <button class="icon-btn" data-a="tab-log" title="Regions &amp; war log">✎</button>
@@ -599,7 +749,7 @@ export class App {
     if (u.target != null && u.sel == null) u.target = null;
     if (u.target === OLYMPUS && (!this.sieging() || u.sel == null || !this.g.territories[u.sel].foot)) u.target = null;
     if (v.phase !== 'draft') { u.pending = null; u.trade.clear(); }
-    if (u.confirm && (!this.myTurn() || v.phase !== 'draft')) { u.confirm = null; document.querySelector('.confirm')?.remove(); }
+    if (u.confirm && (!this.myTurn() || v.phase !== 'draft')) this.endPreview();
     if (v.phase === 'draft' && u.target != null) u.target = null;
     if (v.phase !== 'fortify') u.stdMode = false;
     const hand = v.me?.hand.map((c) => c.id) ?? [];
@@ -618,6 +768,7 @@ export class App {
     this.renderNotices();
     this.renderHighlights();
     this.renderModals();
+    this.renderEmotes();
     const lc = document.getElementById('leftcol')!, r = document.getElementById('roster')!, l = document.getElementById('log')!;
     const narrow = window.innerWidth <= 900;
     lc.classList.toggle('collapsed', narrow && this.ui.mobileTab !== 'roster');
@@ -634,6 +785,18 @@ export class App {
     this.world.setFocus(spot ?? (this.focusMode && this.me != null ? this.me : null));
     const root = document.getElementById('modal-root');
     if (root?.dataset.key === 'info-diplo') this.modalDiplo(true);
+  }
+
+  private lastEmoteAt = 0;
+  /** The emote menu: a fixed list of lines; one every 15 seconds. */
+  private renderEmotes() {
+    const box = document.getElementById('emotes');
+    if (!box) return;
+    box.classList.toggle('hidden', !this.ui.emotes);
+    if (!this.ui.emotes) return;
+    const wait = Math.ceil((this.lastEmoteAt + EMOTE_COOLDOWN_MS - Date.now()) / 1000);
+    box.innerHTML = `<div class="em-h">SAY IT TO THE VALLEY${wait > 0 ? ` <span class="fine">(${wait}s)</span>` : ''}</div>
+      ${EMOTES.map((line, i) => `<button class="em" data-a="emote" data-n="${i}" ${wait > 0 ? 'disabled' : ''}>${esc(line)}</button>`).join('')}`;
   }
 
   private voteOwed() {
@@ -689,6 +852,23 @@ export class App {
     </div>`;
   }
 
+  /** The Primuses sworn in at the Keeps `seat` holds, with their Passives. */
+  private primiHTML(seat: number, full = false) {
+    const v = this.v, g = this.g;
+    const list = primiOf(v, seat);
+    if (!list.length) return '';
+    return `<div class="primi">${list.map((x) => {
+      const c = CARD[x.card];
+      return `<div class="primi-row" title="${esc(c.name)}, Primus of ${esc(g.territories[g.keepOf(x.house)].name)}${c.passive ? `: ${esc(fmt(c.passive.text, c.passive.n))}` : ''}">♛ <b>${esc(c.name)}</b> <span class="muted">· ${esc(g.territories[g.keepOf(x.house)].name)}</span>${full && c.passive ? `<div class="ptext"><span class="k">PRIMUS</span> ${esc(fmt(c.passive.text, c.passive.n))}</div>` : ''}</div>`;
+    }).join('')}</div>`;
+  }
+
+  /** The online host may hand another human's seat to an AI. */
+  private canKick(seat: number) {
+    const s = this.session;
+    return s instanceof OnlineSession && s.seat === s.hostSeat && seat !== s.seat && !this.v.players[seat].ai && this.v.phase !== 'over';
+  }
+
   private renderGeneral() {
     const v = this.v, box = document.getElementById('general')!;
     if (this.me == null || v.phase === 'passage' || !v.players[this.me]) { box.innerHTML = ''; box.classList.add('hidden'); return; }
@@ -702,6 +882,7 @@ export class App {
     }).join('');
     box.innerHTML = `<h3 data-a="min-gen">YOUR GENERAL <span>${this.ui.genMin ? '▸' : '▾'}</span></h3>
       ${this.ui.genMin ? '' : `${this.primusHTML(this.me, true)}
+      ${this.primiHTML(this.me, true)}
       ${shared ? `<div class="shared-h">🤝 SHARED BY ALLIES${al && !al.public ? ' (SECRET)' : ''}</div>${shared}` : ''}
       ${!me.alive ? '<div class="muted">Your House has fallen.</div>' : ''}`}`;
   }
@@ -721,6 +902,8 @@ export class App {
         <div class="pn">${sig(p.house)} <span style="color:${HOUSES[p.house].color}">${esc(p.name)}</span>
           ${seat === this.me ? '<span class="you">YOU</span>' : ''}${p.ai ? '<span class="ai-tag">AI</span>' : ''}${allyTag}</div>
         ${this.primusHTML(seat)}
+        ${this.primiHTML(seat)}
+        ${this.canKick(seat) ? `<button class="btn sm ghost kick" data-a="kick" data-seat="${seat}" title="Hand ${esc(p.name)}'s House to an AI Primus">🥾 Kick</button>` : ''}
         ${p.alive ? `<div class="meta"><span>${terr.length} terr</span><span>${armies} armies</span><span>${v.handCounts[seat] ?? 0} cards</span>
           <span class="owned" title="Houses owned">${owned.map((h) => sig(h)).join('')}</span></div>
           <div class="meta">⚑ ${st.captured ? 'captured' : esc(this.g.territories[st.at].name)}${seat === v.cur && v.phase !== 'passage' ? '' : ` · +${reinforcementBreakdown(v, seat).total}/turn`}</div>`
@@ -805,7 +988,13 @@ export class App {
         <div class="row"><button class="btn sm gold" data-a="vote" data-yes="1">Storm it</button><button class="btn sm" data-a="vote" data-yes="0">Not yet</button></div>
       </div>`;
     }
-    box.innerHTML = inv + vote;
+    const r = v.rally;
+    const rally = r && !joinRallyBlocker(v, this.me) && !this.rallyIgnored.has(`${r.by}:${r.turn}`) ? `<div class="notice" style="--c:${HOUSES[v.players[r.by].house].color}">
+        <div class="nt">📯 ${sig(v.players[r.by].house)} <b>${esc(v.players[r.by].name)}</b> calls a RALLY AGAINST OLYMPUS</div>
+        <div class="nb">The first to answer join their public alliance (${(allianceOf(v, r.by)?.members.length ?? 1)}/${r.slots}).${allianceOf(v, this.me) ? ' Answering walks out on your current allies: they\'ll call it betrayal.' : ''}</div>
+        <div class="row"><button class="btn sm gold" data-a="joinRally">Answer it</button><button class="btn sm" data-a="ignoreRally">Ignore</button></div>
+      </div>` : '';
+    box.innerHTML = inv + vote + rally;
   }
 
   private attackSources(): number[] {
@@ -896,6 +1085,7 @@ export class App {
         <div class="seg" title="How many each click / + adds">${[1, 3, 5, 'all'].map((n) => `<button data-a="amt" data-n="${n}" class="${u.placeAmt === n ? 'on' : ''}">${n === 'all' ? 'All' : '+' + n}</button>`).join('')}</div>
         <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶ Undo${placedTotal ? ` (${placedTotal})` : ''}</button>
         ${u.trade.size === 3 ? `<button class="btn gold" data-a="trade">Trade 3 → 10 armies</button>` : u.trade.size ? `<span class="hint">${u.trade.size}/3 selected</span>` : ''}
+        ${this.primusButton()}
         <button class="btn primary" data-a="endDraft" ${v.ts.reinforcements > 0 || mt ? 'disabled' : ''}>End Draft ▸</button>`;
       return;
     }
@@ -914,9 +1104,12 @@ export class App {
           const col = o >= 0 ? HOUSES[v.players[o].house].color : '#a39a88';
           const sh = standardAt(v, t);
           const guard = sh >= 0 ? v.standards[sh].guard : 0;
-          const icon = T[t].terrain === 'forest' ? ' 🌲' : '';
+          const tm = terrainMods(v, u.sel!, t);
+          const icon = tm.def ? ' 🌲' : '';
+          const note = defenseNote(v, u.sel!, t);
           const p = winChance(attackFight(v, this.me!, u.sel!, t));
-          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${ally ? 'Your ally! Attacking ends the alliance. ' : T[t].terrain === 'forest' ? 'Forest: +2 to the highest defense die. ' : ''}${pct(p)} chance to take it if you blitz">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''} <span class="odds ${oddsClass(p)}">${pct(p)}</span></button>`;
+          const tip = ally ? 'Your ally! Attacking ends the alliance. ' : note === 'Overwhelm' ? 'Twice their number: they yield without a fight. ' : note === '1 die' ? 'A lone neutral garrison rolls 1 defense die. ' : tm.def ? 'Forest: +1 to their lowest defense die. ' : '';
+          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${tip}${note === 'Overwhelm' ? 'Certain' : `${pct(p)} chance to take it if you blitz`}">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''} ${note === 'Overwhelm' ? '<span class="odds good">🏳 Overwhelm</span>' : `<span class="odds ${oddsClass(p)}">${pct(p)}</span>${note === '1 die' ? ' <span class="dnote">1🎲</span>' : ''}`}</button>`;
         }).join('');
         const olyP = this.canAssaultFrom(u.sel) ? winChance(assaultFight(v, u.sel)) : 0;
         const oly = this.canAssaultFrom(u.sel) ? `<button class="chip oly" data-a="tgt" data-t="${OLYMPUS}">🏛 Olympus <b>${v.siege!.garrison}</b> <span class="odds ${oddsClass(olyP)}">${pct(olyP)}</span></button>` : '';
@@ -943,19 +1136,23 @@ export class App {
       const defStd = standardAt(v, to);
       const ally = allied(v, this.me!, v.owner[to]);
       const tm = terrainMods(v, from, to);
-      const terr = [tm.atk ? `⛰ your high ground +${tm.atk}` : '', tm.def ? `🌲 their forest cover +${tm.def}` : ''].filter(Boolean).join(' · ');
+      const note = defenseNote(v, from, to);
+      const terr = [tm.atk ? `⛰ your high ground +${tm.atk} (lowest compared die)` : '', tm.def ? `🌲 their forest cover +${tm.def} (lowest die)` : '',
+        note === '1 die' ? '🎲 a lone neutral garrison: 1 defense die' : '', note === 'neutral Keep' ? '♜ neutral Keep: no walls, no modifiers, never yields' : ''].filter(Boolean).join(' · ');
       const bp = winChance(attackFight(v, this.me!, from, to));
       const sp = canStd ? winChance(standardFight(v, this.me!, from, to, commit)) : 0;
       bar.innerHTML = `
         <span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>${esc(T[to].name)}</b> (${v.armies[to]}${defStd >= 0 && v.standards[defStd].guard ? ` +${v.standards[defStd].guard} honor guard` : ''})</span>
-        <span class="odds big ${oddsClass(bp)}" title="Chance to take it if you blitz with everything but one">Blitz wins: ${pct(bp)}</span>
+        ${note === 'Overwhelm' ? `<span class="odds big good" title="${v.armies[from] - 1} against ${v.armies[to]}: twice their number or more">🏳 Overwhelm: they yield, no dice</span>`
+          : `<span class="odds big ${oddsClass(bp)}" title="Chance to take it if you blitz with everything but one">Blitz wins: ${pct(bp)}</span>`}
         ${terr ? `<span class="terr-chip">${terr}</span>` : ''}
         ${ally ? '<span class="warn">⚠ Your ally. This shatters the alliance.</span>' : ''}
         ${diceSeg}
         <button class="btn primary" data-a="roll" ${v.armies[from] < 2 ? 'disabled' : ''}>Roll</button>
         <button class="btn primary" data-a="blitz" ${v.armies[from] < 2 ? 'disabled' : ''}>Blitz</button>
-        ${canStd ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3 <span class="odds ${oddsClass(sp)}" id="stdOdds" title="Chance the charge wins, before your General's war cry">≥${pct(sp)}</span></label>
+        ${canStd && !v.ts.stdRaised ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3 <span class="odds ${oddsClass(sp)}" id="stdOdds" title="Chance the charge wins, before your General's war cry">≥${pct(sp)}</span></label>
           <button class="btn gold" data-a="std">⚑ Raise the Standard</button>` : ''}
+        ${canStd && v.ts.stdRaised ? '<button class="btn gold" disabled title="The Standard can be raised once per turn">⚑ Raised this turn</button>' : ''}
         <button class="btn sm" data-a="retarget" title="Pick another target">↺</button>
         <button class="btn sm" data-a="cancel">✕</button>`;
       return;
@@ -968,15 +1165,20 @@ export class App {
         const max = v.armies[u.sel] - 1;
         const n = Math.max(1, Math.min(u.moveN, max));
         const r = fortifyRoute(v, this.me!, u.sel, u.target);
-        const halt = r && r.stop !== u.target ? T[r.stop] : null;
         bar.innerHTML = `<span class="hint">March from <b>${esc(T[u.sel].name)}</b> to <b>${esc(T[u.target].name)}</b>${r ? ` · ${r.path.length - 1} step${r.path.length === 2 ? '' : 's'}` : ''}</span>
-          ${halt ? `<span class="warn" title="Mountains, water and marsh can end a march but not be crossed">${TERRAIN_INFO[halt.terrain].icon} The column halts at ${esc(halt.name)} (${TERRAIN_INFO[halt.terrain].name.toLowerCase()}). March on next turn.</span>` : ''}
           <label><input type="range" data-a="moveN" min="1" max="${max}" value="${n}"> <b id="moveNv">${n}</b></label>
           <button class="btn primary" data-a="fortify">March</button><button class="btn sm" data-a="cancel">✕</button>`;
         return;
       }
       bar.innerHTML = `<span class="hint">${u.sel == null ? `Pick troops to move (${limit} move${limit === '1' ? '' : 's'} left).` : 'Pick a destination.'}</span>${stdBtn}<button class="btn primary" data-a="endTurn">End Turn ▸</button>`;
     }
+  }
+
+  /** A Keep of yours without a Primus, and a Character in hand that could be sworn in there. */
+  private primusButton() {
+    const opts = this.me != null ? primusOptions(this.v, this.me) : [];
+    if (!opts.length) return '';
+    return `<button class="btn gold" data-a="primusOpen" data-keep="${opts[0].keep}" title="Swear a Character in as Primus of ${esc(this.g.territories[opts[0].keep].name)}">♛ Primus${opts.length > 1 ? ` (${opts.length})` : ''}</button>`;
   }
 
   private cardHTML(id: string, o: { sel?: boolean; locked?: boolean; btns?: string; big?: boolean; forHouse?: number; ownsCheck?: boolean; an?: number; mag?: boolean; cls?: string } = {}) {
@@ -1006,6 +1208,15 @@ export class App {
     </div>`;
   }
 
+  /** Can this card be played this very moment (it glows)? A Draft Active, or a REACTION card when a Standard charges you. */
+  private playableNow(id: string, locked: boolean) {
+    const v = this.v, c = CARD[id];
+    if (locked || this.me == null || this.playing) return false;
+    if (v.reaction) return v.reaction.defender === this.me && c.active.kind === 'counter';
+    if (!this.myTurn() || v.phase !== 'draft' || this.ui.pending || this.ui.confirm) return false;
+    return c.active.kind !== 'counter' && (c.kind !== 'proctor' || ownsHouse(v, this.me, c.house)) && (!isSiegeCard(c) || this.sieging());
+  }
+
   /** The Play / Discard / Trade buttons for a card in your hand, when you can use them. */
   private cardButtons(id: string, locked: boolean) {
     const v = this.v, u = this.ui, c = CARD[id];
@@ -1023,7 +1234,7 @@ export class App {
     const hand = v.me?.hand ?? [];
     const box = document.getElementById('hand')!;
     if (v.phase === 'passage' || !hand.length) { box.innerHTML = ''; this.renderInspector(); return; }
-    box.innerHTML = hand.map((h) => this.cardHTML(h.id, { sel: u.trade.has(h.id), locked: h.locked, btns: this.cardButtons(h.id, h.locked), mag: true, cls: u.inspect === h.id ? 'inspecting' : '' })).join('');
+    box.innerHTML = hand.map((h) => this.cardHTML(h.id, { sel: u.trade.has(h.id), locked: h.locked, btns: this.cardButtons(h.id, h.locked), mag: true, cls: `${u.inspect === h.id ? 'inspecting' : ''} ${this.playableNow(h.id, h.locked) ? 'playable' : ''}` })).join('');
     if (!box.dataset.hover) {
       box.dataset.hover = '1';
       // Hovering a card lights up what it would hit.
@@ -1097,7 +1308,7 @@ export class App {
    * Try a card play on a copy of the game, so the confirm box can show exactly what the War Log will say.
    * Random effects (stolen or drawn cards) use stand-in cards; only the counts matter for the preview.
    */
-  private simulate(a: Action): { err: string | null; text: string; changed: number[] } {
+  private simulate(a: Action): { err: string | null; text: string; changed: number[]; state: GameState | null } {
     const v = this.session!.view!, me = this.me!;
     const s: GameState = JSON.parse(JSON.stringify(v));
     const dummy = () => ({ id: 'p-mars', locked: false });
@@ -1107,28 +1318,55 @@ export class App {
       passage: v.players.map(() => null),
     };
     const r = act(s, me, a, { rng: () => 0.5, now: Date.now() });
-    if (!r.ok) return { err: r.err, text: '', changed: [] };
+    drainLog(); // a make-believe play never reaches any War Log
+    if (!r.ok) return { err: r.err, text: '', changed: [], state: null };
     const e = s.log.filter((x) => x.id > (v.log.at(-1)?.id ?? 0)).find((x) => x.k === 'play');
     const changed = s.owner.flatMap((o, t) => (o !== v.owner[t] || s.armies[t] !== v.armies[t] ? [t] : []));
-    return { err: null, text: e ? describe(s, e) : '', changed };
+    // The preview shows only what this seat may know: its own hand, and counts for everyone else.
+    s.priv = null;
+    s.me = { seat: me, hand: [], passage: null };
+    return { err: null, text: e ? describe(s, e) : '', changed, state: s };
   }
 
-  /** Ask before a card is played, showing its War Log line to be. */
+  /**
+   * Preview a card play: the map shows the outcome (the changed territories and their new armies) until you go
+   * Back or Commit. Anything random (stolen or drawn cards) is shown as a range.
+   */
   private confirmPlay(action: Extract<Action, { type: 'play' }>) {
     const sim = this.simulate(action);
     if (sim.err) { this.toast(sim.err); return; }
+    const v = this.v, me = this.me!, T = this.g.territories;
     const imp = this.cardImpact(action.card);
     const targets = sim.changed.length ? sim.changed : action.t != null ? [action.t] : imp.targets;
-    this.ui.confirm = { action, targets };
+    this.ui.confirm = { action, targets, preview: sim.state };
     this.ui.inspect = null;
+    if (sim.state) this.world.update(sim.state);
     this.render();
     const c = CARD[action.card];
-    const box = el(`<div class="confirm" style="--hc:${HOUSES[c.house].color}">
-      <div class="ch">${sig(c.house)} <div><div class="logo-sub" style="margin:0;letter-spacing:.3em">CONFIRM CARD</div><b>${esc(c.name)}</b>${action.t != null ? ` → ${esc(this.tname(action.t))}` : ''}${action.seat != null ? ` → ${esc(this.v.players[action.seat].name)}` : ''}</div></div>
+    const n = activeValue(v, me, c);
+    const after = sim.state!;
+    const lines: string[] = [];
+    for (const t of sim.changed.slice(0, 8)) {
+      const o0 = v.owner[t], o1 = after.owner[t];
+      lines.push(`<b>${esc(T[t].name)}</b>: ${v.armies[t]} → <b>${after.armies[t]}</b>${o0 !== o1 ? ` · now ${o1 === me ? '<b style="color:var(--gold)">yours</b>' : esc(after.players[o1]?.name ?? 'neutral')}` : ''}`);
+    }
+    if (sim.changed.length > 8) lines.push(`…and ${sim.changed.length - 8} more`);
+    if (after.ts.reinforcements !== v.ts.reinforcements) lines.push(`Armies to place: ${v.ts.reinforcements} → <b>${after.ts.reinforcements}</b>`);
+    const b0 = v.ts.buffs, b1 = after.ts.buffs;
+    if (b1.atk > b0.atk) lines.push(`+1 to your highest attack die in your next <b>${b1.atk}</b> battle${b1.atk === 1 ? '' : 's'}`);
+    if (b1.breakLine > b0.breakLine) lines.push(`The defender rolls 1 die in your next <b>${b1.breakLine}</b> battle${b1.breakLine === 1 ? '' : 's'}`);
+    if (b1.longStrike > b0.longStrike) lines.push(`<b>${b1.longStrike}</b> attack${b1.longStrike === 1 ? '' : 's'} may strike two territories away`);
+    if (b1.fury && !b0.fury) lines.push('All your attack dice +1 for the rest of the turn');
+    if (b1.fortifyAll && !b0.fortifyAll) lines.push('Unlimited fortify moves this turn');
+    if (c.active.kind === 'steal' && action.seat != null) lines.push(`Steals <b>${Math.min(n, v.handCounts[action.seat] ?? 0) ? `0–${Math.min(n, v.handCounts[action.seat] ?? 0)}` : '0'}</b> random card${n === 1 ? '' : 's'} from ${esc(v.players[action.seat].name)} (you'll see which after)`);
+    if (c.active.kind === 'draw') lines.push(`Draws <b>${v.deckCount >= n ? n : `0–${n}`}</b> card${n === 1 ? '' : 's'}, locked until your next turn`);
+    const box = el(`<div class="confirm preview" style="--hc:${HOUSES[c.house].color}">
+      <div class="ch">${sig(c.house)} <div><div class="logo-sub" style="margin:0;letter-spacing:.3em">PREVIEW · NOTHING IS PLAYED YET</div><b>${esc(c.name)}</b>${action.t != null ? ` → ${esc(this.tname(action.t))}` : ''}${action.seat != null ? ` → ${esc(v.players[action.seat].name)}` : ''}</div></div>
+      ${lines.length ? `<div class="k">WHAT CHANGES</div><div class="outcome">${lines.map((l) => `<div>${l}</div>`).join('')}</div>` : ''}
       <div class="k">WAR LOG PREVIEW</div>
-      <div class="preview">${sim.text || esc(fmt(c.active.text, activeValue(this.v, this.me!, c)))}</div>
-      ${targets.length ? `<div class="fine" style="margin:4px 0 0">${targets.length} territor${targets.length === 1 ? 'y' : 'ies'} affected, glowing on the map.</div>` : ''}
-      <div class="row"><button class="btn" data-a="cancel-play">Cancel</button><button class="btn primary" data-a="confirm-play">Play it</button></div>
+      <div class="preview">${sim.text || esc(fmt(c.active.text, n))}</div>
+      ${targets.length ? `<div class="fine" style="margin:4px 0 0">${targets.length} territor${targets.length === 1 ? 'y' : 'ies'} glowing on the map${sim.changed.length ? ', showing their armies after the play' : ''}.</div>` : ''}
+      <div class="row"><button class="btn" data-a="cancel-play">◂ Back</button><button class="btn primary" data-a="confirm-play">Commit ▸</button></div>
     </div>`);
     document.querySelector('.confirm')?.remove();
     document.getElementById('hud')!.appendChild(box);
@@ -1137,13 +1375,21 @@ export class App {
       if (!a) return;
       box.remove();
       const pending = this.ui.confirm;
-      this.ui.confirm = null;
+      this.endPreview();
       if (a === 'confirm-play' && pending) await this.send(pending.action);
       this.render();
     });
     const t = targets[0];
     if (t != null && t >= 0) this.world.focus(t);
     this.world.flash(targets, '#ff9b1f', 1800);
+  }
+
+  /** Leave a card preview: the map goes back to the real valley. */
+  private endPreview() {
+    if (!this.ui.confirm) return;
+    this.ui.confirm = null;
+    document.querySelector('.confirm')?.remove();
+    if (this.session?.view) this.world.update(this.v);
   }
 
   /** The 🔍 panel: the card, big, beside the map, with everything it would touch listed and lit up. */
@@ -1157,7 +1403,7 @@ export class App {
     if (!box) { box = el('<div id="inspector" class="inspector"></div>'); document.getElementById('hud')!.appendChild(box); }
     const imp = this.cardImpact(h.id);
     box.innerHTML = `<div class="ih"><span class="logo-sub" style="margin:0;letter-spacing:.3em">CARD</span><button class="btn sm" data-a="inspect-close" title="Close">✕</button></div>
-      ${this.cardHTML(h.id, { big: true, locked: h.locked, btns: this.cardButtons(h.id, h.locked), cls: 'huge' })}
+      ${this.cardHTML(h.id, { big: true, locked: h.locked, btns: this.cardButtons(h.id, h.locked), cls: `huge ${this.playableNow(h.id, h.locked) ? 'playable' : ''}` })}
       <div class="impact"><div class="k">IF YOU PLAY IT NOW${imp.targets.length ? ` · <span style="color:#ff9b1f">${imp.targets.length} glowing</span>` : ''}</div>${imp.lines.map((l) => `<div>${l}</div>`).join('')}</div>`;
   }
 
@@ -1200,7 +1446,7 @@ export class App {
         <h2>${esc(v.players[this.me!].name)} of ${sig(myHouse)} House ${HOUSES[myHouse].name}</h2>
         <p class="prose">${PASSAGE_INTRO[(this.me! + v.turn) % PASSAGE_INTRO.length]}</p>
         <p class="fine">Keep one as your <b>General</b> (Passive always on). The other dies here. ★ A card whose suit is House ${HOUSES[myHouse].name} gets +1.</p>
-        <div class="cards-row">${[a, b].map((id) => this.cardHTML(id, { big: true, forHouse: myHouse, ownsCheck: false, btns: `<div class="btns"><button class="btn primary" data-a="choose" data-id="${id}">Walk out with ${esc(CARD[id].name.split(' ')[0])}</button></div>` })).join('')}</div>
+        <div class="cards-row">${[a, b].map((id) => this.cardHTML(id, { big: true, forHouse: myHouse, ownsCheck: false, btns: `<div class="btns"><button class="btn primary" data-a="choose" data-id="${id}">Walk out with ${esc(CARD[id].name.replace(/^The /, '').split(' ')[0])}</button></div>` })).join('')}</div>
       </div></div>`, `passage-${this.me}`);
       return;
     }
@@ -1238,6 +1484,22 @@ export class App {
       </div></div>`, `mm-${mm.from}-${mm.to}-${v.version}`);
       return;
     }
+    if (this.myTurn() && !v.ts.mustMove) {
+      const opts = primusOptions(v, this.me!);
+      const ask = opts.find((o) => o.keep === this.ui.primusOpen) ?? opts.find((o) => v.ts.keepsTaken?.includes(o.keep) && !this.primusSkipped.has(`${v.turn}:${o.keep}`));
+      if (ask) {
+        const T = this.g.territories, h = T[ask.keep].house;
+        this.modal(`<div class="modal"><div class="box" style="text-align:center">
+          <div class="logo-sub">♛ A KEEP WITHOUT A MASTER</div>
+          <h2>${sig(h)} ${esc(T[ask.keep].name)} is yours</h2>
+          <p class="prose">Swear in one House ${HOUSES[h].name} Character from your hand as its <b>Primus</b>. Its Passive works for you on top of your General's (no House-match bonus, not shared with allies).
+          The card leaves your hand, and if the Keep falls, the Primus dies with it.</p>
+          <div class="cards-row">${ask.cards.map((id) => this.cardHTML(id, { forHouse: -1, ownsCheck: false, btns: `<div class="btns"><button class="btn primary" data-a="primus" data-keep="${ask.keep}" data-id="${id}">♛ Swear in ${esc(CARD[id].name.replace(/^The /, '').split(' ')[0])}</button></div>` })).join('')}</div>
+          <button class="btn" data-a="primusSkip" data-keep="${ask.keep}">Not now${v.phase === 'draft' ? '' : ' (you can in a later Draft)'}</button>
+        </div></div>`, `primus-${ask.keep}-${ask.cards.join(',')}`);
+        return;
+      }
+    }
     if (v.phase === 'over') {
       const w = v.winner != null ? v.players[v.winner] : null;
       const team = v.winners.length > 1;
@@ -1262,10 +1524,10 @@ export class App {
   }
 
   modalCodex() {
-    const groups = HOUSES.map((h, i) => `<h3 style="font-family:var(--display);color:${h.color};margin:18px 0 6px">${sig(i)} House ${h.name} <span class="fine">· ${QUADRANTS[h.quadrant].name}</span></h3>
+    const groups = HOUSES.map((h, i) => `<h3 style="font-family:var(--display);color:${h.color};margin:18px 0 6px">${sig(i)} House ${h.name} <span class="fine">· ${esc(h.epithet)}</span></h3>
       <div class="cards-row" style="justify-content:flex-start;margin:0">${CARDS.filter((c) => c.house === i).map((c) => this.cardHTML(c.id, { forHouse: -1, ownsCheck: false })).join('')}</div>`).join('');
     const html = `<div class="modal"><div class="box" style="width:min(1100px,100%)"><h2>The Codex</h2>
-      <p class="fine" style="margin:0">Every card in the deck. A card's suit is its House. Passives only work on your General (+1 if the suit matches your House); Actives are played in the Draft.
+      <p class="fine" style="margin:0">Every card in the deck. A card's suit is its House. Passives work on your General (+1 if the suit matches your House), and on a <b>Primus</b>: a Character sworn in at a Keep you conquered whose House matches its suit (no +1, not shared with allies, slain if the Keep falls). Actives are played in the Draft.
       Relics only work in a Siege on Olympus, where each attacking House's Proctor defends Olympus. ✦ marks original fan characters.</p>${groups}
       <div style="text-align:right;margin-top:12px"><button class="btn primary" data-a="close">Close</button></div></div></div>`;
     if (document.getElementById('modal-root')) this.modal(html, 'info-codex');
@@ -1316,11 +1578,14 @@ export class App {
     const status = !v.warBegun
       ? '<p class="prose">The Houses are still circling. <b>Diplomacy opens once one House attacks another.</b></p>'
       : '<p class="prose">Send a quiet invitation. <b>Public</b> alliances are announced to the valley; <b>secret</b> ones only to members. Allies share their Generals\' Passives and nothing else. Attack an ally and the alliance dies on the spot.</p>';
+    const sworn = al ? 'You are already sworn to an alliance: walk out of it first.' : '';
     const inc = incoming.map((i) => `<div class="drow">📜 ${sig(v.players[i.from].house)} <b>${esc(v.players[i.from].name)}</b> offers a ${i.public ? 'public' : 'secret'} alliance
-      <span class="grow"></span><button class="btn sm primary" data-a="answer" data-id="${i.id}" data-yes="1">Accept</button><button class="btn sm" data-a="answer" data-id="${i.id}" data-yes="0">Burn it</button></div>`).join('');
+      <span class="grow"></span><button class="btn sm primary" data-a="answer" data-id="${i.id}" data-yes="1" ${sworn ? `disabled title="${sworn}"` : ''}>Accept</button><button class="btn sm" data-a="answer" data-id="${i.id}" data-yes="0">Burn it</button></div>`).join('');
     const mine = al ? `<div class="dsec"><h3>YOUR ${al.public ? 'PUBLIC ALLIANCE' : 'SECRET PACT'}</h3>
       ${al.members.map((m) => `<div class="drow">${sig(v.players[m].house)} <b>${esc(v.players[m].name)}</b>${m === me ? ' <span class="you">YOU</span>' : ''}<span class="grow"></span>${this.primusHTML(m)}</div>`).join('')}
-      ${!al.public ? '<button class="btn sm" data-a="reveal">Reveal the pact to the valley</button>' : ''}</div>` : '';
+      <div class="row" style="gap:8px">${!al.public ? '<button class="btn sm" data-a="reveal">Reveal the pact to the valley</button>' : ''}
+      ${!v.siege ? '<button class="btn sm ghost" data-a="leave" title="Everyone in it hears; you can\'t join another alliance for a full round">🚪 Walk out</button>' : ''}</div></div>` : '';
+    const rally = this.rallyHTML();
     const siegeErr = siegeBlocker(v, me);
     const o = al ? olympusPreview(v, al.members) : null;
     const siege = al ? `<div class="dsec"><h3>🏛 SIEGE ON OLYMPUS</h3>
@@ -1335,13 +1600,13 @@ export class App {
       const err = inviteBlocker(v, me, p.seat);
       const isAlly = allied(v, me, p.seat);
       return `<div class="drow">${sig(p.house)} <b style="color:${HOUSES[p.house].color}">${esc(p.name)}</b>${p.ai ? ' <span class="ai-tag">AI</span>' : ''}<span class="grow"></span>
-        ${isAlly ? '<span class="ally-tag">ally</span>' : pending ? `<span class="fine" style="margin:0">${pending.public ? 'public' : 'secret'} offer sent…</span>`
+        ${isAlly ? '<span class="ally-tag">ally</span>' : pending ? `<span class="fine" style="margin:0">${pending.public ? 'public' : 'secret'} offer sent…</span> <button class="btn sm ghost" data-a="cancelInv" data-id="${pending.id}">Take it back</button>`
           : `<button class="btn sm" data-a="invite" data-seat="${p.seat}" data-pub="1" ${err ? `disabled title="${esc(err)}"` : ''}>Invite · Public</button><button class="btn sm" data-a="invite" data-seat="${p.seat}" data-pub="0" ${err ? `disabled title="${esc(err)}"` : ''}>Invite · Secret</button>`}</div>`;
     }).join('');
     this.modal(`<div class="modal"><div class="box" style="max-width:640px">
       <h2>🤝 Diplomacy</h2>${status}
       ${inc ? `<div class="dsec"><h3>INVITATIONS FOR YOU</h3>${inc}</div>` : ''}
-      ${mine}${siege}
+      ${mine}${rally}${siege}
       ${v.players[me].alive ? `<div class="dsec"><h3>THE OTHER HOUSES</h3>${list || '<p class="fine">Nobody left to talk to.</p>'}</div>` : ''}
       <div style="text-align:right;margin-top:10px"><button class="btn primary" data-a="close">Close</button></div>
     </div></div>`, 'info-diplo', refresh);
@@ -1378,15 +1643,49 @@ export class App {
       if (!err) this.followUp(to);
       return;
     }
-    if (a === 'invite' || a === 'answer' || a === 'reveal' || a === 'proposeSiege' || a === 'vote') return this.diplo(b);
+    if (a === 'primus') { this.ui.primusOpen = null; const err = await this.send({ type: 'primus', keep: +b.dataset.keep!, card: b.dataset.id! }); if (!err) this.modal(null); this.render(); return; }
+    if (a === 'primusSkip') { this.primusSkipped.add(`${this.v.turn}:${b.dataset.keep}`); this.ui.primusOpen = null; this.modal(null); this.render(); return; }
+    if (a === 'flag') return;
+    if (['invite', 'answer', 'reveal', 'proposeSiege', 'vote', 'leave', 'cancelInv', 'openRally', 'joinRally', 'cancelRally', 'ignoreRally'].includes(a!)) return this.diplo(b);
   }
   private onModalInput(e: Event) {
     const t = e.target as HTMLInputElement;
     if (t.dataset.a === 'mm') document.getElementById('mmv')!.textContent = t.value;
   }
 
+  /** The Rally Against Olympus: who called it, who answered, and what you can do about it. */
+  private rallyHTML() {
+    const v = this.v, me = this.me;
+    if (me == null || !v.opts?.alliances || v.phase === 'passage') return '';
+    const r = v.rally;
+    if (r) {
+      const p = v.players[r.by];
+      const members = allianceOf(v, r.by)?.members ?? [r.by];
+      const err = joinRallyBlocker(v, me);
+      return `<div class="dsec"><h3>📯 RALLY AGAINST OLYMPUS</h3>
+        <p class="prose">${sig(p.house)} <b>${esc(p.name)}</b> calls the valley to their banner: <b>${members.length}/${r.slots}</b> (${members.map((m) => sig(v.players[m].house, 'sig sm')).join('')}). First come, first sworn. It closes when full, or when ${esc(p.name)}'s next turn begins.</p>
+        ${r.by === me ? '<button class="btn sm" data-a="cancelRally">Call it off</button>'
+          : err ? `<p class="fine" style="margin:4px 0">${esc(err)}</p>` : `<button class="btn gold" data-a="joinRally">📯 Answer the Rally</button>${allianceOf(v, me) ? ' <span class="warn">Your current allies will call it betrayal.</span>' : ''}`}
+      </div>`;
+    }
+    const err = rallyBlocker(v, me);
+    return `<div class="dsec"><h3>📯 RALLY AGAINST OLYMPUS</h3>
+      <p class="fine" style="margin:4px 0">The strongest House (the most armies, no ties) may call a public Rally: the first Houses to answer join its public alliance, up to half the living Houses. Answering walks out on your old allies.</p>
+      ${err ? `<p class="fine" style="margin:4px 0">${esc(err)}</p>` : '<button class="btn gold" data-a="openRally">📯 Call a Rally</button>'}
+    </div>`;
+  }
+
   private async diplo(b: HTMLElement) {
     const a = b.dataset.a;
+    if (a === 'leave') { if (confirm('Walk out of your alliance? Everyone in it will hear, and no one will swear to you for a full round.')) await this.send({ type: 'leaveAlliance' }); }
+    if (a === 'cancelInv') await this.send({ type: 'cancelInvite', invite: +b.dataset.id! });
+    if (a === 'openRally') { if (confirm('Call a public Rally Against Olympus? The whole valley will know, and your alliance becomes public.')) await this.send({ type: 'openRally' }); }
+    if (a === 'joinRally') {
+      const old = this.me != null ? allianceOf(this.v, this.me) : null;
+      if (!old || confirm('Answer the Rally? You walk out of your current alliance, and your old allies will hear it as betrayal.')) await this.send({ type: 'joinRally' });
+    }
+    if (a === 'cancelRally') await this.send({ type: 'cancelRally' });
+    if (a === 'ignoreRally') { this.rallyIgnored.add(`${this.v.rally?.by}:${this.v.rally?.turn}`); this.render(); }
     if (a === 'invite') {
       const pub = b.dataset.pub === '1', to = +b.dataset.seat!;
       const err = await this.send({ type: 'invite', to, public: pub });
@@ -1438,15 +1737,24 @@ export class App {
     if (e.key === 'g' || e.key === 'G') this.toggleFocus();
     if (e.key === 'o' || e.key === 'O') this.cycleOlympus();
     if (e.key === 'Escape') {
-      this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.confirm = null; this.ui.spot = null;
-      document.querySelector('.confirm')?.remove();
+      this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.spot = null; this.ui.emotes = false;
+      this.endPreview();
       this.world.clearArrow(); this.render();
     }
   }
 
   private async onHudClick(e: Event) {
     const b = (e.target as HTMLElement).closest('[data-a]') as HTMLElement | null;
-    if (!b || (b as HTMLButtonElement).disabled) return;
+    if (!b) {
+      // Clicking a glowing card (not one of its buttons) plays it: straight into the preview.
+      const card = (e.target as HTMLElement).closest<HTMLElement>('#hand .gcard.playable, #inspector .gcard.playable');
+      if (card?.dataset.card) {
+        if (this.v.reaction) { await this.send({ type: 'react', card: card.dataset.card }); return; }
+        return this.startPlay(card.dataset.card);
+      }
+      return;
+    }
+    if ((b as HTMLButtonElement).disabled) return;
     const a = b.dataset.a!, u = this.ui, v = this.v;
     switch (a) {
       case 'menu': return this.modalMenu();
@@ -1467,7 +1775,24 @@ export class App {
         return this.render();
       }
       case 'min-regions': u.regionsMin = !u.regionsMin; return this.render();
-      case 'invite': case 'answer': case 'reveal': case 'proposeSiege': case 'vote': return this.diplo(b);
+      case 'invite': case 'answer': case 'reveal': case 'proposeSiege': case 'vote': case 'joinRally': case 'ignoreRally': return this.diplo(b);
+      case 'kick': {
+        const seat = +b.dataset.seat!, s = this.session;
+        if (!(s instanceof OnlineSession)) return;
+        if (!confirm(`Kick ${v.players[seat].name}? Their House goes on under an AI Primus, and they can't come back.`)) return;
+        const err = await s.hostOp('kick', undefined, seat);
+        if (err) this.toast(err);
+        return;
+      }
+      case 'primusOpen': u.primusOpen = +b.dataset.keep!; return this.render();
+      case 'emotes': u.emotes = !u.emotes; return this.renderEmotes();
+      case 'emote': {
+        u.emotes = false;
+        this.renderEmotes();
+        const err = await this.send({ type: 'emote', line: +b.dataset.n! });
+        if (!err) this.lastEmoteAt = Date.now();
+        return;
+      }
       case 'speed': return this.setSpeed(+b.dataset.n!);
       case 'skip': this.skipping = true; document.querySelector('.showcase [data-a=ack]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })); return;
       case 'tab-roster': u.mobileTab = u.mobileTab === 'roster' ? 'none' : 'roster'; return this.render();
@@ -1479,7 +1804,7 @@ export class App {
       case 'plus': if (u.sel != null) return this.placeOn(u.sel, false); return;
       case 'minus': if (u.sel != null) return this.placeOn(u.sel, true); return;
       case 'undo': return void this.send({ type: 'undoDraft' });
-      case 'cancel': u.sel = null; u.target = null; u.pending = null; u.stdMode = false; u.confirm = null; document.querySelector('.confirm')?.remove(); this.world.clearArrow(); return this.render();
+      case 'cancel': u.sel = null; u.target = null; u.pending = null; u.stdMode = false; this.endPreview(); this.world.clearArrow(); return this.render();
       case 'retarget': u.target = null; this.world.clearArrow(); return this.render();
       case 'tgt': {
         const t = +b.dataset.t!;
@@ -1487,7 +1812,7 @@ export class App {
         u.target = t; this.world.arrow(u.sel, t, t === OLYMPUS ? '#f3d27a' : '#ff3b1f');
         return this.render();
       }
-      case 'endDraft': u.sel = null; return void this.send({ type: 'endDraft' });
+      case 'endDraft': u.sel = null; u.primusOpen = null; return void this.send({ type: 'endDraft' });
       case 'endAttack': u.sel = null; u.target = null; this.world.clearArrow(); return void this.send({ type: 'endAttack' });
       case 'endTurn': u.sel = null; u.target = null; this.world.clearArrow(); return void this.send({ type: 'endTurn' });
       case 'dice': u.dice = +b.dataset.n!; return this.render();
@@ -1521,21 +1846,24 @@ export class App {
       case 'trade': { const cards = [...u.trade]; u.trade.clear(); return void this.send({ type: 'trade', cards }); }
       case 'tsel': { const id = b.dataset.id!; if (u.trade.has(id)) u.trade.delete(id); else if (u.trade.size < 3) u.trade.add(id); return this.render(); }
       case 'dud': return void this.send({ type: 'discardProctor', card: b.dataset.id! });
-      case 'play': {
-        const id = b.dataset.id!;
-        const kind = CARD[id].active.kind;
-        u.inspect = null;
-        if (kind === 'sabotage' || kind === 'parley' || kind === 'moveStd') {
-          if (!this.cardImpact(id).targets.length) { this.toast(kind === 'parley' ? 'No neutral garrison small enough touches your land.' : 'Nothing in reach for that card right now.'); return this.render(); }
-          u.pending = { card: id, needs: 'territory' };
-          return this.render();
-        }
-        if (kind === 'steal') return this.pickRival(id);
-        return this.confirmPlay({ type: 'play', card: id });
-      }
+      case 'play': return this.startPlay(b.dataset.id!);
       case 'inspect': u.inspect = u.inspect === b.dataset.id ? null : b.dataset.id!; return this.render();
       case 'inspect-close': u.inspect = null; return this.render();
     }
+  }
+
+  /** Play a card: pick its target if it needs one, then preview the outcome on the map. */
+  private startPlay(id: string) {
+    const u = this.ui;
+    const kind = CARD[id].active.kind;
+    u.inspect = null;
+    if (kind === 'sabotage' || kind === 'parley' || kind === 'moveStd') {
+      if (!this.cardImpact(id).targets.length) { this.toast(kind === 'parley' ? 'No neutral garrison small enough touches your land.' : 'Nothing in reach for that card right now.'); return this.render(); }
+      u.pending = { card: id, needs: 'territory' };
+      return this.render();
+    }
+    if (kind === 'steal') return this.pickRival(id);
+    return this.confirmPlay({ type: 'play', card: id });
   }
 
   private onHudInput(e: Event) {
@@ -1583,6 +1911,10 @@ export class App {
   }
 
   private lastShift = false;
+  /** Primus prompts dismissed this turn ("turn:keep"). */
+  private primusSkipped = new Set<string>();
+  /** Rallies this screen chose to ignore (by the turn they opened). */
+  private rallyIgnored = new Set<string>();
   private async pick(t: number | null) {
     if (!this.session || this.session.status === 'lobby' || !document.getElementById('hud')) return;
     const v = this.v, u = this.ui;
@@ -1694,6 +2026,7 @@ export class App {
       this.tip.innerHTML = `<div class="tn">${esc(td.name)}${td.isKeep ? ' ♜' : ''}</div>
         <div class="tm">${td.biome === 'keep' ? `Keep of House ${HOUSES[td.house].name}` : td.biome} · House ${HOUSES[td.house].name} · ${QUADRANTS[td.quadrant].name}${td.foot ? ' · Foot of Olympus' : ''}</div>
         <div>${o >= 0 ? `<b style="color:${HOUSES[v.players[o].house].color}">${esc(v.players[o].name)}</b>${ally ? ' <span class="ally-tag">ally</span>' : ''}` : '<span class="tm">Neutral garrison</span>'} · <b>${v.armies[t]}</b> armies${v.phase === 'draft' && v.ts.placed[t] ? ` <span class="plus">(+${v.ts.placed[t]} this Draft)</span>` : ''}</div>
+        ${td.isKeep && v.primus?.[td.house] ? `<div style="color:var(--gold)">♛ Primus: <b>${esc(CARD[v.primus[td.house]!.card].name)}</b> (${esc(v.players[v.primus[td.house]!.seat].name)})</div>` : ''}
         ${std >= 0 ? `<div style="color:var(--gold)">⚑ Standard of House ${HOUSES[std].name}${v.standards[std].guard ? ` · <b>${v.armies[t]} + ${v.standards[std].guard}</b> honor guard` : ''}</div>` : ''}
         ${td.terrain !== 'open' ? `<div class="tt-terr">${TERRAIN_INFO[td.terrain].icon} <b>${TERRAIN_INFO[td.terrain].name}.</b> ${TERRAIN_INFO[td.terrain].text}</div>` : ''}
         ${this.regionTip(t)}

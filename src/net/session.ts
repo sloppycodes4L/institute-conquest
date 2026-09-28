@@ -2,7 +2,7 @@
 // browser, or an online game where the Supabase edge function is the authority.
 
 import { RealtimeClient } from '@supabase/realtime-js';
-import { DEFAULT_SETTINGS, act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameState, type WarSettings } from '../engine/engine.ts';
+import { DEFAULT_SETTINGS, act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from '../engine/engine.ts';
 import { botAction } from '../engine/bot.ts';
 
 export const SUPABASE_URL = 'https://hflggavblnedfgyjqbsr.supabase.co';
@@ -131,6 +131,11 @@ export class LocalSession implements Session {
       if (this.hold?.()) { this.scheduleBots(); return; }
       const a = botAction(viewFor(s, acting), acting);
       let r = act(s, acting, a, { rng: secureRng, now: Date.now() });
+      if (!r.ok && duty >= 0) {
+        // An answer the AI can no longer give: burn the letter rather than ask again forever.
+        const inv = s.invites.find((x) => x.to === acting);
+        if (inv) act(s, acting, { type: 'answer', invite: inv.id, accept: false }, { rng: secureRng, now: Date.now() });
+      }
       if (!r.ok && duty < 0) {
         const fb: Action = s.reaction ? { type: 'react', card: null } : s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' };
         r = act(s, acting, fb, { rng: secureRng, now: Date.now() });
@@ -165,12 +170,41 @@ async function call(body: any) {
   return j;
 }
 
-interface Creds { game: string; token: string; code: string; seat: number }
+export interface Creds { game: string; token: string; code: string; seat: number }
 const credKey = (code: string) => `ic-creds-${code}`;
 export function savedCreds(code: string): Creds | null {
   try { return JSON.parse(localStorage.getItem(credKey(code)) || 'null'); } catch { return null; }
 }
 function saveCreds(c: Creds) { try { localStorage.setItem(credKey(c.code), JSON.stringify(c)); } catch { /* private mode */ } }
+/** Every online war this browser has joined. */
+export function allCreds(): Creds[] {
+  const out: Creds[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith('ic-creds-')) continue;
+      const c = JSON.parse(localStorage.getItem(k) || 'null');
+      if (c?.game && c?.token) out.push(c);
+    }
+  } catch { /* private mode */ }
+  return out;
+}
+
+/** A war's permanent War Log (every event, whole), as this seat may see it. */
+export async function fetchWarLog(c: Creds): Promise<{ seat: number; events: GameEvent[] }> {
+  return call({ op: 'logs', game: c.game, token: c.token });
+}
+/** Pin a short public note to one line of a War Log. */
+export async function flagLine(c: Creds, seq: number, note: string): Promise<void> {
+  const j = await call({ op: 'flag', game: c.game, token: c.token, seq, note });
+  if (j.error) throw new Error(j.error);
+}
+export interface WarSummary { game: string; code: string; started: string; players: { seat: number; name: string; house: number; ai: boolean }[]; over: boolean; winners: number[] }
+/** What the server remembers of the wars in `list`. */
+export async function fetchWars(list: Creds[]): Promise<WarSummary[]> {
+  const j = await call({ op: 'wars', wars: list.map((c) => ({ game: c.game, token: c.token })) });
+  return j.wars ?? [];
+}
 
 export class OnlineSession implements Session {
   mode = 'online' as const;
@@ -223,10 +257,17 @@ export class OnlineSession implements Session {
     return s;
   }
 
+  get credentials(): Creds { return this.creds; }
+  /** Called when the server no longer seats this token (the host kicked us). */
+  onGone?: (msg: string) => void;
+  private gone = false;
+
   private apply(j: any) {
     if (j.unchanged) return;
     if (j.version != null && j.version < this.version) return;
     this.version = j.version;
+    // Seats move up when someone ahead of us is kicked from the lobby.
+    if (typeof j.seat === 'number' && j.seat !== this.seat) { this.seat = j.seat; this.creds.seat = j.seat; saveCreds(this.creds); }
     this.status = j.status;
     this.lobby = j.lobby;
     this.hostSeat = j.hostSeat;
@@ -275,13 +316,20 @@ export class OnlineSession implements Session {
     if (this.busy) return;
     this.busy = true;
     try { this.apply(await call({ op: 'state', game: this.creds.game, token: this.creds.token, since: this.version, tv: this.view?.version })); }
-    catch { /* transient */ }
+    catch (e) { this.checkGone(e); }
     finally { this.busy = false; }
   }
 
-  async hostOp(op: 'start' | 'addBot' | 'removeBot' | 'setOpts', settings?: WarSettings): Promise<string | null> {
-    try { this.apply(await call({ op, game: this.creds.game, token: this.creds.token, settings })); return null; }
-    catch (e) { return (e as Error).message; }
+  private checkGone(e: unknown) {
+    if (this.gone || !/not seated/i.test((e as Error)?.message ?? '')) return;
+    this.gone = true;
+    try { localStorage.removeItem(credKey(this.code)); } catch { /* ignore */ }
+    this.onGone?.('The host removed you from this war.');
+  }
+
+  async hostOp(op: 'start' | 'addBot' | 'removeBot' | 'setOpts' | 'kick', settings?: WarSettings, seat?: number): Promise<string | null> {
+    try { this.apply(await call({ op, game: this.creds.game, token: this.creds.token, settings, seat })); return null; }
+    catch (e) { this.checkGone(e); return (e as Error).message; }
   }
 
   async send(a: Action): Promise<string | null> {
@@ -289,7 +337,7 @@ export class OnlineSession implements Session {
       const j = await call({ op: 'act', game: this.creds.game, token: this.creds.token, action: a, tv: this.view?.version });
       this.apply(j);
       return j.error ?? null;
-    } catch (e) { return (e as Error).message; }
+    } catch (e) { this.checkGone(e); return (e as Error).message; }
   }
   onUpdate(cb: () => void) { this.cbs.push(cb); }
   close() {
