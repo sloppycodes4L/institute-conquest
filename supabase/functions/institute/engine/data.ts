@@ -1,10 +1,12 @@
 // Static world data: Houses, quadrants, territory names, and the procedurally-built hex valley.
 // Pure TS with no deps so it runs in the browser and in the Deno edge function.
 //
-// The valley is a ring of seven House slices around the chasm beneath Olympus. Each slice is a
+// The valley is a ring of seven House slices around the sea beneath Olympus. Each slice is a
 // polar grid of three rows (inner "Foot of Olympus", middle, outer) with the Keep in the middle
 // of the middle row, so it is always buffered by at least two of its own territories before any
-// foreign border. The map grows with the player count (see LAYOUTS).
+// foreign border. The four quadrants are separate landmasses: every war rolls its own land bridges
+// between neighbouring quadrants, and ports whose sea lanes cross to the far shore. Each row of a
+// slice is a bonus region. The map grows with the player count (see LAYOUTS).
 
 export type HouseId = 'apollo' | 'diana' | 'minerva' | 'mars' | 'pluto' | 'jupiter' | 'ceres';
 export type Biome =
@@ -129,9 +131,35 @@ export interface Territory {
   isKeep: boolean;
   row: number;
   col: number;
-  /** Inner row: borders the chasm beneath Olympus. Sieges on Olympus launch from here. */
+  /** Inner row: borders the sea beneath Olympus. Sieges on Olympus launch from here. */
   foot: boolean;
+  /** The bonus region it belongs to (index into Geo.regions). */
+  region: number;
+  /** A port's sea lane leads to this territory, or -1. */
+  port: number;
 }
+
+/** Hold every territory of a region for its bonus at the start of your turn. */
+export interface Region {
+  id: number;
+  name: string;
+  house: number;
+  terr: number[];
+  bonus: number;
+  /** Where its label sits (world x, y). */
+  at: [number, number];
+}
+
+// Region names per House: inner row, middle row (the Keep's), outer row, and the far half of a long outer row.
+const REGION_NAMES: string[][] = [
+  ['Sunward Strand', 'The Golden Heart', 'The Dawn Marches', 'The Solar Reaches'],
+  ['The Moonlit Shore', 'The Greatwood Heart', 'The Hunting Marches', 'The Silverwood Reaches'],
+  ['The Owl Coast', 'The Wise Heart', 'The Scroll Marches', 'The Grey Reaches'],
+  ['The Furor Shore', 'The Wolf Heart', 'The Red Marches', 'The Iron Reaches'],
+  ['The Black Ice Shore', 'The Hollow Heart', 'The Frost Marches', 'The Grave Reaches'],
+  ['The Storm Coast', 'The Thunder Heart', 'The Sky Marches', 'The Gale Reaches'],
+  ['The Millrace Shore', 'The Bread Heart', 'The Harvest Marches', 'The Orchard Reaches'],
+];
 
 // ---------------------------------------------------------------------------
 // Hex valley generation (deterministic).
@@ -150,8 +178,12 @@ export interface Geo {
   adj: number[][];
   dist: number[][];
   centroid: [number, number][];
-  /** Reinforcement bonus for holding every territory of each quadrant. */
-  quadBonus: number[];
+  /** Bonus regions: hold one whole for its bonus. */
+  regions: Region[];
+  /** Sea lanes between ports, as territory pairs. */
+  ports: [number, number][];
+  /** The war's map seed (undefined: the fixed valley of wars from before ports). */
+  seed?: number;
   /** Inner-row territories, where assaults on Olympus launch from. */
   foot: number[];
   R_IN: number;
@@ -168,9 +200,42 @@ const CHASM_HALF = 1.45;
 const PASS_HALF = 1.3;
 const HEX_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]];
 
-// Where the chasms between quadrants can be crossed: land bridges on these rows,
-// keyed by the House on the counter-clockwise side of the border.
-const PASSES: Record<number, number[]> = { 1: [0, 2], 3: [2], 4: [0], 6: [0, 2] };
+// Where the straits between quadrants can be crossed: land bridges on these rows (a row index plus
+// a radial nudge within it), keyed by the House on the counter-clockwise side of the border.
+type Pass = { row: number; nudge: number };
+const LEGACY_PASSES: Record<number, Pass[]> = {
+  1: [{ row: 0, nudge: 0 }, { row: 2, nudge: 0 }], 3: [{ row: 2, nudge: 0 }], 4: [{ row: 0, nudge: 0 }], 6: [{ row: 0, nudge: 0 }, { row: 2, nudge: 0 }],
+};
+/** Borders between quadrants, keyed by the counter-clockwise House. */
+const STRAITS = [1, 3, 4, 6];
+
+/** A small seeded PRNG, so a war's map is the same everywhere it's rebuilt. */
+export function seededRng(seed: number) {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** This war's land bridges: one or two per strait (only one into the walled-in Frostfangs), on random rows. */
+function rollPasses(rows: number, rng: () => number): Record<number, Pass[]> {
+  const out: Record<number, Pass[]> = {};
+  for (const h of STRAITS) {
+    const frost = HOUSES[h].quadrant === 2 || HOUSES[(h + 1) % 7].quadrant === 2;
+    const n = frost ? 1 : rng() < 0.6 ? 2 : 1;
+    const pool = Array.from({ length: rows }, (_, i) => i);
+    const picked: Pass[] = [];
+    for (let i = 0; i < n; i++) {
+      const row = pool.splice(Math.floor(rng() * pool.length), 1)[0];
+      picked.push({ row, nudge: (rng() - 0.5) * 0.5 });
+    }
+    out[h] = picked;
+  }
+  return out;
+}
 
 function hash(x: number, y: number) {
   let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
@@ -207,8 +272,10 @@ function bands(rows: number[]) {
   return best.edges;
 }
 
-function buildGeo(layout: number): Geo {
+function buildGeo(layout: number, seed?: number): Geo {
   const rows = LAYOUTS[layout];
+  const rng = seededRng(seed ?? 0);
+  const passes = seed == null ? LEGACY_PASSES : rollPasses(rows.length, rng);
   const K = rows.reduce((a, b) => a + b, 0);
   const keepRow = 1, keepCol = (rows[1] - 1) / 2;
 
@@ -229,7 +296,7 @@ function buildGeo(layout: number): Geo {
     for (let s = 0; s < K; s++) {
       const { row, col } = cellsOfHouse[s];
       const [name, biome] = NAMES[h][s];
-      territories.push({ id: h * K + s, name, biome, terrain: TERRAIN_OF[biome], house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0, row, col, foot: row === 0 });
+      territories.push({ id: h * K + s, name, biome, terrain: TERRAIN_OF[biome], house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0, row, col, foot: row === 0, region: -1, port: -1 });
     }
   }
   const nt = territories.length;
@@ -264,12 +331,15 @@ function buildGeo(layout: number): Geo {
       const house = Math.floor(rel / W) % 7;
       const frac = rel / W - Math.floor(rel / W);
 
-      // Chasms between quadrants, except on the land bridges.
+      // Straits between quadrants, except on the land bridges.
       const toCw = frac * W * rad, toCcw = (1 - frac) * W * rad;
       const nbr = toCw < toCcw ? (house + 6) % 7 : (house + 1) % 7;
       if (HOUSES[nbr].quadrant !== HOUSES[house].quadrant && Math.min(toCw, toCcw) < CHASM_HALF) {
-        const lowSide = toCw < toCcw ? nbr : house; // PASSES is keyed by the ccw-most House
-        const onBridge = (PASSES[lowSide] ?? []).some((row) => Math.abs(rad - (edges[row] + edges[row + 1]) / 2) < PASS_HALF);
+        const lowSide = toCw < toCcw ? nbr : house; // passes are keyed by the ccw-most House
+        const onBridge = (passes[lowSide] ?? []).some((p) => {
+          const mid = (edges[p.row] + edges[p.row + 1]) / 2 + p.nudge * (edges[p.row + 1] - edges[p.row]);
+          return Math.abs(rad - mid) < PASS_HALF;
+        });
         if (!onBridge) continue;
       }
 
@@ -341,33 +411,85 @@ function buildGeo(layout: number): Geo {
     const best = hs.reduce((b, h) => (Math.hypot(h.x - cx, h.y - cy) < Math.hypot(b.x - cx, b.y - cy) ? h : b), hs[0]);
     return [best.x, best.y];
   });
-  const adj = adjSet.map((s) => [...s].sort((a, b) => a - b));
-  const dist = adj.map((_, from) => {
+  const bfs = (adjOf: Set<number>[]) => adjOf.map((_, from) => {
     const d = new Array(nt).fill(Infinity);
     d[from] = 0;
     const q = [from];
-    while (q.length) {
-      const c = q.shift()!;
-      for (const x of adj[c]) if (d[x] === Infinity) { d[x] = d[c] + 1; q.push(x); }
+    for (let i = 0; i < q.length; i++) {
+      const c = q[i];
+      for (const x of adjOf[c]) if (d[x] === Infinity) { d[x] = d[c] + 1; q.push(x); }
     }
     return d;
   });
-  // Two-House quadrants pay about one army per two territories; the walled-in Frostfangs less.
-  const quadBonus = QUADRANTS.map((q) => (q.houses.length > 1 ? Math.round(K * 0.55) : Math.round(K * 0.3)));
+
+  // Ports: sea lanes across the water beneath Olympus, one to each far shore plus one more at random.
+  // A port is never next to its own Keep, so every Keep stays walled in by its own land.
+  const ports: [number, number][] = [];
+  if (seed != null) {
+    const land = bfs(adjSet);
+    const angle = (t: number) => Math.atan2(centroid[t][1], centroid[t][0]);
+    const docks = (q: number) => territories.filter((t) => t.quadrant === q && t.foot && !t.isKeep && land[t.id][t.house * K] >= 2 && t.port < 0).map((t) => t.id);
+    const link = (qa: number, qb: number) => {
+      const A = docks(qa), B = docks(qb);
+      const pairs = A.flatMap((a) => B.map((b) => {
+        let da = Math.abs(angle(a) - angle(b)) % (Math.PI * 2);
+        if (da > Math.PI) da = Math.PI * 2 - da;
+        return { a, b, face: da };
+      })).sort((x, y) => y.face - x.face);
+      // Among the pairs that look across the water at each other, pick one at random.
+      const top = pairs.slice(0, Math.max(1, Math.ceil(pairs.length / 3)));
+      const p = top[Math.floor(rng() * top.length)];
+      if (!p) return;
+      territories[p.a].port = p.b; territories[p.b].port = p.a;
+      adjSet[p.a].add(p.b); adjSet[p.b].add(p.a);
+      ports.push([p.a, p.b]);
+    };
+    link(0, 2);
+    link(1, 3);
+    const extra = [[0, 1], [1, 2], [2, 3], [3, 0]][Math.floor(rng() * 4)];
+    link(extra[0], extra[1]);
+  }
+
+  const adj = adjSet.map((s) => [...s].sort((a, b) => a - b));
+  const dist = bfs(adjSet);
+
+  // Regions: each row of a House slice, with a long outer row split in two. They pay about one army
+  // per two territories, so there's always a bonus a few conquests away.
+  const regions: Region[] = [];
+  for (let h = 0; h < 7; h++) {
+    rows.forEach((c, row) => {
+      const cells = territories.filter((t) => t.house === h && t.row === row).sort((a, b) => a.col - b.col);
+      const parts = c > 7 ? [cells.slice(0, Math.ceil(c / 2)), cells.slice(Math.ceil(c / 2))] : [cells];
+      parts.forEach((part, i) => {
+        const id = regions.length;
+        for (const t of part) t.region = id;
+        const hs = byT.filter((_, t) => territories[t].house === h && territories[t].row === row && part.some((x) => x.id === t)).flat();
+        const mx = hs.reduce((a, x) => a + x.x, 0) / hs.length, my = hs.reduce((a, x) => a + x.y, 0) / hs.length;
+        const at = hs.reduce((b, x) => (Math.hypot(x.x - mx, x.y - my) < Math.hypot(b.x - mx, b.y - my) ? x : b), hs[0]);
+        regions.push({ id, name: REGION_NAMES[h][Math.min(3, row + i)], house: h, terr: part.map((t) => t.id), bonus: Math.max(1, Math.round(part.length * 0.55)), at: [at.x, at.y] });
+      });
+    });
+  }
   return {
-    layout, perHouse: K, rows, territories, nt, hexes, adj, dist, centroid, quadBonus,
+    layout, perHouse: K, rows, territories, nt, hexes, adj, dist, centroid, regions, ports, seed,
     foot: territories.filter((t) => t.foot).map((t) => t.id),
     R_IN, R_OUT, keepOf: (h: number) => h * K,
   };
 }
 
-const CACHE = new Map<number, Geo>();
-/** The valley for one of the LAYOUTS (built once, then cached). */
-export function mapGeo(layout: number): Geo {
-  const k = Math.max(0, Math.min(LAYOUTS.length - 1, layout | 0));
+const CACHE = new Map<string, Geo>();
+/** The valley for one of the LAYOUTS and a war's map seed (built once, then cached). */
+export function mapGeo(layout: number, seed?: number): Geo {
+  const L = Math.max(0, Math.min(LAYOUTS.length - 1, layout | 0));
+  const k = `${L}:${seed ?? '-'}`;
   let g = CACHE.get(k);
-  if (!g) { g = buildGeo(k); CACHE.set(k, g); }
+  if (!g) {
+    g = buildGeo(L, seed);
+    // The server sees many wars; keep only the latest few maps.
+    if (CACHE.size > 24) CACHE.delete(CACHE.keys().next().value!);
+    CACHE.set(k, g);
+  }
   return g;
 }
 /** The valley for `n` players at a size offset from the recommended one. */
-export const geoFor = (n: number, size = 0): Geo => mapGeo(layoutFor(n, size));
+export const geoFor = (n: number, size = 0, seed?: number): Geo => mapGeo(layoutFor(n, size), seed);

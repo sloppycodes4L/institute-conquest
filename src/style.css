@@ -375,4 +375,68 @@ input, select { font: inherit; }
   .wheel-list { min-width: 0; width: 100%; }
 }
 #wheelG { transform-box: fill-box; transform-origin: center; }
-body.sorting #hud .leftcol, body.sorting #hud .log, body.sorting #hud .topbar { visibility: hidden; }
+body.sorting #hud .leftcol, body.sorting #hud .rightcol, body.sorting #hud .topbar { visibility: hidden; }
+
+/* ---------- wave 3: right column (regions + log), odds, turn clock, spotlight, settings ---------- */
+.rightcol { position: absolute; top: 62px; right: 10px; width: 272px; max-height: calc(100vh - 300px); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.rightcol > * { pointer-events: auto; }
+.rightcol .side { position: static; width: auto; max-height: none; }
+.rightcol .regions { flex: 0 0 auto; max-height: 34vh; min-height: 38px; overflow-y: auto; }
+.rightcol .log { flex: 1 1 auto; min-height: 60px; overflow-y: auto; }
+.rg-h { font-size: 11px; letter-spacing: .16em; color: var(--gold-dim); padding: 6px 12px 2px; }
+.rg { display: grid; grid-template-columns: 1fr auto; gap: 0 6px; padding: 4px 12px; border-top: 1px solid rgba(77,37,24,.4); cursor: default; }
+.rg:hover { background: rgba(243,210,122,.08); }
+.rg-n { font-weight: 700; font-size: 14px; }
+.rg-b, .tip .rg-b { color: var(--gold); font-weight: 800; font-size: 14px; }
+.rg-note { grid-column: 1 / -1; font-size: 12.5px; color: var(--ink-dim); display: flex; align-items: center; gap: 4px; }
+.rg.held .rg-n { color: var(--ok); }
+.player[data-a="spot"] { cursor: pointer; }
+.player[data-a="spot"]:hover { background: rgba(243,210,122,.06); }
+.player.spot { box-shadow: inset 0 0 0 2px var(--gold); background: rgba(243,210,122,.1); }
+.odds { font-weight: 800; font-size: 13px; border-radius: 5px; padding: 0 5px; white-space: nowrap; }
+.odds.good { color: #0e2a14; background: #6fe08f; }
+.odds.even { color: #2a1d05; background: #f3d27a; }
+.odds.bad { color: #fff; background: #b3161b; }
+.odds.big { font-size: 15px; padding: 3px 9px; border-radius: 8px; }
+.tmr { font-variant-numeric: tabular-nums; border: 1px solid var(--line-hi); border-radius: 999px; padding: 1px 8px; color: var(--ink-dim); }
+.tmr.mine { color: var(--gold); border-color: var(--gold-dim); }
+.tmr.low { color: #fff; background: var(--blood); border-color: #ff5a4a; animation: tmrPulse .5s ease-in-out infinite alternate; }
+@keyframes tmrPulse { from { box-shadow: 0 0 0 rgba(224,38,44,0); } to { box-shadow: 0 0 14px rgba(224,38,44,.7); } }
+.tip .tt-region { margin-top: 3px; font-size: 13px; color: var(--ink-dim); }
+.tip .tt-odds { margin-top: 4px; font-size: 13px; }
+.set-row.pref { gap: 14px; padding: 8px 0; border-bottom: 1px solid rgba(77,37,24,.4); }
+.set-row.pref .set-note { font-size: 14px; }
+
+/* Laptops and tablets: cards shrink so they never swallow the map. */
+@media (max-height: 820px), (max-width: 1180px) {
+  .gcard { width: 146px; min-width: 146px; min-height: 0; padding: 8px 8px 6px; gap: 4px; }
+  .gcard .nm { font-size: 14px; }
+  .gcard .blk { font-size: 12px; padding: 4px 5px; }
+  .gcard .q { display: none; }
+  .gcard.big { width: 210px; min-width: 210px; min-height: 0; padding: 10px; }
+  .gcard.big .nm { font-size: 17px; }
+  .gcard.big .blk { font-size: 13.5px; }
+  .gcard.big .q { display: block; font-size: 13px; }
+  .showcase .sc-body { width: 250px; max-height: calc(100vh - 80px); overflow-y: auto; }
+  .showcase .gcard.big .q { display: none; }
+  .inspector { width: 290px; }
+  .inspector .gcard.huge .nm { font-size: 19px; }
+  .inspector .gcard.huge .blk { font-size: 14px; }
+  .modal .cards-row { gap: 10px; margin: 10px 0; }
+  .side, .leftcol, .rightcol { max-height: calc(100vh - 250px); }
+}
+@media (max-height: 700px) {
+  .hand .gcard .blk:not(.act) { display: none; }
+  .showcase .sc-body { width: 220px; }
+  .showcase .gcard.big .blk:not(.act) { display: none; }
+  .inspector .gcard.huge .blk.oly { display: none; }
+}
+@media (max-width: 900px) {
+  .rightcol { top: auto; bottom: 8px; left: 8px; right: 8px; width: auto; max-height: 60vh; z-index: 15; }
+  .rightcol.collapsed { display: none; }
+  .rightcol .regions { max-height: 30vh; }
+  .gcard { width: 128px; min-width: 128px; }
+  .gcard .tt { display: none; }
+  .gcard.big { width: 190px; min-width: 190px; }
+  .modal .cards-row .gcard.big { width: min(190px, 42vw); min-width: 0; }
+}

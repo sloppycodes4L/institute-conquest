@@ -9,14 +9,16 @@ A free, non-commercial fan game: Risk-style conquest set in the Institute from P
 
 ## How it plays
 
-- **War settings:** whoever creates the war picks the map size (Smaller … Larger, 77–140 territories) and starting troops (Fewer … Lots), and can switch Alliances and the Siege on Olympus off. Everything defaults to the recommended settings.
+- **War settings:** whoever creates the war picks the map size (Smaller … Larger, 77–140 territories) and starting troops (Fewer … Lots), can switch Alliances and the Siege on Olympus off, and can set a turn timer (None, 60, 90 or 120 seconds; when it runs out, unplaced armies go to the front and the turn passes). Everything defaults to the recommended settings.
 - **The Sorting:** 2–7 players get Houses out of Mars, Minerva, Diana, Apollo, Jupiter, Ceres, and Pluto, revealed on a spinning wheel ("Start Selection"). Players are dealt Houses that sit as far apart as possible; unclaimed Houses become neutral garrisons.
 - **The valley** grows with the player count (77 territories for 2 players, 91 for 4, 112 for 7, at the recommended size). Each player starts holding the heart of their slice (the Keep and its neighbours); the rest is neutral, with thicker garrisons on fronts that face another player. In bot games the first player-vs-player fight comes around round 3 on crowded maps, later on sparse ones (`npx tsx scripts/pace-sim.ts`).
 - **Terrain:** attacking from ⛰ Mountains adds +1 to the highest attack die; defending a 🌲 Forest adds +2 to the highest defense die. A Fortify march can't cross ⛰ mountains, 🌊 water, or 🌾 marsh: it halts on the first one and marches on next turn. Zoom in to read territory names.
 - **The Passage:** each player is dealt 2 Characters, keeps one as their General (Passive always on, +1 if the General is from the player's own House in the books), and the other dies.
-- **Controls:** scroll zooms, left-drag pans, right-drag turns the camera. ◐ (G) greys out everything you don't hold; ⛰ (O) makes Olympus solid, see-through, or hidden.
+- **Controls:** scroll zooms, left-drag pans, right-drag turns the camera. ◐ (G) greys out everything you don't hold; ⛰ (O) makes Olympus solid, see-through, or hidden. Click a House in the roster to light up its land. ⚙ Settings: the camera follows the action (on by default) and a clash of swords marks your turn.
 - **Turn:** Draft (with −/+ and Undo) → Attack (unlimited; every target the selected territory can hit lights up) → Fortify, with Risk Global Domination dice (3 attack vs 2 defense dice, ties go to the defender).
-- **Reinforcements:** max(3, territories ÷ 3), plus quadrant bonuses, plus a stacking Keep bonus (+2 / +5 / +9 / +14).
+- **The map:** the four quadrants are separate landmasses around the sea beneath Olympus. Every war rolls its own land bridges between neighbouring quadrants and three ⚓ port sea lanes to the far shores.
+- **Reinforcements:** max(3, territories ÷ 3), plus region bonuses (each House slice's shore, heart and marches, outlined in gold on the map with their bonus), plus a stacking Keep bonus (+2 / +5 / +9 / +14).
+- **Battle odds:** every attack target shows your exact chance to take it with a blitz.
 - **Cards:** trade any 3 for 10 armies, or play one for its Active ability. Owning a card's House boosts it. Proctors only work for their House's owner; otherwise discard one to draw 2. Hover a card (or 🔍 it) to see the territories it would hit; playing asks for confirmation with a preview of its War Log line. Other players' cards are pinned on the map until you acknowledge them.
 - **Watching:** other players' and the AI's moves replay one at a time with their dice (1×, 2×, 4×, or Skip).
 - **The Standard:** raise it from its territory to attack with +3 phantom soldiers and a free General war cry. There is no retreat. A defending Standard's honor guard shows on its token (for example `11 +5`).

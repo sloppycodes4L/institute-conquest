@@ -62,6 +62,11 @@ export class World {
   private meshes: THREE.Mesh[] = [];
   private mats: THREE.MeshStandardMaterial[] = [];
   private desat: { value: number }[] = [];
+  /** Owner colour painted over each whole tile, and how strongly. */
+  private tint: { color: { value: THREE.Color }; amt: { value: number } }[] = [];
+  private regionLines: { mat: LineMaterial; key: string }[] = [];
+  private regionLabels: { sprite: THREE.Sprite; key: string }[] = [];
+  private lanes: LineMaterial[] = [];
   private borderMats: LineMaterial[] = [];
   topH: number[] = [];
   private decor: Decor[] = [];
@@ -86,11 +91,12 @@ export class World {
   private blood: Blood[] = [];
   private decals: { mesh: THREE.Mesh; t0: number }[] = [];
   private splatTex: THREE.Texture[] = [];
-  private camAnim: { from: THREE.Vector3; to: THREE.Vector3; t0: number } | null = null;
+  private camAnim: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dist?: { from: number; to: number } } | null = null;
   private t0 = performance.now();
   private shakeUntil = 0;
   private raycaster = new THREE.Raycaster();
   private sun!: THREE.DirectionalLight;
+  private sea: THREE.MeshStandardMaterial | null = null;
   private focusSeat: number | null = null;
   private lastState: GameState | null = null;
 
@@ -139,7 +145,8 @@ export class World {
       if (Array.isArray(mat)) mat.forEach((x) => x.dispose()); else mat?.dispose?.();
     });
     this.map.clear();
-    this.meshes = []; this.mats = []; this.desat = []; this.borderMats = []; this.decor = []; this.castles = [];
+    this.meshes = []; this.mats = []; this.desat = []; this.tint = []; this.borderMats = []; this.decor = []; this.castles = [];
+    this.regionLines = []; this.regionLabels = []; this.lanes = [];
     this.tokens = []; this.flags = []; this.olyMeshes = []; this.olyToken = null; this.olyKey = '';
     this.labels = []; this.labelAlpha = -1; this.castleMeshes = []; this.flashes.clear();
     this.topH = new Array(geo.nt).fill(1);
@@ -163,6 +170,8 @@ export class World {
     this.buildDecor();
     this.buildCastles();
     this.buildOlympus();
+    this.buildPorts();
+    this.buildRegions();
     this.buildTokens();
     this.buildLabels();
     this.buildFlags();
@@ -219,18 +228,20 @@ export class World {
 
   private buildGround() {
     const { R_OUT, R_IN } = this.geo;
-    // the burning chasm beneath everything
-    const pit = new THREE.Mesh(
+    // the sea between the quadrants and beneath Olympus
+    const sea = new THREE.Mesh(
       new THREE.CircleGeometry(R_OUT + 4, 96),
-      new THREE.MeshStandardMaterial({ color: '#1a0605', emissive: '#6b1406', emissiveIntensity: 0.9, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: '#12384f', emissive: '#06202e', emissiveIntensity: 0.6, roughness: 0.22, metalness: 0.35 }),
     );
-    pit.rotation.x = -Math.PI / 2;
-    pit.position.y = -2.2;
-    this.map.add(pit);
-    // a brighter glow down the chasm around Olympus
-    const glow = new THREE.Mesh(new THREE.CircleGeometry(R_IN, 64), new THREE.MeshBasicMaterial({ color: '#ff5a1a', transparent: true, opacity: 0.08 }));
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.y = -0.55;
+    sea.receiveShadow = true;
+    this.map.add(sea);
+    this.sea = sea.material as THREE.MeshStandardMaterial;
+    // Olympus's golden light on the water
+    const glow = new THREE.Mesh(new THREE.CircleGeometry(R_IN, 64), new THREE.MeshBasicMaterial({ color: '#ffb347', transparent: true, opacity: 0.07, depthWrite: false }));
     glow.rotation.x = -Math.PI / 2;
-    glow.position.y = -2.1;
+    glow.position.y = -0.5;
     this.map.add(glow);
     // outer badlands
     const ring = new THREE.Mesh(
@@ -308,9 +319,16 @@ export class World {
       // "My Lands" view: other Houses' land fades to a flat, dull grey.
       const uDesat = { value: 0 };
       this.desat.push(uDesat);
+      // The owner's colour covers the whole tile; the biome only shades it, so relief still reads.
+      const tint = { color: { value: new THREE.Color('#ffffff') }, amt: { value: 0 } };
+      this.tint.push(tint);
       mat.onBeforeCompile = (sh) => {
         sh.uniforms.uDesat = uDesat;
-        sh.fragmentShader = 'uniform float uDesat;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        sh.uniforms.uTint = tint.color;
+        sh.uniforms.uTintAmt = tint.amt;
+        sh.fragmentShader = 'uniform float uDesat;\nuniform vec3 uTint;\nuniform float uTintAmt;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+          float l0 = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+          diffuseColor.rgb = mix(diffuseColor.rgb, uTint * min(1.0, 0.5 + 0.9 * l0), uTintAmt);
           float lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(lum * 0.5 + 0.05), uDesat);`);
       };
@@ -483,6 +501,142 @@ export class World {
   }
   get olympusMode() { return this.olyMode; }
 
+  /** Sea lanes between ports: a dashed line across the water, with a boat moored at each end. */
+  private buildPorts() {
+    const hull = new THREE.MeshStandardMaterial({ color: '#5a3a22', roughness: 0.8, flatShading: true });
+    const sail = new THREE.MeshStandardMaterial({ color: '#efe3c8', roughness: 0.9, side: THREE.DoubleSide, flatShading: true });
+    for (const [a, b] of this.geo.ports) {
+      const [ax, ay] = this.geo.centroid[a], [bx, by] = this.geo.centroid[b];
+      const pts: number[] = [];
+      const N = 40;
+      for (let i = 0; i <= N; i++) {
+        const k = i / N;
+        // Bow out a little from a straight chord, so lanes that cross the middle don't overlap exactly.
+        const x = ax + (bx - ax) * k - (by - ay) * 0.12 * Math.sin(Math.PI * k);
+        const y = ay + (by - ay) * k + (bx - ax) * 0.12 * Math.sin(Math.PI * k);
+        pts.push(x, -0.35 + Math.sin(Math.PI * k) * 0.6, -y);
+        if (i > 0 && i < N) pts.push(x, -0.35 + Math.sin(Math.PI * k) * 0.6, -y);
+      }
+      const lg = new LineSegmentsGeometry();
+      lg.setPositions(pts);
+      const lm = new LineMaterial({ color: 0xf3d27a, linewidth: 3, transparent: true, opacity: 0.9, dashed: true, dashSize: 0.9, gapSize: 0.6 });
+      const line = new LineSegments2(lg, lm);
+      line.computeLineDistances();
+      line.renderOrder = 3;
+      this.map.add(line);
+      this.lanes.push(lm);
+      for (const [t, ox, oy] of [[a, bx - ax, by - ay], [b, ax - bx, ay - by]] as const) {
+        const [x, y] = this.geo.centroid[t];
+        const len = Math.hypot(ox, oy) || 1;
+        const g = new THREE.Group();
+        const h = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.3, 0.45), hull);
+        h.position.y = 0.15; h.castShadow = true; g.add(h);
+        const m = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 3), sail);
+        m.position.y = 0.75; m.scale.z = 0.15; m.castShadow = true; g.add(m);
+        g.position.copy(w2v(x + (ox / len) * 1.2, y + (oy / len) * 1.2, this.topH[t] + 0.05));
+        g.rotation.y = Math.atan2(oy, ox);
+        g.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.userData.t = t; this.castleMeshes.push(o as THREE.Mesh); } });
+        this.map.add(g);
+      }
+    }
+  }
+
+  /** Bonus regions: a thick border round each, and a label with its name and bonus. */
+  private buildRegions() {
+    const { hexes, territories, regions, centroid } = this.geo;
+    const regionOf = new Map<string, number>();
+    const hk = (x: number, y: number) => Math.round(x * 100) + ',' + Math.round(y * 100);
+    for (const h of hexes) regionOf.set(hk(h.x, h.y), territories[h.t].region);
+    const SQ3 = Math.sqrt(3);
+    const dirs = [0, 60, 120, 180, 240, 300].map((d) => [SQ3 * Math.cos((d * Math.PI) / 180), SQ3 * Math.sin((d * Math.PI) / 180)]);
+    const segs: number[][] = regions.map(() => []);
+    for (const h of hexes) {
+      const r = territories[h.t].region;
+      const top = this.hexHeight(h) + 0.1;
+      for (const [dx, dy] of dirs) {
+        if (regionOf.get(hk(h.x + dx, h.y + dy)) === r) continue;
+        const mx = h.x + dx / 2, my = h.y + dy / 2;
+        const px = -dy / SQ3 * 0.5, py = dx / SQ3 * 0.5;
+        segs[r].push(mx + px, top, -(my + py), mx - px, top, -(my - py));
+      }
+    }
+    for (const r of regions) {
+      const lg = new LineSegmentsGeometry();
+      lg.setPositions(segs[r.id]);
+      const lm = new LineMaterial({ color: 0xf3d27a, linewidth: 3.4, transparent: true, opacity: 0.8 });
+      const line = new LineSegments2(lg, lm);
+      line.renderOrder = 2;
+      this.map.add(line);
+      this.regionLines.push({ mat: lm, key: 'init' });
+      // The label goes on the region's hex nearest its middle that isn't under an army token.
+      const own = hexes.filter((h) => territories[h.t].region === r.id);
+      const clear = own.filter((h) => r.terr.every((t) => Math.hypot(h.x - centroid[t][0], h.y - centroid[t][1]) > 2.2));
+      const pool = clear.length ? clear : own;
+      const [mx, my] = r.at;
+      const spot = pool.reduce((b, h) => (Math.hypot(h.x - mx, h.y - my) < Math.hypot(b.x - mx, b.y - my) ? h : b), pool[0]);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true }));
+      sprite.position.copy(w2v(spot.x, spot.y, this.hexHeight(spot) + 1.2));
+      sprite.renderOrder = 8;
+      this.map.add(sprite);
+      this.regionLabels.push({ sprite, key: 'init' });
+    }
+  }
+
+  private regionTexture(name: string, bonus: number, color: string | null, sigil: string) {
+    const c = document.createElement('canvas');
+    const g = c.getContext('2d')!;
+    const font = '700 40px "Cinzel", Georgia, serif';
+    const bfont = '800 46px "Barlow Condensed", "Arial Narrow", sans-serif';
+    const label = name.replace(/^The /, '').toUpperCase();
+    g.font = font;
+    const w1 = g.measureText(label).width;
+    g.font = bfont;
+    const w2 = g.measureText(`+${bonus}`).width;
+    const W = Math.ceil(w1 + w2 + (color ? 64 : 0) + 64);
+    c.width = W; c.height = 72;
+    g.fillStyle = 'rgba(12,7,6,0.78)';
+    g.strokeStyle = color ?? '#f3d27a'; g.lineWidth = color ? 6 : 3;
+    g.beginPath(); g.roundRect(3, 3, W - 6, 66, 33); g.fill(); g.stroke();
+    g.textBaseline = 'middle'; g.textAlign = 'left';
+    let x = 26;
+    if (color) {
+      g.fillStyle = color; g.beginPath(); g.roundRect(x - 6, 14, 46, 44, 10); g.fill();
+      g.fillStyle = '#fff'; g.font = 'bold 32px serif'; g.textAlign = 'center'; g.fillText(sigil, x + 17, 37); g.textAlign = 'left';
+      x += 58;
+    }
+    g.font = font; g.fillStyle = '#f5ead8'; g.fillText(label, x, 38);
+    g.font = bfont; g.fillStyle = '#f3d27a'; g.fillText(`+${bonus}`, x + w1 + 14, 38);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return { tex, aspect: W / 72 };
+  }
+
+  /** A region held whole wears its holder's colour; the rest wear gold. */
+  private updateRegions(s: GameState | null) {
+    for (const r of this.geo.regions) {
+      const o = s ? s.owner[r.terr[0]] : -1;
+      const whole = !!s && o >= 0 && r.terr.every((t) => s.owner[t] === o);
+      const color = whole ? this.colorOf(s!, o) : null;
+      const key = color ?? '';
+      const line = this.regionLines[r.id];
+      if (line.key !== key) {
+        line.mat.color.set(color ?? '#f3d27a');
+        line.mat.linewidth = color ? 4.6 : 3.4;
+        line.mat.opacity = color ? 0.95 : 0.8;
+        line.key = key;
+      }
+      const lab = this.regionLabels[r.id];
+      if (lab.key !== key) {
+        const { tex, aspect } = this.regionTexture(r.name, r.bonus, color, whole ? HOUSES[s!.players[o].house].sigil : '');
+        lab.sprite.material.map?.dispose();
+        lab.sprite.material.map = tex;
+        lab.sprite.material.needsUpdate = true;
+        lab.sprite.scale.set(1.25 * aspect, 1.25, 1);
+        lab.key = key;
+      }
+    }
+  }
+
   private buildTokens() {
     for (let t = 0; t < this.geo.nt; t++) {
       const [x, y] = this.geo.centroid[t];
@@ -511,7 +665,7 @@ export class World {
       const c = document.createElement('canvas');
       const g = c.getContext('2d')!;
       const icon = { mountain: '⛰ ', forest: '🌲 ', water: '🌊 ', marsh: '🌾 ', keep: '♜ ', open: '' }[T[t].terrain];
-      const text = icon + T[t].name;
+      const text = icon + T[t].name + (T[t].port >= 0 ? ' ⚓' : '');
       const font = '600 34px "Barlow Condensed", "Arial Narrow", sans-serif';
       g.font = font;
       const w = Math.ceil(g.measureText(text).width) + 28;
@@ -673,9 +827,11 @@ export class World {
     for (const f of this.flags) f.group.visible = false;
     for (let t = 0; t < this.geo.nt; t++) {
       this.mats[t].color.set('#ffffff');
+      this.tint[t].amt.value = 0;
       this.borderMats[t].color.set(HOUSES[this.geo.territories[t].house].color);
       this.borderMats[t].linewidth = 1.6;
     }
+    this.updateRegions(null);
     this.setSiege(null);
     this.setFocus(null);
     this.setHighlights(null, [], 'attack');
@@ -683,13 +839,13 @@ export class World {
 
   update(s: GameState) {
     this.lastState = s;
-    const white = new THREE.Color('#ffffff');
     for (let t = 0; t < this.geo.nt; t++) {
       const col = this.colorOf(s, s.owner[t]);
-      const tint = white.clone().lerp(new THREE.Color(col), s.owner[t] >= 0 ? 0.38 : 0.12);
-      this.mats[t].color.copy(tint);
-      this.borderMats[t].color.set(col);
-      this.borderMats[t].linewidth = s.owner[t] >= 0 ? 2.6 : 1.4;
+      // Held land is painted in its House colour; neutral land keeps its natural look.
+      this.tint[t].color.value.set(col);
+      this.tint[t].amt.value = s.owner[t] >= 0 ? 0.82 : 0;
+      this.borderMats[t].color.set(s.owner[t] >= 0 ? '#1a0d0a' : col);
+      this.borderMats[t].linewidth = s.owner[t] >= 0 ? 1.6 : 1.2;
       const std = s.standards.find((st) => !st.captured && st.at === t);
       const hasStd = !!std;
       const guard = std?.guard ?? 0;
@@ -714,6 +870,7 @@ export class World {
         f.group.position.copy(w2v(x + 0.9, y - 0.7, this.topH[st.at]));
       }
     }
+    this.updateRegions(s);
     this.setSiege(s.siege);
     this.applyFocus();
     this.applyHighlights();
@@ -949,6 +1106,20 @@ export class World {
     this.camAnim = { from: this.controls.target.clone(), to, t0: performance.now() };
   }
 
+  /**
+   * Follow the action: glide to the middle of `ts`, and if the whole valley is in view, close in on it
+   * so the fight is readable. A camera that's already zoomed in stays at its zoom.
+   */
+  follow(ts: number[]) {
+    const pts = ts.filter((t) => t === OLYMPUS || (t >= 0 && t < this.geo.nt)).map((t) => this.anchor(t, 0).setY(0));
+    if (!pts.length) return;
+    const to = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+    const spread = Math.max(0, ...pts.map((p) => p.distanceTo(to)));
+    const d = this.camera.position.distanceTo(this.controls.target);
+    const want = Math.max(this.controls.minDistance * 2.2, this.controls.maxDistance * 0.5, spread * 2.6);
+    this.camAnim = { from: this.controls.target.clone(), to, t0: performance.now(), dist: d > want * 1.15 ? { from: d, to: want } : undefined };
+  }
+
   screenPos(t: number) {
     const v = this.anchor(t, 1.5).project(this.camera);
     const r = this.renderer.domElement.getBoundingClientRect();
@@ -1011,7 +1182,7 @@ export class World {
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     this.camera.position.copy(this.controls.target).addScaledVector(dir, fit);
     this.controls.maxDistance = fit * 1.25;
-    for (const m of this.borderMats) m.resolution.set(w, h);
+    for (const m of [...this.borderMats, ...this.regionLines.map((r) => r.mat), ...this.lanes]) m.resolution.set(w, h);
   }
 
   private frame() {
@@ -1047,6 +1218,8 @@ export class World {
       if (ended) this.applyHighlights();
     }
     this.updateLabels();
+    for (const l of this.lanes) l.dashOffset = -t * 0.8;
+    if (this.sea) this.sea.roughness = 0.2 + Math.sin(t * 0.7) * 0.05;
     this.fx = this.fx.filter((f) => {
       const k = (now - f.t0) / f.dur;
       if (k >= 1) { this.scene.remove(f.obj); f.obj.geometry.dispose(); return false; }
@@ -1081,6 +1254,11 @@ export class World {
       const delta = next.clone().sub(this.controls.target);
       this.controls.target.add(delta);
       this.camera.position.add(delta);
+      if (this.camAnim.dist) {
+        const dd = this.camAnim.dist.from + (this.camAnim.dist.to - this.camAnim.dist.from) * e;
+        const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+        this.camera.position.copy(this.controls.target).addScaledVector(dir, dd);
+      }
       if (k >= 1) this.camAnim = null;
     }
     // Don't let the camera wander off the edge of the world.

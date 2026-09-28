@@ -58,6 +58,7 @@ export class LocalSession implements Session {
   private cbs: (() => void)[] = [];
   private shownSeat: number | null = null;
   private timer = 0;
+  private clock = 0;
   private humans: number;
 
   constructor(seats: LobbySeat[], settings: WarSettings = DEFAULT_SETTINGS) {
@@ -66,6 +67,28 @@ export class LocalSession implements Session {
     this.humans = seats.filter((x) => !x.ai).length;
     this.s = createGame(seats.map((x) => x.name), secureRng, { ai: seats.map((x) => !!x.ai), settings });
     this.refresh();
+    if (this.s.opts.timer) this.clock = window.setInterval(() => this.tickClock(), 500);
+  }
+
+  /**
+   * The turn timer, hot-seat style: it only runs while a human can actually see their turn (not during the
+   * hand-over screen or while earlier moves are still replaying), and calls time when it runs out.
+   */
+  private lastTick = Date.now();
+  private tickClock() {
+    const s = this.s, now = Date.now(), dt = now - this.lastTick;
+    this.lastTick = now;
+    if (!s.deadline || s.phase === 'over' || s.phase === 'passage' || s.reaction) return;
+    if (s.players[s.cur]?.ai) return;
+    if (this.handoff != null || this.hold?.()) {
+      s.deadline += dt;
+      if (this.view) this.view.deadline = s.deadline;
+      return;
+    }
+    if (now >= s.deadline) {
+      act(s, s.cur, { type: 'turnTimeout' }, { rng: secureRng, now });
+      this.refresh();
+    }
   }
 
   private refresh() {
@@ -89,6 +112,8 @@ export class LocalSession implements Session {
     if (this.handoff == null) return;
     this.shownSeat = this.handoff;
     this.handoff = null;
+    // The new player's clock starts when they take the device.
+    if (this.s.deadline && this.s.opts.timer) this.s.deadline = Date.now() + this.s.opts.timer * 1000;
     this.refresh();
   }
 
@@ -123,7 +148,7 @@ export class LocalSession implements Session {
   }
   onUpdate(cb: () => void) { this.cbs.push(cb); }
   kick() { this.scheduleBots(); }
-  close() { clearTimeout(this.timer); this.cbs = []; }
+  close() { clearTimeout(this.timer); clearInterval(this.clock); this.cbs = []; }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +187,8 @@ export class OnlineSession implements Session {
   private rt: RealtimeClient | null = null;
   private poll = 0;
   private timeoutTimer = 0;
+  private turnTimer = 0;
+  private lastTimeUp = 0;
   private busy = false;
 
   private constructor(private creds: Creds) {
@@ -207,6 +234,23 @@ export class OnlineSession implements Session {
     this.view = j.view;
     this.cbs.forEach((c) => c());
     this.armTimeout();
+    this.armTurnTimer();
+  }
+
+  /**
+   * When the turn timer runs out, any screen may call time on the server (which checks the clock itself).
+   * The current player's screen asks first; the others wait a little longer, and nobody asks more than every few seconds.
+   */
+  private armTurnTimer() {
+    clearTimeout(this.turnTimer);
+    const v = this.view;
+    if (!v?.deadline || v.reaction || !['draft', 'attack', 'fortify'].includes(v.phase)) return;
+    const mine = this.seat === v.cur;
+    const wait = Math.max(v.deadline - Date.now() + (mine ? 600 : 3500), this.lastTimeUp + 4000 - Date.now(), 0);
+    this.turnTimer = window.setTimeout(() => {
+      this.lastTimeUp = Date.now();
+      this.send({ type: 'turnTimeout' }).catch(() => {});
+    }, wait);
   }
 
   /** If a Standard attack is waiting on a defender who went quiet, nudge the server after the deadline. */
@@ -251,6 +295,7 @@ export class OnlineSession implements Session {
   close() {
     clearInterval(this.poll);
     clearTimeout(this.timeoutTimer);
+    clearTimeout(this.turnTimer);
     this.rt?.disconnect();
     this.cbs = [];
   }

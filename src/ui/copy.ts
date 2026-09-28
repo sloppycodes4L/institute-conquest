@@ -187,6 +187,8 @@ export function describe(s: GameState, e: GameEvent): string {
       : `${who(s, e.seat)} marches ${e.n} from ${terr(e.from)} to ${terr(e.to)}.`;
     case 'moveStd': return `⚑ ${who(s, e.seat)} carries the Standard to ${terr(e.to)}.`;
     case 'earned': return `${who(s, e.seat)} loots a card from the dead.`;
+    case 'timeUp': return `⏱ Time! The Proctors drag ${who(s, e.seat)} off the field${e.placed ? ` and dump their ${e.placed} unplaced soldiers on the front` : ''}.`;
+    case 'region': return `⬡ ${who(s, e.seat)} holds all of <b>${esc(geo(s).regions[e.region].name)}</b>: <b>+${e.bonus}</b> armies every turn.`;
     case 'endTurn': return '';
     case 'win': return e.seat != null
       ? `♛ ${who(s, e.seat)} is ARCHPRIMUS OF THE INSTITUTE. One House out of many. Hail, you magnificent bastard.`
@@ -233,10 +235,12 @@ export const RULES_HTML = `
 Up to <b>7 players</b>, one per House. The valley grows with the number of players.</p>
 <h3>Setting up a war</h3>
 <p>Whoever creates the war picks the <b>map size</b> and <b>starting troops</b> (both default to the recommended settings), and can switch
-<b>Alliances</b> and the <b>Siege on Olympus</b> off. Then <b>the Sorting</b>: hit <b>Start Selection</b> and the wheel deals each Gold a House.</p>
+<b>Alliances</b> and the <b>Siege on Olympus</b> off, and can set a <b>turn timer</b> (60, 90 or 120 seconds). When time runs out, your unplaced armies
+go to your front and the turn passes. Then <b>the Sorting</b>: hit <b>Start Selection</b> and the wheel deals each Gold a House.</p>
 <h3>Controls</h3>
 <p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
-<b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
+<b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. Click a House in the roster to light up its land.
+<b>⚙ Settings</b>: the camera follows the action (on by default), and a clash of swords tells you it's your turn. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
 <h3>Winning</h3>
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
 A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.
@@ -248,7 +252,8 @@ If the card's House (its suit) matches your House, the Passive gets <b>+1</b>. Y
 <p>You start holding the heart of your House slice: your Keep and the land around it. The rest of your slice, and every House nobody plays,
 is held by <b>neutral garrisons</b>, thickest on the fronts facing another player. The Houses are dealt so players sit as far apart as possible,
 so the first rounds are a land grab before the killing starts. You can attack <b>any territory touching yours</b>.
-The quadrants are split by burning chasms you can only cross on the land bridges. <b>Zoom in</b> to read the territory names.</p>
+The four quadrants are separate landmasses. Every war rolls its own <b>land bridges</b> between neighbouring quadrants, and its own <b>⚓ ports</b>:
+a port's sea lane (the dashed line across the water) makes it border the port on the far shore, for attacks and marches alike. <b>Zoom in</b> to read the territory names.</p>
 <h3>Terrain</h3>
 <p><b>⛰ Mountains:</b> the high ground. Attacking <i>from</i> a mountain adds <b>+1</b> to your highest attack die.
 <b>🌲 Forests:</b> cover. Defending a forest adds <b>+2</b> to the highest defense die.
@@ -256,7 +261,7 @@ The quadrants are split by burning chasms you can only cross on the land bridges
 If every route crosses rough ground, the troops <b>halt on the first rough territory</b> and march on next turn (the guide line shows where they'll stop).
 Hover any territory to see its terrain.</p>
 <h3>Your turn: Draft, Attack, Fortify</h3>
-<p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + quadrant bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your General.
+<p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + region bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your General.
 Click a territory to add armies; use <b>−</b>/<b>+</b> to adjust it, or <b>Undo</b> to take back everything you placed this Draft (Shift-click also removes).
 Play cards now: trade any <b>3 for 10 armies</b>, or play one for its <b>Active</b>. Cards of a House you own get a bonus.
 A Proctor card only works if you own its House; otherwise discard it for 2 cards (locked until next turn). Holding 5+ cards? Trade before you attack.</p>
@@ -264,7 +269,7 @@ A Proctor card only works if you own its House; otherwise discard it for 2 cards
 When anyone else plays a card, it's pinned on the map beside what it hit until you <b>Acknowledge</b> it.</p>
 <p><b>Attack.</b> Pick one of your territories and every target it can hit lights up (or just click an enemy territory, and your strongest neighbour attacks it). Attack as often as you like.
 If an attack isn't allowed, the reason pops up over the map.
-Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
+Every target shows your <b>odds to take it</b> if you blitz. Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
 <b>Keeps</b> are fortresses: +1 to every defense die. Conquer at least one territory to earn a card.</p>
 <p><b>Fortify.</b> One army move through your connected land (see Terrain), plus one Standard move.</p>
 <p><b>Watching.</b> Other players' moves (and the AI's) are replayed one at a time with their dice. Speed them up (2×, 4×) or <b>Skip</b> from the bar at the bottom.</p>
@@ -284,7 +289,7 @@ There is <b>no retreat</b>. Win, and the territory is yours <b>and every defende
 Defenders holding a <b>REACTION</b> card get a few seconds to spring an ambush when a Standard charges them.</p>
 <h3>Neutral Houses</h3>
 <p>Houses nobody plays hold their land as neutral garrisons. Take a neutral Keep to seize its Standard: you <b>own that House</b> (its Proctor, its card bonuses) and its remaining garrisons switch to you.</p>
-<h3>Quadrants</h3>
-<p>Hold a whole quadrant for a bonus that grows with the map: The Greatwoods (Apollo, Diana), The Highlands (Minerva, Mars), The Argos Lowlands (Jupiter, Ceres),
-and The Frostfangs (Pluto), which pays less but has only two ways in.</p>
+<h3>Regions</h3>
+<p>Each House slice is cut into bonus <b>regions</b>: its shore, its heart (around the Keep) and its marches. Hold every territory of a region at the start of your turn
+for its bonus, shown on the map (<b>+2</b>, <b>+3</b>…) inside the gold region borders. The <b>Regions</b> panel lists the ones you're closest to.</p>
 `;

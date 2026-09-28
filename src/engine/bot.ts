@@ -58,6 +58,12 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
   const threat = (t: number) => enemyAdj(t).reduce((a, n) => a + v.armies[n], 0);
   const borders = mine.filter((t) => enemyAdj(t).length > 0);
   const myFoot = g.foot.filter((t) => v.owner[t] === seat);
+  // Taking a territory is worth more the closer it brings us to holding its whole region.
+  const regionPull = (t: number) => {
+    const r = g.regions[g.territories[t].region];
+    const held = r.terr.filter((x) => x !== t && v.owner[x] === seat).length;
+    return held === r.terr.length - 1 ? 1 + r.bonus * 0.4 : (held / r.terr.length) * 0.8;
+  };
   const bestFoot = myFoot.reduce((b, t) => (b < 0 || v.armies[t] > v.armies[b] ? t : b), -1);
 
   if (v.phase === 'draft') {
@@ -140,7 +146,7 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
         const tm = terrainMods(v, from, to);
         const ratio = ((v.armies[from] - 1) * (tm.atk ? 1.15 : 1)) / Math.max(1, def * (tm.def ? 1.35 : 1));
         if (ratio < 1.4) continue;
-        let score = ratio + (defStd >= 0 ? 4 : 0) + (g.territories[to].isKeep ? 1.5 : 0) + (v.owner[to] === NEUTRAL ? 0 : 0.5);
+        let score = ratio + (defStd >= 0 ? 4 : 0) + (g.territories[to].isKeep ? 1.5 : 0) + (v.owner[to] === NEUTRAL ? 0 : 0.5) + regionPull(to);
         if (from === stdAt && enemyAdj(from).length === 1 && v.armies[from] - 1 < def + 2) score -= 3; // don't strip the Standard
         if (!best || score > best.score) best = { from, to, score };
       }

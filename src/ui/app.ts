@@ -5,13 +5,15 @@ import { DiceTray } from '../render/dice.ts';
 import { HOUSES, MAX_PLAYERS, QUADRANTS, TERRAIN_INFO, geoFor, layoutFor, mapGeo } from '../engine/data.ts';
 import { CARD, CARDS, OLYMPUS_POWER, fmt, isSiegeCard } from '../engine/cards.ts';
 import {
-  type Action, type Frame, type GameEvent, type GameState, type WarSettings, DEFAULT_SETTINGS, HAND_LIMIT, NEUTRAL, act, activeValue,
+  type Action, type Frame, type GameEvent, type GameState, type WarSettings, DEFAULT_SETTINGS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue,
   allianceOf, allied, attackBlocker, attackTargets, connectedOwned, fortifyRoute, geo, housesOwned, inviteBlocker, mustTrade, olympusPreview,
   ownsHouse, passive, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from '../engine/engine.ts';
 import { LocalSession, OnlineSession, savedCreds, type LobbySeat, type Session } from '../net/session.ts';
 import { ERRORS_FLAVOR, PASSAGE_INTRO, RULES_HTML, TAGLINES, describe, headline } from './copy.ts';
 import { VERSION } from '../version.ts';
+import { assaultFight, attackFight, oddsClass, pct, standardFight, winChance } from './odds.ts';
+import { swordClash } from './sound.ts';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const el = (html: string) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild as HTMLElement; };
@@ -49,6 +51,11 @@ interface UIState {
   rosterMin: boolean;
   logMin: boolean;
   genMin: boolean;
+  regionsMin: boolean;
+  /** A House lit up on the map from the roster. */
+  spot: number | null;
+  /** A region row under the mouse: its land glows. */
+  hoverRegion: number | null;
 }
 
 export class App {
@@ -76,6 +83,8 @@ export class App {
   private showcaseOpen = false;
   private wheelOpen = false;
   private localSettings: WarSettings = { ...DEFAULT_SETTINGS };
+  /** Player preferences (this device only). */
+  private prefs = { follow: store.get('ic-follow') !== '0', sound: store.get('ic-sound') !== '0' };
 
   constructor() {
     this.world = new World(document.getElementById('world')!, geoFor(4));
@@ -90,6 +99,8 @@ export class App {
     // Panels collapse into tabs on narrow screens, so re-lay them out when the window changes.
     let resizeT = 0;
     window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = window.setTimeout(() => this.render(), 120); });
+    // The turn clock in the top bar ticks on its own, without re-rendering the HUD.
+    window.setInterval(() => this.tickClock(), 250);
     // Shift-click in the Draft takes armies back.
     window.addEventListener('pointerdown', (e) => { this.lastShift = e.shiftKey; }, true);
     const q = new URLSearchParams(location.search);
@@ -102,7 +113,7 @@ export class App {
   }
 
   private freshUI(): UIState {
-    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false };
+    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false, regionsMin: window.innerHeight < 760, spot: null, hoverRegion: null };
   }
 
   // =========================================================================
@@ -217,6 +228,7 @@ export class App {
 
   private applySetting(ws: WarSettings, k: string, v: string) {
     if (k === 'reset') Object.assign(ws, DEFAULT_SETTINGS);
+    if (k === 'timer') ws.timer = +v;
     if (k === 'size' || k === 'troops') ws[k] = +v;
     if (k === 'alliances') { ws.alliances = v === '1'; if (!ws.alliances) ws.siege = false; }
     if (k === 'siege') ws.siege = v === '1';
@@ -245,6 +257,8 @@ export class App {
         <div class="set-note">${mapGeo(cur.layout).nt} territories${cur.layout === rec.layout ? ' (recommended)' : ''}. Bigger valleys mean longer wars.</div></div>
       <div class="set-row"><div class="set-k">Starting troops</div><div class="seg wide">${troops}</div>
         <div class="set-note">${cur.troops} soldiers per House around its Keep${ws.troops === 0 ? ' (recommended)' : ''}.</div></div>
+      <div class="set-row"><div class="set-k">Turn timer</div><div class="seg wide">${TURN_TIMERS.map((t) => `<button data-set="timer" data-v="${t}" class="${(ws.timer ?? 0) === t ? 'on' : ''} ${t === 0 ? 'rec' : ''}" ${dis}><span>${t ? `${t}s` : 'None'}</span></button>`).join('')}</div>
+        <div class="set-note">${ws.timer ? `${ws.timer} seconds a turn. When time runs out, unplaced armies go to the front and the turn passes.` : 'Take as long as you like.'}</div></div>
       <div class="set-row inline"><div class="set-k">Alliances</div>${toggle('alliances', ws.alliances)}</div>
       <div class="set-row inline"><div class="set-k">Siege on Olympus <span class="fine">(win condition)</span></div>${toggle('siege', ws.alliances && ws.siege, !ws.alliances)}</div>
       ${!ws.alliances ? '<div class="set-note">No alliances means no Siege on Olympus: last House standing wins.</div>' : ''}
@@ -417,28 +431,37 @@ export class App {
 
   /** How long to linger on each kind of move (ms, before the speed setting). */
   private async present(d: GameState, evs: GameEvent[], f: Frame) {
-    const w = (ms: number) => (this.skipping ? Promise.resolve() : sleep(ms / this.speed));
+    // While your own turn clock is running, catch up on the replay at top speed.
+    const live = this.session?.view;
+    const rush = !!live?.deadline && live.cur === this.me;
+    const w = (ms: number) => (this.skipping ? Promise.resolve() : sleep(ms / (rush ? Math.max(4, this.speed) : this.speed)));
+    const cam = (ts: number[]) => { if (this.prefs.follow) this.world.follow(ts); };
     let shown = false;
+    this.regionWhisper(d, evs);
     for (const e of evs) {
       if (this.skipping || !this.session) return;
       const hl = headline(d, e);
       if (hl) this.banner(hl.title, hl.sub, hl.color, hl.long);
       switch (e.k) {
         case 'battle': case 'stdBattle': case 'assault':
+          cam([e.from, e.k === 'assault' ? OLYMPUS : e.to]);
           await this.showBattle(d, e);
           await w(1000);
           shown = true;
           break;
         case 'place':
+          cam([e.t]);
           this.world.burst(e.t, HOUSES[d.players[e.seat].house].color);
           this.world.flash([e.t], '#f3d27a', 700);
           await w(420); shown = true;
           break;
         case 'fortify':
+          cam(e.path ?? [e.from, e.to]);
           this.world.route(e.path ?? [e.from, e.to], e.to);
           await w(1300); this.world.clearArrow(); shown = true;
           break;
         case 'moveStd':
+          cam([e.from, e.to]);
           this.world.arrow(e.from, e.to, '#f3d27a');
           await w(1000); this.world.clearArrow(); shown = true;
           break;
@@ -446,10 +469,13 @@ export class App {
           await this.showcase(d, e);
           shown = true;
           break;
-        case 'turn':
+        case 'turn': {
+          const st = d.standards[d.players[e.seat].house];
+          if (e.seat !== this.me) cam([st.captured ? territoriesOf(d, e.seat)[0] ?? -1 : st.at]);
           this.turnBanner(d, e.seat);
           await w(1100); shown = true;
           break;
+        }
         case 'trade': case 'discardProctor': case 'undoDraft':
           this.whisper(describe(d, e));
           await w(900); shown = true;
@@ -470,9 +496,31 @@ export class App {
   private turnBanner(v: GameState, seat: number) {
     const p = v.players[seat];
     const mine = seat === this.me;
+    if (mine && this.prefs.sound && v.phase !== 'over') swordClash();
+    // Your turn: bring the camera home to your Standard (or your land if it's been taken).
+    if (mine) this.ui.spot = null;
+    if (mine && this.prefs.follow && v.phase !== 'over') {
+      const st = v.standards[p.house];
+      this.world.follow([st.captured ? territoriesOf(v, seat)[0] ?? -1 : st.at]);
+    }
     const b = el(`<div class="turnban" style="--c:${HOUSES[p.house].color}">${sig(p.house)} <b>${mine ? 'YOUR TURN' : esc(p.name)}</b><span>${mine ? `House ${HOUSES[p.house].name}` : `House ${HOUSES[p.house].name}${p.ai ? ' · AI' : ''} takes the field`}</span></div>`);
     document.body.appendChild(b);
     setTimeout(() => b.remove(), 1900);
+  }
+
+  /** Regions that changed hands in these events, in one line (a domination can hand over several at once). */
+  private regionWhisper(v: GameState, evs: GameEvent[]) {
+    const got = evs.filter((e) => e.k === 'region');
+    if (!got.length) return;
+    const g = geo(v);
+    const bySeat = new Map<number, GameEvent[]>();
+    for (const e of got) bySeat.set(e.seat, [...(bySeat.get(e.seat) ?? []), e]);
+    for (const [seat, es] of bySeat) {
+      const p = v.players[seat];
+      const names = es.map((e) => `<b>${esc(g.regions[e.region].name)}</b> +${e.bonus}`).join(', ');
+      this.whisper(`⬡ ${sig(p.house, 'sig sm')} ${seat === this.me ? 'You hold' : `${esc(p.name)} holds`} ${names}`);
+      this.world.flash(es.flatMap((e) => g.regions[e.region].terr), HOUSES[p.house].color, 1600);
+    }
   }
 
   /** A small line of text over the map (used while replaying). */
@@ -509,15 +557,16 @@ export class App {
           <button class="icon-btn" data-a="focus" id="btnFocus" title="My Lands: grey out everything you don't hold (G)">◐</button>
           <button class="icon-btn" data-a="olympus" id="btnOly" title="Olympus: solid / see-through / hidden (O)">⛰</button>
           <button class="icon-btn" data-a="diplo" id="btnDiplo" title="Diplomacy &amp; alliances">🤝<span class="dot hidden"></span></button>
+          <button class="icon-btn" data-a="settings" title="Settings: camera and sound">⚙</button>
         </div>
         <div class="corner right mobile-tabs">
           <button class="icon-btn" data-a="tab-roster" title="Houses &amp; your General">♜</button>
-          <button class="icon-btn" data-a="tab-log" title="War log">✎</button>
+          <button class="icon-btn" data-a="tab-log" title="Regions &amp; war log">✎</button>
         </div>
         <div class="topbar" id="topbar"></div>
         <div class="battle hidden" id="battle"><div class="vs"><span id="bA"></span><span id="bD"></span></div><canvas id="dice"></canvas><div class="res" id="bRes"></div></div>
         <div class="leftcol" id="leftcol"><div class="general" id="general"></div><div class="side left" id="roster"></div></div>
-        <div class="side right log" id="log"></div>
+        <div class="rightcol" id="rightcol"><div class="side regions" id="regions"></div><div class="side log" id="log"></div></div>
         <div class="notices" id="notices"></div>
         <div class="dock"><div class="actionbar" id="actionbar"></div><div class="hand" id="hand"></div></div>
       </div>`));
@@ -562,6 +611,7 @@ export class App {
     this.renderTop();
     this.renderGeneral();
     this.renderRoster();
+    this.renderRegions();
     this.renderLog();
     this.renderActionBar();
     this.renderHand();
@@ -571,7 +621,7 @@ export class App {
     const lc = document.getElementById('leftcol')!, r = document.getElementById('roster')!, l = document.getElementById('log')!;
     const narrow = window.innerWidth <= 900;
     lc.classList.toggle('collapsed', narrow && this.ui.mobileTab !== 'roster');
-    l.classList.toggle('collapsed', narrow && this.ui.mobileTab !== 'log');
+    document.getElementById('rightcol')!.classList.toggle('collapsed', narrow && this.ui.mobileTab !== 'log');
     r.classList.toggle('min', !narrow && this.ui.rosterMin);
     l.classList.toggle('min', !narrow && this.ui.logMin);
     document.getElementById('btnFocus')!.classList.toggle('on', this.focusMode);
@@ -580,7 +630,8 @@ export class App {
     const pending = this.me != null && (this.v.invites.some((i) => i.to === this.me) || this.voteOwed());
     document.querySelector('#btnDiplo .dot')!.classList.toggle('hidden', !pending);
     document.getElementById('btnDiplo')!.classList.toggle('hidden', this.v.opts?.alliances === false);
-    this.world.setFocus(this.focusMode && this.me != null ? this.me : null);
+    const spot = this.ui.spot != null && this.v.players[this.ui.spot]?.alive ? this.ui.spot : null;
+    this.world.setFocus(spot ?? (this.focusMode && this.me != null ? this.me : null));
     const root = document.getElementById('modal-root');
     if (root?.dataset.key === 'info-diplo') this.modalDiplo(true);
   }
@@ -604,7 +655,21 @@ export class App {
       <div class="phases">${phases.map((ph) => `<span class="phase ${v.phase === ph ? 'on' : ''}">${ph}</span>`).join('')}</div>
       ${v.phase === 'draft' ? `<span class="reinf"><b>${v.ts.reinforcements}</b> to place</span>` : ''}
       ${sg ? `<span class="reinf siege-pill" title="Siege on Olympus: ${sg.turnsLeft} allied turns left">🏛 <b>${sg.garrison}</b> · ${sg.turnsLeft} left</span>` : ''}
-      <span class="reinf" title="Round">R${Math.ceil(v.turn / Math.max(1, v.players.length))}</span>`;
+      <span class="reinf" title="Round">R${Math.ceil(v.turn / Math.max(1, v.players.length))}</span>
+      ${v.opts?.timer ? '<span class="reinf tmr" id="tmr" title="Turn timer"></span>' : ''}`;
+    this.tickClock();
+  }
+
+  /** The turn clock: time left for whoever is acting, red in the last ten seconds. */
+  private tickClock() {
+    const el = document.getElementById('tmr');
+    const live = this.session?.view;
+    if (!el || !live) return;
+    if (!live.deadline || live.reaction || live.players[live.cur]?.ai || !['draft', 'attack', 'fortify'].includes(live.phase)) { el.textContent = '⏱ —'; el.classList.remove('low'); return; }
+    const left = Math.max(0, Math.ceil((live.deadline - Date.now()) / 1000));
+    el.textContent = `⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    el.classList.toggle('low', left <= 10);
+    el.classList.toggle('mine', live.cur === this.me);
   }
 
   /** A General's passive, spelled out, with its suit (House) and whether it matches. */
@@ -652,7 +717,7 @@ export class App {
       const owned = housesOwned(v, seat);
       const al = allianceOf(v, seat);
       const allyTag = al ? `<span class="ally-tag ${al.public ? '' : 'secret'}" title="${al.public ? 'Public alliance' : 'Secret alliance (only members can see it)'}">${al.public ? '🤝' : '🤫'} ${al.members.filter((m) => m !== seat).map((m) => HOUSES[v.players[m].house].sigil).join('')}</span>` : '';
-      return `<div class="player ${seat === v.cur && v.phase !== 'passage' ? 'cur' : ''} ${p.alive ? '' : 'dead'} ${myAl?.members.includes(seat) && seat !== this.me ? 'my-ally' : ''}">
+      return `<div class="player ${seat === v.cur && v.phase !== 'passage' ? 'cur' : ''} ${p.alive ? '' : 'dead'} ${myAl?.members.includes(seat) && seat !== this.me ? 'my-ally' : ''} ${this.ui.spot === seat ? 'spot' : ''}" ${p.alive ? `data-a="spot" data-seat="${seat}" title="Show ${esc(p.name)}'s land on the map"` : ''}>
         <div class="pn">${sig(p.house)} <span style="color:${HOUSES[p.house].color}">${esc(p.name)}</span>
           ${seat === this.me ? '<span class="you">YOU</span>' : ''}${p.ai ? '<span class="ai-tag">AI</span>' : ''}${allyTag}</div>
         ${this.primusHTML(seat)}
@@ -675,6 +740,45 @@ export class App {
     const v = this.v;
     const lines = v.log.slice().reverse().map((e) => describe(v, e)).filter(Boolean).slice(0, 70);
     document.getElementById('log')!.innerHTML = `<h3 data-a="min-log">WAR LOG <span>${this.ui.logMin ? '▸' : '▾'}</span></h3>${(this.ui.logMin ? lines.slice(0, 1) : lines).map((l) => `<div class="ev">${l}</div>`).join('')}`;
+  }
+
+  /**
+   * Bonus regions: the ones you hold, then the ones you're closest to, so the next conquest has a goal.
+   * Hover a row to light up its land.
+   */
+  private renderRegions() {
+    const v = this.v, g = this.g, me = this.me;
+    const box = document.getElementById('regions')!;
+    const holder = (r: (typeof g.regions)[number]) => { const o = v.owner[r.terr[0]]; return o >= 0 && r.terr.every((t) => v.owner[t] === o) ? o : -1; };
+    const row = (r: (typeof g.regions)[number], note: string, cls = '') =>
+      `<div class="rg ${cls}" data-region="${r.id}"><span class="rg-n">${esc(r.name.replace(/^The /, ''))}</span><span class="rg-b">+${r.bonus}</span><span class="rg-note">${note}</span></div>`;
+    let body = '';
+    if (me != null && v.players[me] && v.phase !== 'passage') {
+      const mine = g.regions.filter((r) => holder(r) === me);
+      const near = g.regions.filter((r) => holder(r) !== me)
+        .map((r) => ({ r, held: r.terr.filter((t) => v.owner[t] === me).length, touch: r.terr.some((t) => v.owner[t] === me || g.adj[t].some((x) => v.owner[x] === me)) }))
+        .filter((x) => x.touch)
+        .sort((a, b) => (b.held / b.r.terr.length) - (a.held / a.r.terr.length) || b.r.bonus - a.r.bonus)
+        .slice(0, 6);
+      body += mine.length ? `<div class="rg-h">YOURS · +${mine.reduce((a, r) => a + r.bonus, 0)} a turn</div>${mine.map((r) => row(r, '✓', 'held')).join('')}` : '';
+      body += near.length ? `<div class="rg-h">WITHIN REACH</div>${near.map(({ r, held }) => {
+        const miss = r.terr.filter((t) => v.owner[t] !== me);
+        return row(r, `${held}/${r.terr.length}${miss.length <= 2 ? ` · need ${miss.map((t) => esc(g.territories[t].name)).join(', ')}` : ''}`);
+      }).join('')}` : '';
+    }
+    const rivals = g.regions.map((r) => ({ r, o: holder(r) })).filter((x) => x.o >= 0 && x.o !== me);
+    if (rivals.length) body += `<div class="rg-h">HELD BY RIVALS</div>${rivals.map(({ r, o }) => row(r, sig(v.players[o].house, 'sig sm'), 'rival')).join('')}`;
+    if (!body) body = '<div class="rg-note" style="padding:6px 12px">Hold every territory of a region (gold borders on the map) for its bonus each turn.</div>';
+    box.innerHTML = `<h3 data-a="min-regions">REGIONS <span>${this.ui.regionsMin ? '▸' : '▾'}</span></h3>${this.ui.regionsMin ? '' : body}`;
+    if (!box.dataset.hover) {
+      box.dataset.hover = '1';
+      box.addEventListener('mouseover', (e) => {
+        const id = (e.target as HTMLElement).closest<HTMLElement>('.rg')?.dataset.region;
+        const r = id != null ? +id : null;
+        if (r !== this.ui.hoverRegion) { this.ui.hoverRegion = r; this.renderHighlights(); }
+      });
+      box.addEventListener('mouseleave', () => { if (this.ui.hoverRegion != null) { this.ui.hoverRegion = null; this.renderHighlights(); } });
+    }
   }
 
   /** Floating cards for things you owe an answer to: invitations and siege votes. */
@@ -718,6 +822,7 @@ export class App {
     const v = this.v, u = this.ui;
     if (this.showcaseOpen) return; // the card on the map owns the highlights
     if (u.confirm) { this.world.setHighlights(null, u.confirm.targets, 'target'); return; }
+    if (u.hoverRegion != null && this.g.regions[u.hoverRegion]) { this.world.setHighlights(null, this.g.regions[u.hoverRegion].terr, 'place'); return; }
     const cardId = u.inspect ?? u.hoverCard;
     if (cardId && !this.playing && !u.pending && v.phase !== 'passage') {
       const imp = this.cardImpact(cardId);
@@ -810,9 +915,11 @@ export class App {
           const sh = standardAt(v, t);
           const guard = sh >= 0 ? v.standards[sh].guard : 0;
           const icon = T[t].terrain === 'forest' ? ' 🌲' : '';
-          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${ally ? 'Your ally! Attacking ends the alliance.' : T[t].terrain === 'forest' ? 'Forest: +2 to the highest defense die' : ''}">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''}</button>`;
+          const p = winChance(attackFight(v, this.me!, u.sel!, t));
+          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${ally ? 'Your ally! Attacking ends the alliance. ' : T[t].terrain === 'forest' ? 'Forest: +2 to the highest defense die. ' : ''}${pct(p)} chance to take it if you blitz">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''} <span class="odds ${oddsClass(p)}">${pct(p)}</span></button>`;
         }).join('');
-        const oly = this.canAssaultFrom(u.sel) ? `<button class="chip oly" data-a="tgt" data-t="${OLYMPUS}">🏛 Olympus <b>${v.siege!.garrison}</b></button>` : '';
+        const olyP = this.canAssaultFrom(u.sel) ? winChance(assaultFight(v, u.sel)) : 0;
+        const oly = this.canAssaultFrom(u.sel) ? `<button class="chip oly" data-a="tgt" data-t="${OLYMPUS}">🏛 Olympus <b>${v.siege!.garrison}</b> <span class="odds ${oddsClass(olyP)}">${pct(olyP)}</span></button>` : '';
         bar.innerHTML = `<span class="hint">From <b>${esc(T[u.sel].name)}</b> (${v.armies[u.sel]}), ${tg.length + (oly ? 1 : 0)} target${tg.length + (oly ? 1 : 0) === 1 ? '' : 's'}:</span>
           <div class="chips">${chips}${oly}${!chips && !oly ? '<span class="hint">nothing in reach</span>' : ''}</div>
           <button class="btn sm" data-a="cancel">✕</button><button class="btn" data-a="endAttack">Fortify ▸</button>`;
@@ -824,7 +931,9 @@ export class App {
       const diceSeg = `<div class="seg">${[1, 2, 3].map((n) => `<button data-a="dice" data-n="${n}" class="${dice === n ? 'on' : ''}" ${n > maxDice ? 'disabled' : ''}>${n}🎲</button>`).join('')}</div>`;
       if (to === OLYMPUS) {
         const sg = v.siege!;
+        const op = winChance(assaultFight(v, from));
         bar.innerHTML = `<span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>OLYMPUS</b> (${sg.garrison}${v.ts.buffs.siegeWalls ? ', walls bypassed' : ', walls +1'})</span>
+          <span class="odds big ${oddsClass(op)}" title="Chance a blitz breaks Olympus right now">Blitz breaks it: ${pct(op)}</span>
           ${diceSeg}<button class="btn gold" data-a="roll">Assault</button><button class="btn gold" data-a="blitz">Blitz</button><button class="btn sm" data-a="cancel">✕</button>`;
         return;
       }
@@ -835,14 +944,17 @@ export class App {
       const ally = allied(v, this.me!, v.owner[to]);
       const tm = terrainMods(v, from, to);
       const terr = [tm.atk ? `⛰ your high ground +${tm.atk}` : '', tm.def ? `🌲 their forest cover +${tm.def}` : ''].filter(Boolean).join(' · ');
+      const bp = winChance(attackFight(v, this.me!, from, to));
+      const sp = canStd ? winChance(standardFight(v, this.me!, from, to, commit)) : 0;
       bar.innerHTML = `
         <span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>${esc(T[to].name)}</b> (${v.armies[to]}${defStd >= 0 && v.standards[defStd].guard ? ` +${v.standards[defStd].guard} honor guard` : ''})</span>
+        <span class="odds big ${oddsClass(bp)}" title="Chance to take it if you blitz with everything but one">Blitz wins: ${pct(bp)}</span>
         ${terr ? `<span class="terr-chip">${terr}</span>` : ''}
         ${ally ? '<span class="warn">⚠ Your ally. This shatters the alliance.</span>' : ''}
         ${diceSeg}
         <button class="btn primary" data-a="roll" ${v.armies[from] < 2 ? 'disabled' : ''}>Roll</button>
         <button class="btn primary" data-a="blitz" ${v.armies[from] < 2 ? 'disabled' : ''}>Blitz</button>
-        ${canStd ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3</label>
+        ${canStd ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3 <span class="odds ${oddsClass(sp)}" id="stdOdds" title="Chance the charge wins, before your General's war cry">≥${pct(sp)}</span></label>
           <button class="btn gold" data-a="std">⚑ Raise the Standard</button>` : ''}
         <button class="btn sm" data-a="retarget" title="Pick another target">↺</button>
         <button class="btn sm" data-a="cancel">✕</button>`;
@@ -1174,9 +1286,24 @@ export class App {
       <h2>Menu</h2>
       ${online ? `<p class="fine">War code <b style="color:var(--gold);letter-spacing:.2em">${s.code}</b>. Reopen the link to rejoin anytime.</p><button class="btn" data-a="copy" data-link="${esc(link)}" style="width:100%;margin-bottom:8px">Copy invite link</button>` : ''}
       <button class="btn" data-a="close" style="width:100%;margin-bottom:8px">Resume</button>
+      <button class="btn" data-a="settings" style="width:100%;margin-bottom:8px">⚙ Settings</button>
       ${this.v.phase !== 'over' && this.me != null && this.v.players[this.me].alive ? '<button class="btn" data-a="concede" style="width:100%;margin-bottom:8px">Concede (your House goes neutral)</button>' : ''}
       <button class="btn primary" data-a="title" style="width:100%">Quit to title</button>
     </div></div>`, 'info-menu');
+  }
+
+  /** This device's preferences: the camera following the action, and the sound of your turn. */
+  private modalSettings() {
+    const row = (k: string, on: boolean, title: string, note: string) => `<div class="set-row inline pref"><div><div class="set-k">${title}</div><div class="set-note">${note}</div></div>
+      <div class="seg"><button data-a="pref" data-k="${k}" data-v="1" class="${on ? 'on' : ''}">On</button><button data-a="pref" data-k="${k}" data-v="0" class="${!on ? 'on' : ''}">Off</button></div></div>`;
+    this.modal(`<div class="modal"><div class="box" style="max-width:520px">
+      <h2>⚙ Settings</h2>
+      <div class="settings">
+        ${row('follow', this.prefs.follow, 'Follow the action', 'The camera glides to every attack, march and card as rivals and the AI move.')}
+        ${row('sound', this.prefs.sound, 'Turn chime', 'A clash of swords when your turn begins.')}
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px"><button class="btn sm" data-a="pref-test">Hear the chime</button><button class="btn primary" data-a="close">Done</button></div>
+    </div></div>`, 'info-settings', true);
   }
 
   /** Alliances: who you're sworn to, quiet invitations, and the Siege on Olympus. */
@@ -1228,6 +1355,15 @@ export class App {
     const a = b.dataset.a;
     if (a === 'close') { const was = root.dataset.key; this.modal(null); if (was === 'over') root.dataset.key = 'closed-over'; this.render(); return; }
     if (a === 'title') { this.showTitle(); return; }
+    if (a === 'settings') { this.modalSettings(); return; }
+    if (a === 'pref') {
+      const on = b.dataset.v === '1';
+      if (b.dataset.k === 'follow') { this.prefs.follow = on; store.set('ic-follow', on ? '1' : '0'); }
+      if (b.dataset.k === 'sound') { this.prefs.sound = on; store.set('ic-sound', on ? '1' : '0'); if (on) swordClash(); }
+      this.modalSettings();
+      return;
+    }
+    if (a === 'pref-test') { swordClash(); return; }
     if (a === 'copy') { navigator.clipboard?.writeText(b.dataset.link!).then(() => this.toast('Link copied.')); return; }
     if (a === 'concede') { if (confirm('Throw down your sword? Your House goes to the wilds.')) { this.modal(null); await this.send({ type: 'concede' }); } return; }
     if (a === 'ack') { this.modal(null); this.session?.ackHandoff?.(); return; }
@@ -1302,7 +1438,7 @@ export class App {
     if (e.key === 'g' || e.key === 'G') this.toggleFocus();
     if (e.key === 'o' || e.key === 'O') this.cycleOlympus();
     if (e.key === 'Escape') {
-      this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.confirm = null;
+      this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.confirm = null; this.ui.spot = null;
       document.querySelector('.confirm')?.remove();
       this.world.clearArrow(); this.render();
     }
@@ -1319,6 +1455,18 @@ export class App {
       case 'focus': return this.toggleFocus();
       case 'olympus': return this.cycleOlympus();
       case 'diplo': return this.modalDiplo();
+      case 'settings': return this.modalSettings();
+      case 'spot': {
+        const seat = +b.dataset.seat!;
+        u.spot = u.spot === seat ? null : seat;
+        if (u.spot != null) {
+          const land = territoriesOf(v, seat);
+          this.world.follow(land);
+          this.toast(`${v.players[seat].name}: ${land.length} territories lit up. Click again to clear.`);
+        }
+        return this.render();
+      }
+      case 'min-regions': u.regionsMin = !u.regionsMin; return this.render();
       case 'invite': case 'answer': case 'reveal': case 'proposeSiege': case 'vote': return this.diplo(b);
       case 'speed': return this.setSpeed(+b.dataset.n!);
       case 'skip': this.skipping = true; document.querySelector('.showcase [data-a=ack]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })); return;
@@ -1392,7 +1540,15 @@ export class App {
 
   private onHudInput(e: Event) {
     const t = e.target as HTMLInputElement;
-    if (t.dataset.a === 'commit') { this.ui.commit = +t.value; document.getElementById('commitN')!.textContent = t.value; }
+    if (t.dataset.a === 'commit') {
+      this.ui.commit = +t.value;
+      document.getElementById('commitN')!.textContent = t.value;
+      const o = document.getElementById('stdOdds');
+      if (o && this.ui.sel != null && this.ui.target != null) {
+        const p = winChance(standardFight(this.v, this.me!, this.ui.sel, this.ui.target, +t.value));
+        o.textContent = `≥${pct(p)}`; o.className = `odds ${oddsClass(p)}`;
+      }
+    }
     if (t.dataset.a === 'moveN') { this.ui.moveN = +t.value; document.getElementById('moveNv')!.textContent = t.value; }
   }
 
@@ -1507,7 +1663,7 @@ export class App {
     if (touching.length) return attackBlocker(v, me, touching.sort((a, b) => v.armies[b] - v.armies[a])[0], t) ?? 'You cannot attack it right now.';
     const crossing = territoriesOf(v, me).find((x) => g.territories[x].quadrant !== g.territories[t].quadrant && g.dist[x][t] <= 2);
     return crossing != null
-      ? `${this.tname(t)} doesn't border your land. It's across the chasm; the chasms can only be crossed on the land bridges.`
+      ? `${this.tname(t)} doesn't border your land. It's across the water: cross on a land bridge, or sail from a ⚓ port.`
       : `${this.tname(t)} doesn't border any of your land. Attack a territory that touches yours.`;
   }
 
@@ -1539,11 +1695,31 @@ export class App {
         <div class="tm">${td.biome === 'keep' ? `Keep of House ${HOUSES[td.house].name}` : td.biome} · House ${HOUSES[td.house].name} · ${QUADRANTS[td.quadrant].name}${td.foot ? ' · Foot of Olympus' : ''}</div>
         <div>${o >= 0 ? `<b style="color:${HOUSES[v.players[o].house].color}">${esc(v.players[o].name)}</b>${ally ? ' <span class="ally-tag">ally</span>' : ''}` : '<span class="tm">Neutral garrison</span>'} · <b>${v.armies[t]}</b> armies${v.phase === 'draft' && v.ts.placed[t] ? ` <span class="plus">(+${v.ts.placed[t]} this Draft)</span>` : ''}</div>
         ${std >= 0 ? `<div style="color:var(--gold)">⚑ Standard of House ${HOUSES[std].name}${v.standards[std].guard ? ` · <b>${v.armies[t]} + ${v.standards[std].guard}</b> honor guard` : ''}</div>` : ''}
-        ${td.terrain !== 'open' ? `<div class="tt-terr">${TERRAIN_INFO[td.terrain].icon} <b>${TERRAIN_INFO[td.terrain].name}.</b> ${TERRAIN_INFO[td.terrain].text}</div>` : ''}`;
+        ${td.terrain !== 'open' ? `<div class="tt-terr">${TERRAIN_INFO[td.terrain].icon} <b>${TERRAIN_INFO[td.terrain].name}.</b> ${TERRAIN_INFO[td.terrain].text}</div>` : ''}
+        ${this.regionTip(t)}
+        ${td.port >= 0 ? `<div class="tt-terr">⚓ <b>Port.</b> Its sea lane borders ${esc(this.g.territories[td.port].name)} across the water.</div>` : ''}
+        ${this.oddsTip(t)}`;
     }
     this.tip.style.left = `${Math.min(x + 16, window.innerWidth - 270)}px`;
     this.tip.style.top = `${y + 14}px`;
     this.tip.classList.remove('hidden');
+  }
+
+  private regionTip(t: number) {
+    const v = this.v, g = this.g, r = g.regions[g.territories[t].region];
+    if (!r) return '';
+    const mine = this.me != null ? r.terr.filter((x) => v.owner[x] === this.me).length : 0;
+    return `<div class="tt-region">⬡ <b>${esc(r.name)}</b> <span class="rg-b">+${r.bonus}</span>${this.me != null ? ` · you hold ${mine}/${r.terr.length}` : ` · ${r.terr.length} territories`}</div>`;
+  }
+
+  /** In your attack, hovering a target shows your blitz odds from the selected (or best) territory. */
+  private oddsTip(t: number) {
+    const v = this.v, me = this.me;
+    if (!this.myTurn() || v.phase !== 'attack' || me == null || v.owner[t] === me) return '';
+    const from = this.ui.sel != null && !attackBlocker(v, me, this.ui.sel, t) ? this.ui.sel : this.bestSource(t);
+    if (from == null) return '';
+    const p = winChance(attackFight(v, me, from, t));
+    return `<div class="tt-odds">⚔ From ${esc(this.tname(from))} (${v.armies[from]}): <span class="odds ${oddsClass(p)}">${pct(p)}</span> to take it</div>`;
   }
 
   // =========================================================================
@@ -1557,6 +1733,7 @@ export class App {
     // After a jump (a skipped replay), only the last couple of battles are worth rolling dice for.
     const battles = fresh.filter((e) => e.k === 'battle' || e.k === 'stdBattle' || e.k === 'assault').slice(-2);
     const lastTurn = [...fresh].reverse().find((e) => e.k === 'turn');
+    this.regionWhisper(v, fresh);
     for (const e of fresh) {
       if (battles.includes(e)) this.animateBattle(v, e);
       if (e.k === 'turn' && e.seat === this.me && this.session?.mode === 'online') this.flashTitle();

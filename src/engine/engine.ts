@@ -1,7 +1,7 @@
 // The rules engine. `act()` validates and applies one action to a GameState in place.
 // Deterministic given the injected rng/now, so the server and local mode share it verbatim.
 
-import { HOUSES, MAX_PLAYERS, MIN_PLAYERS, QUADRANTS, isRough, layoutFor, mapGeo, type Geo } from './data.ts';
+import { HOUSES, MAX_PLAYERS, MIN_PLAYERS, isRough, layoutFor, mapGeo, type Geo } from './data.ts';
 import { CARD, CHARACTER_IDS, ALL_CARD_IDS, OLYMPUS_POWER, isSiegeCard, type CardDef, type PassiveKind } from './cards.ts';
 
 export const NEUTRAL = -1;
@@ -46,11 +46,20 @@ export interface WarSettings {
   troops: number;
   alliances: boolean;
   siege: boolean;
+  /** Seconds each player gets per turn (0: no timer). See TURN_TIMERS. */
+  timer: number;
 }
-export const DEFAULT_SETTINGS: WarSettings = { size: 0, troops: 0, alliances: true, siege: true };
+export const TURN_TIMERS = [0, 60, 90, 120];
+export const DEFAULT_SETTINGS: WarSettings = { size: 0, troops: 0, alliances: true, siege: true, timer: 0 };
 export const TROOP_LEVELS: Record<string, number> = { '-2': 0.6, '-1': 0.8, '0': 1, '1': 1.3, '2': 1.6 };
 /** The settings a war is actually fought with. */
-export interface GameOpts { layout: number; troops: number; alliances: boolean; siege: boolean }
+export interface GameOpts {
+  layout: number; troops: number; alliances: boolean; siege: boolean;
+  /** Rolls this war's land bridges and ports (missing on wars from before ports). */
+  seed?: number;
+  /** Seconds per turn, 0 for none. */
+  timer?: number;
+}
 
 /** Recommended starting armies, spread over a player's starting core. */
 export const recommendedTroops = (layout: number) => 20 + 2 * layout;
@@ -59,11 +68,12 @@ export function resolveSettings(n: number, ws: Partial<WarSettings> = {}): GameO
   const w = { ...DEFAULT_SETTINGS, ...ws };
   const layout = layoutFor(n, w.size);
   const level = TROOP_LEVELS[String(Math.max(-2, Math.min(2, Math.round(w.troops || 0))))] ?? 1;
-  return { layout, troops: Math.round(recommendedTroops(layout) * level), alliances: w.alliances !== false, siege: w.alliances !== false && w.siege !== false };
+  const timer = TURN_TIMERS.includes(+w.timer) ? +w.timer : 0;
+  return { layout, troops: Math.round(recommendedTroops(layout) * level), alliances: w.alliances !== false, siege: w.alliances !== false && w.siege !== false, timer };
 }
 export function cleanSettings(x: any): WarSettings {
   const num = (v: any) => (Number.isFinite(+v) ? Math.max(-2, Math.min(2, Math.round(+v))) : 0);
-  return { size: num(x?.size), troops: num(x?.troops), alliances: x?.alliances !== false, siege: x?.siege !== false };
+  return { size: num(x?.size), troops: num(x?.troops), alliances: x?.alliances !== false, siege: x?.siege !== false, timer: TURN_TIMERS.includes(+x?.timer) ? +x.timer : 0 };
 }
 
 export type Phase = 'passage' | 'draft' | 'attack' | 'fortify' | 'over';
@@ -150,6 +160,8 @@ export interface GameState {
   vote: SiegeVote | null;
   siege: Siege | null;
   siegeCooldown: number;
+  /** When the current turn's timer runs out (ms since epoch), or null with no timer. */
+  deadline?: number | null;
   handCounts: number[];
   deckCount: number;
   priv: Private | null;
@@ -169,6 +181,8 @@ export type Action =
   | { type: 'assault'; from: number; dice?: number; blitz?: boolean }
   | { type: 'react'; card: string | null }
   | { type: 'timeout' }
+  /** Anyone may call time on a turn whose timer has run out. */
+  | { type: 'turnTimeout' }
   | { type: 'move'; n: number }
   | { type: 'endAttack' }
   | { type: 'fortify'; from: number; to: number; n: number }
@@ -193,7 +207,7 @@ let NOW = 0;
 // ---------------------------------------------------------------------------
 // helpers
 
-export const geo = (s: GameState): Geo => mapGeo(s.opts?.layout ?? layoutFor(s.players.length));
+export const geo = (s: GameState): Geo => mapGeo(s.opts?.layout ?? layoutFor(s.players.length), s.opts?.seed);
 
 /** Wars saved before settings and replays existed get the old defaults. */
 export function norm(s: GameState): GameState {
@@ -302,7 +316,7 @@ export function attackBlocker(s: GameState, seat: number, from: number, to: numb
   if (s.owner[from] !== seat) return `You do not hold ${T[from].name}.`;
   if (s.owner[to] === seat) return 'You cannot attack yourself, gorydamn idiot.';
   if (!attackTargets(s, seat, from).includes(to)) {
-    if (T[from].quadrant !== T[to].quadrant) return `${T[to].name} is across the chasm from ${T[from].name}. The chasms can only be crossed on the land bridges.`;
+    if (T[from].quadrant !== T[to].quadrant) return `${T[to].name} is across the water from ${T[from].name}. Cross on a land bridge, or sail from a ⚓ port.`;
     return `${T[to].name} doesn't border ${T[from].name}. Only territories that touch it can be attacked.`;
   }
   if (s.armies[from] < 2) return `${T[from].name} has only 1 army. You need 2+ to attack, because one always stays behind.`;
@@ -355,13 +369,12 @@ export function reinforcementBreakdown(s: GameState, seat: number) {
   const g = geo(s);
   const owned = territoriesOf(s, seat);
   const base = Math.max(3, Math.floor(owned.length / 3));
-  const quads = QUADRANTS.map((q, i) => ({ i, name: q.name, bonus: g.quadBonus[i] }))
-    .filter((q) => g.territories.every((t) => t.quadrant !== q.i || s.owner[t.id] === seat));
+  const regions = g.regions.filter((r) => r.terr.every((t) => s.owner[t] === seat)).map((r) => ({ i: r.id, name: r.name, bonus: r.bonus }));
   const keeps = owned.filter((t) => g.territories[t].isKeep).length;
   const keepBonus = (keeps * (keeps + 3)) / 2;
   const general = passive(s, seat, 'draft') + passive(s, seat, 'perHouse') * housesOwned(s, seat).length;
-  const total = base + quads.reduce((a, q) => a + q.bonus, 0) + keepBonus + general;
-  return { territories: owned.length, base, quads, keeps, keepBonus, general, total };
+  const total = base + regions.reduce((a, q) => a + q.bonus, 0) + keepBonus + general;
+  return { territories: owned.length, base, regions, keeps, keepBonus, general, total };
 }
 
 const hand = (s: GameState, seat: number) => s.priv!.hands[seat];
@@ -423,8 +436,8 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
   R = rng;
   const n = names.length;
   if (n < MIN_PLAYERS || n > MAX_PLAYERS) throw new Error(`${MIN_PLAYERS} to ${MAX_PLAYERS} players`);
-  const o = resolveSettings(n, opts.settings);
-  const g = mapGeo(o.layout);
+  const o: GameOpts = { ...resolveSettings(n, opts.settings), seed: 1 + Math.floor(rng() * 2 ** 30) };
+  const g = mapGeo(o.layout, o.seed);
   const houses = shuffle(spreadHouses(g, n));
   const players: Player[] = names.map((name, seat) => ({
     seat, name: name.slice(0, 24) || `Gold ${seat + 1}`, house: houses[seat], general: null, alive: true, dominatedBy: null, ai: opts.ai?.[seat] || undefined,
@@ -516,6 +529,7 @@ function startTurn(s: GameState, seat: number) {
     const borders = territoriesOf(s, seat).filter((t) => g.adj[t].some((n) => s.owner[n] !== seat));
     if (borders.length) { const t = borders[Math.floor(R() * borders.length)]; s.armies[t] += bp; extras.push(`+${bp} on ${g.territories[t].name}`); }
   }
+  s.deadline = s.opts.timer ? NOW + s.opts.timer * 1000 : null;
   log(s, { k: 'turn', seat, turn: s.turn, reinf: rb.total, extras });
 }
 
@@ -709,6 +723,8 @@ function standardAttack(s: GameState, seat: number, from: number, to: number, co
   onHostility(s, seat, def);
   if (def >= 0 && counterCards(s, def).length) {
     s.reaction = { defender: def, deadline: NOW + REACTION_MS, from, to, commit };
+    // The attacker's clock waits while the defender decides.
+    if (s.deadline) s.deadline += REACTION_MS;
     log(s, { k: 'stdRaised', seat, from, to, commit, def, pending: true });
     return;
   }
@@ -1025,6 +1041,11 @@ export function act(s: GameState, seat: number, a: Action, ctx: Ctx): Result {
   const owner0 = s.owner.slice(), armies0 = s.armies.slice(), std0 = s.standards.map((x) => x.at + (x.captured ? 'c' : ''));
   try {
     apply(s, seat, a);
+    // Announce every bonus region that just fell wholly into one House's hands.
+    for (const r of geo(s).regions) {
+      const o = s.owner[r.terr[0]];
+      if (o >= 0 && r.terr.every((t) => s.owner[t] === o) && !r.terr.every((t) => owner0[t] === o)) log(s, { k: 'region', seat: o, region: r.id, bonus: r.bonus });
+    }
     s.version++;
     sync(s);
     const d: number[] = [];
@@ -1146,6 +1167,7 @@ function apply(s: GameState, seat: number, a: Action) {
     fail('Waiting on the defender to react.');
   }
 
+  if (a.type === 'turnTimeout') return turnTimeout(s);
   if (seat !== s.cur) fail('It is not your turn.');
   const ts = s.ts;
   const me = s.players[seat];
@@ -1266,6 +1288,23 @@ function apply(s: GameState, seat: number, a: Action) {
     case 'react': case 'timeout': fail('No Standard attack is pending.');
   }
   fail('Unknown action.');
+}
+
+/** The turn timer ran out: finish the Draft for them (spread over the frontier), march into any conquest, and pass the turn. */
+function turnTimeout(s: GameState) {
+  if (!s.deadline || NOW < s.deadline) fail('There is still time on the clock.');
+  const seat = s.cur, ts = s.ts, g = geo(s);
+  let placed = 0;
+  if (s.phase === 'draft' && ts.reinforcements > 0) {
+    const mine = territoriesOf(s, seat);
+    const front = mine.filter((t) => g.adj[t].some((n) => s.owner[n] !== seat));
+    const pool = (front.length ? front : mine).sort((a, b) => s.armies[b] - s.armies[a]);
+    for (let i = 0; ts.reinforcements > 0 && pool.length; i++, ts.reinforcements--, placed++) s.armies[pool[i % pool.length]]++;
+  }
+  if (ts.mustMove) { const mm = ts.mustMove; s.armies[mm.from] -= mm.max; s.armies[mm.to] += mm.max; ts.mustMove = null; }
+  if (ts.conquered > 0) { const c = drawCard(s, seat, false); if (c) log(s, { k: 'earned', seat }); }
+  log(s, { k: 'timeUp', seat, placed });
+  advance(s);
 }
 
 // ---------------------------------------------------------------------------

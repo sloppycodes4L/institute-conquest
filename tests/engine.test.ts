@@ -3,7 +3,7 @@ import { geoFor, mapGeo, HOUSES, LAYOUTS, MAX_PLAYERS, MIN_PLAYERS, isRough } fr
 import { CARDS } from '../src/engine/cards.ts';
 import {
   act, actingSeat, aiDuty, allianceOf, attackTargets, BALANCE, createGame, geo, olympusPreview, passive, reinforcementBreakdown, viewFor,
-  type GameState, type Action, NEUTRAL, clone, attackBlocker, fortifyRoute, resolveSettings, spreadHouses, TRAIL_MAX,
+  type GameState, type Action, NEUTRAL, clone, attackBlocker, fortifyRoute, resolveSettings, spreadHouses, TRAIL_MAX, territoriesOf,
 } from '../src/engine/engine.ts';
 import { botAction } from '../src/engine/bot.ts';
 
@@ -25,10 +25,10 @@ function passage(s: GameState, rng: () => number) {
 }
 
 describe('map', () => {
-  for (let L = 0; L < LAYOUTS.length; L++) {
-    const g = mapGeo(L);
+  for (let L = 0; L < LAYOUTS.length; L++) for (const seed of [undefined, 1, 7, 12345]) {
+    const g = mapGeo(L, seed);
     const T = g.territories;
-    const n = `Layout ${L}`;
+    const n = `Layout ${L} seed ${seed ?? 'legacy'}`;
     it(`${n}: ${g.nt} connected territories with sane sizes`, () => {
       expect(g.nt).toBe(7 * g.perHouse);
       for (let t = 0; t < g.nt; t++) {
@@ -43,11 +43,37 @@ describe('map', () => {
         for (const t of T) if (t.house !== k.house) expect(g.dist[k.id][t.id], `${k.name} → ${t.name}`).toBeGreaterThanOrEqual(3);
       }
     });
-    it(`${n}: the Frostfangs have exactly two gateways`, () => {
-      const gates = T.filter((t) => t.quadrant === 2 && g.adj[t.id].some((x) => T[x].quadrant !== 2));
-      expect(gates.length).toBe(2);
+    it(`${n}: land bridges join every quadrant to its neighbours, and ports cross the water`, () => {
+      const landLinked = (a: number, b: number) => T.some((t) => t.quadrant === a && g.adj[t.id].some((x) => T[x].quadrant === b && t.port !== x));
+      for (const [a, b] of [[0, 1], [1, 2], [2, 3], [3, 0]]) expect(landLinked(a, b), `${a}-${b}`).toBe(true);
+      if (seed == null) { expect(g.ports).toHaveLength(0); return; }
+      expect(g.ports.length).toBe(3);
+      for (const [a, b] of g.ports) {
+        expect(T[a].quadrant).not.toBe(T[b].quadrant);
+        expect(T[a].port).toBe(b);
+        expect(g.adj[a]).toContain(b);
+      }
+      const far = g.ports.map(([a, b]) => [T[a].quadrant, T[b].quadrant].sort().join());
+      expect(far).toContain('0,2');
+      expect(far).toContain('1,3');
+    });
+    it(`${n}: every territory is in exactly one bonus region`, () => {
+      const seen = g.regions.flatMap((r) => r.terr);
+      expect(new Set(seen).size).toBe(g.nt);
+      expect(seen.length).toBe(g.nt);
+      for (const r of g.regions) {
+        expect(r.bonus).toBeGreaterThanOrEqual(1);
+        expect(r.terr.length).toBeLessThanOrEqual(7);
+        for (const t of r.terr) expect(T[t].region).toBe(r.id);
+      }
+      expect(g.regions.length).toBeGreaterThanOrEqual(21);
     });
   }
+  it('every war rolls its own crossings, and the same seed rebuilds the same map', () => {
+    expect(mapGeo(3, 5)).toBe(mapGeo(3, 5));
+    const shapes = new Set([1, 2, 3, 4, 5, 6].map((sd) => JSON.stringify(mapGeo(3, sd).ports)));
+    expect(shapes.size).toBeGreaterThan(3);
+  });
   it('grows with the player count, and the size setting nudges it', () => {
     expect(geoFor(4).nt).toBeGreaterThanOrEqual(84);
     for (let n = MIN_PLAYERS; n < MAX_PLAYERS; n++) expect(geoFor(n + 1).nt).toBeGreaterThan(geoFor(n).nt);
@@ -117,6 +143,57 @@ describe('setup', () => {
     expect(s.killed.length).toBe(3);
     expect(s.players.every((p) => p.general)).toBe(true);
     expect(s.ts.reinforcements).toBe(reinforcementBreakdown(s, s.cur).total);
+  });
+  it('rolls a map seed for every war', () => {
+    const a = createGame(['A', 'B'], mulberry(1)), b = createGame(['A', 'B'], mulberry(2));
+    expect(a.opts.seed).toBeGreaterThan(0);
+    expect(a.opts.seed).not.toBe(b.opts.seed);
+    expect(geo(a).seed).toBe(a.opts.seed);
+  });
+});
+
+describe('regions', () => {
+  it('holding a whole region pays its bonus, and taking it is announced', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const r = g.regions.find((x) => x.terr.some((t) => s.owner[t] !== seat) && x.terr.some((t) => s.owner[t] === seat))!;
+    const missing = r.terr.filter((t) => s.owner[t] !== seat);
+    for (const t of missing.slice(1)) s.owner[t] = seat;
+    const to = missing[0];
+    const from = r.terr.find((t) => t !== to && g.adj[t].includes(to)) ?? beside(s, seat, to);
+    s.owner[from] = seat; s.armies[from] = 200; s.armies[to] = 1; s.owner[to] = NEUTRAL;
+    const before = reinforcementBreakdown(s, seat).total;
+    expect(act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng)).ok).toBe(true);
+    expect(s.owner[to]).toBe(seat);
+    const rb = reinforcementBreakdown(s, seat);
+    expect(rb.regions.map((x) => x.i)).toContain(r.id);
+    expect(rb.total).toBeGreaterThanOrEqual(before + r.bonus - 1);
+    expect(s.log.some((e) => e.k === 'region' && e.region === r.id && e.seat === seat)).toBe(true);
+  });
+});
+
+describe('turn timer', () => {
+  it('passes the turn when time runs out, placing leftover armies on the front', () => {
+    const rng = mulberry(44);
+    const s = createGame(['A', 'B'], rng, { settings: { timer: 60 } });
+    expect(s.opts.timer).toBe(60);
+    for (const p of s.players) act(s, p.seat, { type: 'choose', card: s.priv!.passage[p.seat]![0] }, ctx(rng, 1000));
+    const seat = s.cur, other = s.players.find((p) => p.seat !== seat)!.seat;
+    expect(s.deadline).toBe(1000 + 60000);
+    const left = s.ts.reinforcements;
+    const armies = territoriesOf(s, seat).reduce((a, t) => a + s.armies[t], 0);
+    expect(act(s, other, { type: 'turnTimeout' }, ctx(rng, 30000)).ok).toBe(false);
+    expect(act(s, other, { type: 'turnTimeout' }, ctx(rng, 61001))).toEqual({ ok: true });
+    expect(s.cur).toBe(other);
+    expect(territoriesOf(s, seat).reduce((a, t) => a + s.armies[t], 0)).toBe(armies + left);
+    expect(s.log.some((e) => e.k === 'timeUp' && e.seat === seat && e.placed === left)).toBe(true);
+    expect(s.deadline).toBe(61001 + 60000);
+  });
+  it('is off by default', () => {
+    const rng = mulberry(45);
+    const s = createGame(['A', 'B'], rng);
+    passage(s, rng);
+    expect(s.deadline).toBeNull();
+    expect(act(s, s.cur, { type: 'turnTimeout' }, ctx(rng, 1e12)).ok).toBe(false);
   });
 });
 
@@ -485,7 +562,7 @@ describe('attack reasons', () => {
     s.armies[mine] = 5;
     expect(attackBlocker(s, seat, mine, next)).toBeNull();
     const far = s.owner.findIndex((o, t) => o !== seat && g.dist[mine][t] > 3);
-    expect(attackBlocker(s, seat, mine, far)).toMatch(/doesn't border|across the chasm/);
+    expect(attackBlocker(s, seat, mine, far)).toMatch(/doesn't border|across the water/);
   });
 });
 
