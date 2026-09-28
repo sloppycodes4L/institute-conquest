@@ -67,6 +67,10 @@ export class World {
   private decor: Decor[] = [];
   private castles: { t: number; mats: THREE.MeshStandardMaterial[]; base: THREE.Color[] }[] = [];
   private tokens: { group: THREE.Group; base: THREE.Mesh; sprite: THREE.Sprite; key: string }[] = [];
+  private labels: THREE.Sprite[] = [];
+  private labelAlpha = -1;
+  private castleMeshes: THREE.Mesh[] = [];
+  private flashes = new Map<number, { color: THREE.Color; t0: number; dur: number }>();
   private flags: { group: THREE.Group; cloth: THREE.Mesh; base: Float32Array; house: number }[] = [];
   private olympus!: THREE.Group;
   private olyMeshes: THREE.Mesh[] = [];
@@ -137,6 +141,7 @@ export class World {
     this.map.clear();
     this.meshes = []; this.mats = []; this.desat = []; this.borderMats = []; this.decor = []; this.castles = [];
     this.tokens = []; this.flags = []; this.olyMeshes = []; this.olyToken = null; this.olyKey = '';
+    this.labels = []; this.labelAlpha = -1; this.castleMeshes = []; this.flashes.clear();
     this.topH = new Array(geo.nt).fill(1);
     this.clearArrow();
     this.clearFan();
@@ -159,6 +164,7 @@ export class World {
     this.buildCastles();
     this.buildOlympus();
     this.buildTokens();
+    this.buildLabels();
     this.buildFlags();
     this.setOlympusMode(this.olyMode);
     this.resize();
@@ -427,6 +433,8 @@ export class World {
       g.position.copy(w2v(x - 1.6, y + 1.2, this.topH[t]));
       g.scale.setScalar(0.62);
       g.rotation.y = rnd(h, 9) * 2;
+      // Clicking the castle picks its Keep, not whatever terrain is behind it.
+      g.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.userData.t = t; this.castleMeshes.push(o as THREE.Mesh); } });
       this.map.add(g);
       this.castles.push({ t, mats: [stone, roof], base: [stone.color.clone(), roof.color.clone()] });
     }
@@ -487,11 +495,59 @@ export class World {
       sprite.scale.set(2.8, 1.4, 1);
       sprite.position.y = 1.5;
       sprite.renderOrder = 10;
+      sprite.userData.t = t;
       group.add(sprite);
       group.position.copy(w2v(x, y, this.topH[t] + 0.02));
       group.visible = false;
       this.map.add(group);
       this.tokens.push({ group, base, sprite, key: '' });
+    }
+  }
+
+  /** Territory names under the tokens. They fade in as you zoom toward the valley. */
+  private buildLabels() {
+    const T = this.geo.territories;
+    for (let t = 0; t < this.geo.nt; t++) {
+      const c = document.createElement('canvas');
+      const g = c.getContext('2d')!;
+      const icon = { mountain: '⛰ ', forest: '🌲 ', water: '🌊 ', marsh: '🌾 ', keep: '♜ ', open: '' }[T[t].terrain];
+      const text = icon + T[t].name;
+      const font = '600 34px "Barlow Condensed", "Arial Narrow", sans-serif';
+      g.font = font;
+      const w = Math.ceil(g.measureText(text).width) + 28;
+      c.width = w; c.height = 50;
+      g.font = font;
+      g.fillStyle = 'rgba(10,6,5,0.72)';
+      g.beginPath(); g.roundRect(2, 4, w - 4, 42, 12); g.fill();
+      g.fillStyle = '#f5ead8';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, w / 2, 26);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, opacity: 0 }));
+      const hgt = 0.62;
+      sprite.scale.set((hgt * w) / 50, hgt, 1);
+      const [x, y] = this.geo.centroid[t];
+      sprite.position.copy(w2v(x, y - 1.05, this.topH[t] + 0.5));
+      sprite.renderOrder = 9;
+      sprite.visible = false;
+      this.map.add(sprite);
+      this.labels.push(sprite);
+    }
+  }
+
+  private updateLabels() {
+    const d = this.camera.position.distanceTo(this.controls.target);
+    const fit = this.controls.maxDistance / 1.25;
+    // Fully shown when zoomed to about 40% of the whole-valley view, gone by 60%.
+    const a = Math.max(0, Math.min(1, (fit * 0.6 - d) / (fit * 0.2)));
+    if (Math.abs(a - this.labelAlpha) < 0.01) return;
+    this.labelAlpha = a;
+    for (let t = 0; t < this.labels.length; t++) {
+      const l = this.labels[t];
+      l.visible = a > 0;
+      const dull = this.focusSeat != null && !!this.lastState && this.lastState.owner[t] !== this.focusSeat;
+      (l.material as THREE.SpriteMaterial).opacity = a * (dull ? 0.45 : 1);
     }
   }
 
@@ -559,22 +615,34 @@ export class World {
   // -------------------------------------------------------------------------
   // state → visuals
 
-  private tokenTexture(n: number, color: string, std: boolean, placed: number) {
+  /** An army token: count, ⚑ if a Standard stands here (with its honor guard as a gold "+5"), and a green "+n" for this Draft. */
+  private tokenTexture(n: number, color: string, std: boolean, placed: number, guard: number) {
+    const W = guard ? 256 : 192;
     const c = document.createElement('canvas');
-    c.width = 192; c.height = 96;
+    c.width = W; c.height = 96;
     const g = c.getContext('2d')!;
     g.fillStyle = 'rgba(12,8,8,0.82)';
     g.strokeStyle = color; g.lineWidth = 8;
     g.beginPath();
-    g.roundRect(8, 8, 176, 80, 26);
+    g.roundRect(8, 8, W - 16, 80, 26);
     g.fill(); g.stroke();
-    g.fillStyle = '#fff';
-    const shift = placed ? -18 : 0;
-    g.font = `bold ${n >= 100 ? 50 : 58}px "Barlow Condensed", "Arial Narrow", sans-serif`;
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(String(n), (std ? 108 : 96) + shift, 52);
-    if (std) { g.fillStyle = '#f3d27a'; g.font = 'bold 44px serif'; g.fillText('⚑', 44, 52); }
-    if (placed) { g.fillStyle = '#7dff9a'; g.font = 'bold 38px "Barlow Condensed", sans-serif'; g.fillText(`+${placed}`, 150, 54); }
+    g.textBaseline = 'middle';
+    const num = `bold ${n >= 100 ? 50 : 58}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+    const small = 'bold 38px "Barlow Condensed", sans-serif';
+    // Lay the pieces out left to right, centered.
+    const parts: { text: string; font: string; color: string; gap: number }[] = [];
+    if (std) parts.push({ text: '⚑', font: 'bold 44px serif', color: '#f3d27a', gap: 4 });
+    parts.push({ text: String(n), font: num, color: '#fff', gap: 4 });
+    if (guard) parts.push({ text: `+${guard}`, font: small, color: '#f3d27a', gap: 6 });
+    if (placed) parts.push({ text: `+${placed}`, font: small, color: '#7dff9a', gap: 6 });
+    const widths = parts.map((p) => { g.font = p.font; return g.measureText(p.text).width; });
+    let x = W / 2 - (widths.reduce((a, b) => a + b, 0) + parts.slice(1).reduce((a, p) => a + p.gap, 0)) / 2;
+    parts.forEach((p, i) => {
+      if (i) x += p.gap;
+      g.font = p.font; g.fillStyle = p.color; g.textAlign = 'left';
+      g.fillText(p.text, x, p.font === num ? 52 : 54);
+      x += widths[i];
+    });
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
@@ -622,15 +690,18 @@ export class World {
       this.mats[t].color.copy(tint);
       this.borderMats[t].color.set(col);
       this.borderMats[t].linewidth = s.owner[t] >= 0 ? 2.6 : 1.4;
-      const hasStd = s.standards.some((st) => !st.captured && st.at === t);
+      const std = s.standards.find((st) => !st.captured && st.at === t);
+      const hasStd = !!std;
+      const guard = std?.guard ?? 0;
       const placed = s.phase === 'draft' ? s.ts.placed[t] ?? 0 : 0;
-      const key = `${s.armies[t]}|${col}|${hasStd}|${placed}`;
+      const key = `${s.armies[t]}|${col}|${hasStd}|${placed}|${guard}`;
       const tok = this.tokens[t];
       tok.group.visible = true;
       if (tok.key !== key) {
         (tok.sprite.material as THREE.SpriteMaterial).map?.dispose();
-        (tok.sprite.material as THREE.SpriteMaterial).map = this.tokenTexture(s.armies[t], col, hasStd, placed);
+        (tok.sprite.material as THREE.SpriteMaterial).map = this.tokenTexture(s.armies[t], col, hasStd, placed, guard);
         (tok.sprite.material as THREE.SpriteMaterial).needsUpdate = true;
+        tok.sprite.scale.set(guard ? 3.73 : 2.8, 1.4, 1);
         (tok.base.material as THREE.MeshStandardMaterial).color.set(col);
         tok.key = key;
       }
@@ -766,6 +837,55 @@ export class World {
     this.arrowObj = this.arc(from, to, color, 0.16, 0.9);
     this.scene.add(this.arrowObj);
   }
+
+  /**
+   * A fortify march along `path`: a solid line up to where the troops stop, and a faint one for the rest of
+   * the way when rough ground halts them early.
+   */
+  route(path: number[], stop: number, color = '#3bd16f') {
+    this.clearArrow();
+    if (path.length < 2) return;
+    const k0 = Math.max(1, path.indexOf(stop));
+    // Arch over each step (like the attack arrows) so the tokens don't hide the line.
+    const base = path.map((t) => this.anchor(t, 1.1));
+    const pts: THREE.Vector3[] = [base[0]];
+    for (let i = 1; i < base.length; i++) {
+      const mid = base[i - 1].clone().lerp(base[i], 0.5);
+      mid.y += base[i - 1].distanceTo(base[i]) * 0.3 + 1.1;
+      pts.push(mid, base[i]);
+    }
+    const k = k0 * 2;
+    const g = new THREE.Group();
+    const tube = (p: THREE.Vector3[], col: string, r: number, op: number) => {
+      const curve = new THREE.CatmullRomCurve3(p, false, 'centripetal');
+      const m = new THREE.Mesh(new THREE.TubeGeometry(curve as THREE.Curve<THREE.Vector3>, 16 * p.length, r, 6), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthTest: false }));
+      m.renderOrder = 5;
+      g.add(m);
+      return curve;
+    };
+    const walk = tube(pts.slice(0, k + 1), color, 0.15, 0.95);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.05, 10), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthTest: false }));
+    head.position.copy(pts[k]);
+    head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), walk.getTangent(1).normalize());
+    head.renderOrder = 5;
+    g.add(head);
+    if (k < pts.length - 1) {
+      tube(pts.slice(k), '#d9cdb8', 0.07, 0.45);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.75, 1.0, 32), new THREE.MeshBasicMaterial({ color: '#ffb020', transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.copy(this.anchor(stop, 0.35));
+      ring.renderOrder = 6;
+      g.add(ring);
+    }
+    this.arrowObj = g;
+    this.scene.add(g);
+  }
+
+  /** Briefly light territories up (a refused attack flashes red). */
+  flash(ts: number[], color = '#ff2a1a', dur = 1400) {
+    const c = new THREE.Color(color);
+    for (const t of ts) if (t >= 0 && t < this.geo.nt) this.flashes.set(t, { color: c, t0: performance.now(), dur });
+  }
   clearArrow() {
     if (this.arrowObj) { this.scene.remove(this.arrowObj); this.arrowObj = null; }
   }
@@ -842,7 +962,12 @@ export class World {
     const r = this.renderer.domElement.getBoundingClientRect();
     const p = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     this.raycaster.setFromCamera(p, this.camera);
-    const targets: THREE.Object3D[] = this.olyMode === 'hidden' ? this.meshes : [...this.meshes, ...this.olyMeshes];
+    // Army tokens float above the ground and draw on top of everything, so a click on one means its territory,
+    // never the land that happens to be behind it.
+    const toks = this.tokens.filter((x) => x.group.visible).map((x) => x.sprite);
+    const tok = toks.length ? this.raycaster.intersectObjects(toks, false)[0] : undefined;
+    if (tok) return tok.object.userData.t as number;
+    const targets: THREE.Object3D[] = [...this.meshes, ...this.castleMeshes, ...(this.olyMode === 'hidden' ? [] : this.olyMeshes)];
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     return hit ? (hit.object.userData.t as number) : null;
   }
@@ -911,6 +1036,17 @@ export class World {
       if (m.userData.pulse === 1) m.emissiveIntensity = 0.22 + 0.33 * pulse;
       else if (m.userData.pulse === 0.5) m.emissiveIntensity = 0.08 + 0.1 * pulse;
     }
+    if (this.flashes.size) {
+      let ended = false;
+      for (const [t, f] of this.flashes) {
+        const k = (now - f.t0) / f.dur;
+        if (k >= 1) { this.flashes.delete(t); ended = true; continue; }
+        this.mats[t].emissive.copy(f.color);
+        this.mats[t].emissiveIntensity = 0.85 * (1 - k) * (0.6 + 0.4 * Math.abs(Math.sin(k * 9)));
+      }
+      if (ended) this.applyHighlights();
+    }
+    this.updateLabels();
     this.fx = this.fx.filter((f) => {
       const k = (now - f.t0) / f.dur;
       if (k >= 1) { this.scene.remove(f.obj); f.obj.geometry.dispose(); return false; }

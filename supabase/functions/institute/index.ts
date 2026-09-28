@@ -3,7 +3,7 @@
 // then the new version is broadcast on Realtime so clients refetch their private view.
 // The engine lives in ./engine, copied verbatim from src/engine by scripts/sync-fn.mjs.
 
-import { act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameState } from './engine/engine.ts';
+import { act, actingSeat, aiDuty, cleanSettings, createGame, viewFor, type Action, type GameState, type WarSettings } from './engine/engine.ts';
 import { botAction } from './engine/bot.ts';
 import { MAX_PLAYERS } from './engine/data.ts';
 
@@ -17,7 +17,7 @@ const CORS = {
 };
 
 interface LobbySeat { seat: number; name: string; ai?: boolean }
-interface GameRow { id: string; code: string; status: 'lobby' | 'playing' | 'over'; host_seat: number; lobby: LobbySeat[]; state: GameState | null; version: number }
+interface GameRow { id: string; code: string; status: 'lobby' | 'playing' | 'over'; host_seat: number; lobby: LobbySeat[]; opts: Partial<WarSettings> | null; state: GameState | null; version: number }
 
 class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 const bad = (msg: string, status = 400): never => { throw new HttpError(status, msg); };
@@ -84,10 +84,12 @@ function current(g: GameRow) {
   return g;
 }
 
-function payload(g: GameRow, seat: number | null) {
+/** `tv`: the state version the client already has, so it only gets the replay frames it hasn't seen. */
+function payload(g: GameRow, seat: number | null, tv?: unknown) {
+  const view = g.state ? viewFor(g.state, seat) : null;
+  if (view && typeof tv === 'number') view.trail = view.trail.filter((f) => f.v > tv);
   return {
-    id: g.id, code: g.code, status: g.status, hostSeat: g.host_seat, lobby: g.lobby, version: g.version, seat,
-    view: g.state ? viewFor(g.state, seat) : null,
+    id: g.id, code: g.code, status: g.status, hostSeat: g.host_seat, lobby: g.lobby, settings: cleanSettings(g.opts ?? {}), version: g.version, seat, view,
   };
 }
 
@@ -155,13 +157,22 @@ async function handle(body: any) {
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
+    case 'setOpts': {
+      const g = await getGame(`id=eq.${gameId(body.game)}`);
+      const seat = await seatFor(g, body.token);
+      if (seat !== g.host_seat) bad('Only the host sets the rules of the war.', 403);
+      if (g.status !== 'lobby') bad('Too late, the war has started.');
+      if (!(await saveGame(g, g.version, { opts: cleanSettings(body.settings), version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+      await broadcast(g.code, g.version + 1);
+      return payload(await getGame(`id=eq.${g.id}`), seat);
+    }
     case 'start': {
       const g = await getGame(`id=eq.${gameId(body.game)}`);
       const seat = await seatFor(g, body.token);
       if (seat !== g.host_seat) bad('Only the host can start the war.', 403);
       if (g.status !== 'lobby') bad('Already started.');
       if (g.lobby.length < 2) bad('You need at least one rival. Add a human or an AI.');
-      const s = createGame(g.lobby.map((l) => l.name), rng, { ai: g.lobby.map((l) => !!l.ai) });
+      const s = createGame(g.lobby.map((l) => l.name), rng, { ai: g.lobby.map((l) => !!l.ai), settings: cleanSettings(g.opts ?? {}) });
       runBots(s);
       if (!(await saveGame(g, g.version, { status: 'playing', state: s, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
       await broadcast(g.code, g.version + 1);
@@ -171,7 +182,7 @@ async function handle(body: any) {
       const g = current(await getGame(`id=eq.${gameId(body.game)}`));
       const seat = await seatFor(g, body.token);
       if (body.since != null && body.since === g.version) return { unchanged: true, version: g.version };
-      return payload(g, seat);
+      return payload(g, seat, body.tv);
     }
     case 'act': {
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -180,12 +191,12 @@ async function handle(body: any) {
         if (!g.state) bad('Game has not started.');
         const s = g.state!;
         const r = act(s, seat, body.action as Action, { rng, now: Date.now() });
-        if (!r.ok) return { ...payload(g, seat), error: r.err };
+        if (!r.ok) return { ...payload(g, seat, body.tv), error: r.err };
         runBots(s);
         const status = s.phase === 'over' ? 'over' : 'playing';
         if (await saveGame(g, g.version, { state: s, status, version: g.version + 1 })) {
           await broadcast(g.code, g.version + 1);
-          return payload({ ...g, state: s, status, version: g.version + 1 }, seat);
+          return payload({ ...g, state: s, status, version: g.version + 1 }, seat, body.tv);
         }
       }
       bad('The valley is busy. Try again.', 409);

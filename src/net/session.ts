@@ -2,7 +2,7 @@
 // browser, or an online game where the Supabase edge function is the authority.
 
 import { RealtimeClient } from '@supabase/realtime-js';
-import { act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameState } from '../engine/engine.ts';
+import { DEFAULT_SETTINGS, act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameState, type WarSettings } from '../engine/engine.ts';
 import { botAction } from '../engine/bot.ts';
 
 export const SUPABASE_URL = 'https://hflggavblnedfgyjqbsr.supabase.co';
@@ -21,6 +21,13 @@ export interface Session {
   lobby: LobbySeat[];
   code?: string;
   hostSeat?: number;
+  /** A key for this war, to remember per-war things on this device (like having watched the Sorting). */
+  key: string;
+  settings: WarSettings;
+  /** While this returns true, local AI seats wait (the screen is still replaying earlier moves). */
+  hold?: () => boolean;
+  /** Nudge local AI seats after a hold ends. */
+  kick?(): void;
   send(a: Action): Promise<string | null>;
   onUpdate(cb: () => void): void;
   /** Local hot-seat: true when the device must be handed to another human. */
@@ -40,6 +47,9 @@ const secureRng = () => {
 export class LocalSession implements Session {
   mode = 'local' as const;
   status: Session['status'] = 'playing';
+  key = `local-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`;
+  settings: WarSettings;
+  hold?: () => boolean;
   lobby: LobbySeat[];
   view: GameState | null = null;
   seat: number | null = null;
@@ -50,10 +60,11 @@ export class LocalSession implements Session {
   private timer = 0;
   private humans: number;
 
-  constructor(seats: LobbySeat[]) {
+  constructor(seats: LobbySeat[], settings: WarSettings = DEFAULT_SETTINGS) {
     this.lobby = seats;
+    this.settings = settings;
     this.humans = seats.filter((x) => !x.ai).length;
-    this.s = createGame(seats.map((x) => x.name), secureRng, { ai: seats.map((x) => !!x.ai) });
+    this.s = createGame(seats.map((x) => x.name), secureRng, { ai: seats.map((x) => !!x.ai), settings });
     this.refresh();
   }
 
@@ -89,8 +100,10 @@ export class LocalSession implements Session {
     const duty = aiDuty(s);
     const acting = duty >= 0 ? duty : actingSeat(s);
     if (acting < 0 || !s.players[acting].ai) return;
-    const delay = duty >= 0 ? 900 : s.phase === 'attack' ? 650 : s.phase === 'passage' ? 300 : 420;
+    // The screen paces the replay of each move, so the AI only has to wait for it to catch up.
+    const delay = duty >= 0 ? 700 : s.phase === 'passage' ? 250 : 60;
     this.timer = window.setTimeout(() => {
+      if (this.hold?.()) { this.scheduleBots(); return; }
       const a = botAction(viewFor(s, acting), acting);
       let r = act(s, acting, a, { rng: secureRng, now: Date.now() });
       if (!r.ok && duty < 0) {
@@ -109,6 +122,7 @@ export class LocalSession implements Session {
     return r.ok ? null : r.err;
   }
   onUpdate(cb: () => void) { this.cbs.push(cb); }
+  kick() { this.scheduleBots(); }
   close() { clearTimeout(this.timer); this.cbs = []; }
 }
 
@@ -141,6 +155,8 @@ export class OnlineSession implements Session {
   seat: number | null = null;
   code: string;
   hostSeat = 0;
+  settings: WarSettings = { ...DEFAULT_SETTINGS };
+  get key() { return `online-${this.creds.game}`; }
   private version = -1;
   private cbs: (() => void)[] = [];
   private rt: RealtimeClient | null = null;
@@ -187,6 +203,7 @@ export class OnlineSession implements Session {
     this.status = j.status;
     this.lobby = j.lobby;
     this.hostSeat = j.hostSeat;
+    if (j.settings) this.settings = j.settings;
     this.view = j.view;
     this.cbs.forEach((c) => c());
     this.armTimeout();
@@ -213,19 +230,19 @@ export class OnlineSession implements Session {
   async refresh() {
     if (this.busy) return;
     this.busy = true;
-    try { this.apply(await call({ op: 'state', game: this.creds.game, token: this.creds.token, since: this.version })); }
+    try { this.apply(await call({ op: 'state', game: this.creds.game, token: this.creds.token, since: this.version, tv: this.view?.version })); }
     catch { /* transient */ }
     finally { this.busy = false; }
   }
 
-  async hostOp(op: 'start' | 'addBot' | 'removeBot'): Promise<string | null> {
-    try { this.apply(await call({ op, game: this.creds.game, token: this.creds.token })); return null; }
+  async hostOp(op: 'start' | 'addBot' | 'removeBot' | 'setOpts', settings?: WarSettings): Promise<string | null> {
+    try { this.apply(await call({ op, game: this.creds.game, token: this.creds.token, settings })); return null; }
     catch (e) { return (e as Error).message; }
   }
 
   async send(a: Action): Promise<string | null> {
     try {
-      const j = await call({ op: 'act', game: this.creds.game, token: this.creds.token, action: a });
+      const j = await call({ op: 'act', game: this.creds.game, token: this.creds.token, action: a, tv: this.view?.version });
       this.apply(j);
       return j.error ?? null;
     } catch (e) { return (e as Error).message; }

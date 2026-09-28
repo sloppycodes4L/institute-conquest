@@ -43,52 +43,87 @@ export const QUADRANTS: Quadrant[] = [
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 7;
 
-/** Territories per row of each House slice, inner → outer, by player count. The middle row is odd and ≥ 5 so the Keep sits two cells from either side. */
-export const LAYOUTS: Record<number, number[]> = {
-  2: [3, 5, 3],
-  3: [3, 5, 4],
-  4: [3, 5, 5],
-  5: [4, 5, 5],
-  6: [4, 5, 6],
-  7: [4, 5, 7],
+/**
+ * Valley sizes, smallest to largest: territories per row of each House slice, inner → outer.
+ * The middle row is odd and ≥ 5 so the Keep sits at least two cells from either side.
+ */
+export const LAYOUTS: number[][] = [
+  [3, 5, 3],
+  [3, 5, 4],
+  [3, 5, 5],
+  [4, 5, 5],
+  [4, 5, 6],
+  [4, 5, 7],
+  [5, 7, 6],
+  [5, 7, 8],
+];
+/** The recommended valley for a player count (it grows with the players), nudged by a size offset. */
+export function layoutFor(n: number, size = 0): number {
+  const rec = Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, n)) - 2;
+  return Math.max(0, Math.min(LAYOUTS.length - 1, rec + Math.round(size)));
+}
+
+/** What the ground does in a fight or on the march. */
+export type Terrain = 'open' | 'keep' | 'mountain' | 'forest' | 'water' | 'marsh';
+export const TERRAIN_OF: Record<Biome, Terrain> = {
+  keep: 'keep', forest: 'forest', lake: 'water', swamp: 'marsh', mountain: 'mountain',
+  crag: 'open', plain: 'open', fields: 'open', highland: 'open', snow: 'open', deadwood: 'open',
 };
+export const TERRAIN_INFO: Record<Terrain, { icon: string; name: string; text: string }> = {
+  open: { icon: '', name: 'Open ground', text: 'No special effect.' },
+  keep: { icon: '♜', name: 'Keep', text: 'Walls: +1 to every defense die.' },
+  mountain: { icon: '⛰', name: 'Mountains', text: 'High ground: +1 to your highest attack die when attacking from here. Fortify marches halt here.' },
+  forest: { icon: '🌲', name: 'Forest', text: 'Cover: +2 to the highest defense die when defending here.' },
+  water: { icon: '🌊', name: 'Water', text: 'Fortify marches halt here.' },
+  marsh: { icon: '🌾', name: 'Marsh', text: 'Fortify marches halt here.' },
+};
+/** Terrain a fortify march can end on but never pass through. */
+export const isRough = (t: Terrain) => t === 'mountain' || t === 'water' || t === 'marsh';
 
 // Slot 0 of each House is its Keep. Later slots are handed out nearest-the-Keep first.
 const NAMES: [string, Biome][][] = [
   // Apollo
   [['The Sun Citadel', 'keep'], ['Gilded Steppe', 'plain'], ['Lyre Falls', 'lake'], ['Pythian Crags', 'crag'], ['Laurel Groves', 'forest'], ['Brightspire', 'mountain'],
     ['Delphi Rise', 'highland'], ['Helios Fields', 'fields'], ["Oracle's Tarn", 'lake'], ['Goldleaf Wood', 'forest'], ['Solar Scarp', 'crag'], ['Chariot Road', 'plain'],
-    ['Amber Hollow', 'forest'], ['Dawnwatch', 'highland'], ["Python's Coil", 'swamp'], ['Sunfall Ridge', 'mountain']],
+    ['Amber Hollow', 'forest'], ['Dawnwatch', 'highland'], ["Python's Coil", 'swamp'], ['Sunfall Ridge', 'mountain'],
+    ['Heliotrope Vale', 'fields'], ['Aurora Heights', 'highland'], ['Glimmerwood', 'forest'], ['Cinder Flats', 'plain']],
   // Diana
   [['Moonhall', 'keep'], ['The Greatwood', 'forest'], ["Hunter's Tarn", 'lake'], ['Hartsblood Run', 'plain'], ['Silverbirch Hollow', 'forest'], ['Antler Ridge', 'crag'],
     ['Quiverwood', 'forest'], ["Stag's Leap", 'highland'], ['Nightbloom Mire', 'swamp'], ['Wolfsbane Glen', 'forest'], ['Artemis Pool', 'lake'], ['Bowstring Crag', 'crag'],
-    ['Doe Meadow', 'plain'], ['Moonshadow Vale', 'forest'], ['Thornbrake', 'forest'], ["Tracker's Height", 'mountain']],
+    ['Doe Meadow', 'plain'], ['Moonshadow Vale', 'forest'], ['Thornbrake', 'forest'], ["Tracker's Height", 'mountain'],
+    ['Fawn Brook', 'lake'], ['Elkhorn Moor', 'plain'], ['Duskwood', 'forest'], ['Crescent Tor', 'mountain']],
   // Minerva
   [["Minerva's Aerie", 'keep'], ['Owlwood', 'forest'], ['Stillmirror Lake', 'lake'], ['Scriptorium Hills', 'highland'], ['Greyveil Marsh', 'swamp'], ['The Thinking Stones', 'crag'],
     ['Ink River', 'lake'], ['Parchment Downs', 'plain'], ['Olive Terraces', 'fields'], ['Sagewood', 'forest'], ['Aegis Bluff', 'crag'], ['The Loom', 'highland'],
-    ["Wisdom's Fen", 'swamp'], ['Athenaeum Rise', 'mountain'], ['Quillmoor', 'plain'], ['Shieldwall Heights', 'mountain']],
+    ["Wisdom's Fen", 'swamp'], ['Athenaeum Rise', 'mountain'], ['Quillmoor', 'plain'], ['Shieldwall Heights', 'mountain'],
+    ['Lamplight Fields', 'fields'], ['Riddle Wood', 'forest'], ['Owlet Tarn', 'lake'], ['Stylus Crag', 'crag']],
   // Mars
   [['Castle Mars', 'keep'], ['The Furor', 'lake'], ['Metas Fens', 'swamp'], ['Wolfpine Wood', 'forest'], ['Deimos Crags', 'mountain'], ['Phobos Watch', 'highland'],
     ["Howler's Den", 'forest'], ["Reaper's Field", 'plain'], ['Slingblade Gap', 'crag'], ['Ares Hollow', 'forest'], ['Bloodwater', 'lake'], ['Ironjaw Ridge', 'mountain'],
-    ['The Warrens', 'highland'], ['Red Moor', 'plain'], ["Titus's Pit", 'swamp'], ['Spearpoint', 'crag']],
+    ['The Warrens', 'highland'], ['Red Moor', 'plain'], ["Titus's Pit", 'swamp'], ['Spearpoint', 'crag'],
+    ['Iron Plain', 'plain'], ['Wargrave Wood', 'forest'], ['Lupine Fields', 'fields'], ['Cindermount', 'mountain']],
   // Pluto
   [['The Hollow Keep', 'keep'], ['Bonewood', 'deadwood'], ['Black Ice Mere', 'lake'], ['Frostfang Pass', 'snow'], ['Wraith Marsh', 'swamp'], ['Grave Tors', 'mountain'],
     ['Styx Floe', 'lake'], ["Charon's Crossing", 'snow'], ["Deadman's Drift", 'snow'], ['Ashen Wood', 'deadwood'], ['Hades Scarp', 'crag'], ['Rimewatch', 'snow'],
-    ['Cerberus Den', 'mountain'], ['Pale Barrow', 'deadwood'], ['Shade Fen', 'swamp'], ['Winterteeth', 'mountain']],
+    ['Cerberus Den', 'mountain'], ['Pale Barrow', 'deadwood'], ['Shade Fen', 'swamp'], ['Winterteeth', 'mountain'],
+    ['Frostmere', 'lake'], ['Hollowmarch', 'snow'], ['Crypt Hills', 'crag'], ['Lethe Mire', 'swamp']],
   // Jupiter
   [['Thunderhold', 'keep'], ["Eagle's Rest", 'mountain'], ['Rainpools', 'lake'], ['Stormbreak Moor', 'highland'], ['Oakfather Wood', 'forest'], ['Lightning Flats', 'plain'],
     ['Cloudspire', 'mountain'], ['Thunderhead Downs', 'plain'], ['Ganymede Grove', 'forest'], ['Io Marsh', 'swamp'], ['Tempest Rise', 'highland'], ['Bolt Crag', 'crag'],
-    ['Skyreach Fields', 'fields'], ["Titan's Seat", 'crag'], ['Callisto Tarn', 'lake'], ['Stormwood', 'forest']],
+    ['Skyreach Fields', 'fields'], ["Titan's Seat", 'crag'], ['Callisto Tarn', 'lake'], ['Stormwood', 'forest'],
+    ['Thunder Plains', 'plain'], ['Aquila Heights', 'highland'], ['Nimbus Wood', 'forest'], ['Galewatch', 'mountain']],
   // Ceres
   [['The Ovens', 'keep'], ['Breadfields', 'fields'], ['Millrace', 'lake'], ['Orchard Rows', 'forest'], ["Sowers' Mire", 'swamp'], ['Harvest Terraces', 'fields'],
     ['Wheatsea', 'fields'], ['Granary Hill', 'highland'], ['Beehive Glen', 'forest'], ["Plowman's Rest", 'plain'], ['Threshing Floor', 'plain'], ['Cornucopia', 'fields'],
-    ['Rye Hollow', 'fields'], ['Scarecrow Crag', 'crag'], ['Honeywater', 'lake'], ["Demeter's Grove", 'forest']],
+    ['Rye Hollow', 'fields'], ['Scarecrow Crag', 'crag'], ['Honeywater', 'lake'], ["Demeter's Grove", 'forest'],
+    ['Sickle Downs', 'plain'], ['Millstone Ridge', 'highland'], ['Clover Vale', 'fields'], ['Fallow Marsh', 'swamp']],
 ];
 
 export interface Territory {
   id: number;
   name: string;
   biome: Biome;
+  terrain: Terrain;
   house: number;
   quadrant: number;
   isKeep: boolean;
@@ -105,8 +140,8 @@ export interface Territory {
 export interface Hex { q: number; r: number; x: number; y: number; t: number; rad: number }
 
 export interface Geo {
-  /** Player count this map was built for. */
-  n: number;
+  /** Index into LAYOUTS. */
+  layout: number;
   perHouse: number;
   rows: number[];
   territories: Territory[];
@@ -172,8 +207,8 @@ function bands(rows: number[]) {
   return best.edges;
 }
 
-function buildGeo(n: number): Geo {
-  const rows = LAYOUTS[n];
+function buildGeo(layout: number): Geo {
+  const rows = LAYOUTS[layout];
   const K = rows.reduce((a, b) => a + b, 0);
   const keepRow = 1, keepCol = (rows[1] - 1) / 2;
 
@@ -194,7 +229,7 @@ function buildGeo(n: number): Geo {
     for (let s = 0; s < K; s++) {
       const { row, col } = cellsOfHouse[s];
       const [name, biome] = NAMES[h][s];
-      territories.push({ id: h * K + s, name, biome, house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0, row, col, foot: row === 0 });
+      territories.push({ id: h * K + s, name, biome, terrain: TERRAIN_OF[biome], house: h, quadrant: HOUSES[h].quadrant, isKeep: s === 0, row, col, foot: row === 0 });
     }
   }
   const nt = territories.length;
@@ -320,17 +355,19 @@ function buildGeo(n: number): Geo {
   // Two-House quadrants pay about one army per two territories; the walled-in Frostfangs less.
   const quadBonus = QUADRANTS.map((q) => (q.houses.length > 1 ? Math.round(K * 0.55) : Math.round(K * 0.3)));
   return {
-    n, perHouse: K, rows, territories, nt, hexes, adj, dist, centroid, quadBonus,
+    layout, perHouse: K, rows, territories, nt, hexes, adj, dist, centroid, quadBonus,
     foot: territories.filter((t) => t.foot).map((t) => t.id),
     R_IN, R_OUT, keepOf: (h: number) => h * K,
   };
 }
 
 const CACHE = new Map<number, Geo>();
-/** The valley for a game of `n` players (built once, then cached). */
-export function geoFor(n: number): Geo {
-  const k = Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, n));
+/** The valley for one of the LAYOUTS (built once, then cached). */
+export function mapGeo(layout: number): Geo {
+  const k = Math.max(0, Math.min(LAYOUTS.length - 1, layout | 0));
   let g = CACHE.get(k);
   if (!g) { g = buildGeo(k); CACHE.set(k, g); }
   return g;
 }
+/** The valley for `n` players at a size offset from the recommended one. */
+export const geoFor = (n: number, size = 0): Geo => mapGeo(layoutFor(n, size));

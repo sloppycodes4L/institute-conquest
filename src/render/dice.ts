@@ -95,6 +95,8 @@ export class DiceTray {
     return new Promise((res) => {
       this.anim = { t0: performance.now(), dur: 900, items };
       cancelAnimationFrame(this.raf);
+      // Animation frames stop in a background tab; don't let a replay wait on them forever.
+      const fallback = setTimeout(res, 1100);
       const tick = () => {
         const a = this.anim!;
         const k = Math.min(1, (performance.now() - a.t0) / a.dur);
@@ -107,7 +109,7 @@ export class DiceTray {
         }
         this.renderer.render(this.scene, this.camera);
         if (k < 1) this.raf = requestAnimationFrame(tick);
-        else res();
+        else { clearTimeout(fallback); res(); }
       };
       tick();
     });

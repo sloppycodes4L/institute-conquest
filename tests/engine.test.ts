@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { geoFor, HOUSES, MAX_PLAYERS, MIN_PLAYERS } from '../src/engine/data.ts';
+import { geoFor, mapGeo, HOUSES, LAYOUTS, MAX_PLAYERS, MIN_PLAYERS, isRough } from '../src/engine/data.ts';
 import { CARDS } from '../src/engine/cards.ts';
 import {
   act, actingSeat, aiDuty, allianceOf, attackTargets, BALANCE, createGame, geo, olympusPreview, passive, reinforcementBreakdown, viewFor,
-  type GameState, type Action, NEUTRAL, START_ARMIES, clone,
+  type GameState, type Action, NEUTRAL, clone, attackBlocker, fortifyRoute, resolveSettings, spreadHouses, TRAIL_MAX,
 } from '../src/engine/engine.ts';
 import { botAction } from '../src/engine/bot.ts';
 
@@ -25,10 +25,11 @@ function passage(s: GameState, rng: () => number) {
 }
 
 describe('map', () => {
-  for (let n = MIN_PLAYERS; n <= MAX_PLAYERS; n++) {
-    const g = geoFor(n);
+  for (let L = 0; L < LAYOUTS.length; L++) {
+    const g = mapGeo(L);
     const T = g.territories;
-    it(`${n} players: ${g.nt} connected territories with sane sizes`, () => {
+    const n = `Layout ${L}`;
+    it(`${n}: ${g.nt} connected territories with sane sizes`, () => {
       expect(g.nt).toBe(7 * g.perHouse);
       for (let t = 0; t < g.nt; t++) {
         expect(g.hexes.filter((h) => h.t === t).length).toBeGreaterThanOrEqual(5);
@@ -37,19 +38,27 @@ describe('map', () => {
       expect(Math.max(...g.dist.flat())).toBeLessThan(Infinity);
       g.adj.forEach((ns, t) => ns.forEach((x) => expect(g.adj[x]).toContain(t)));
     });
-    it(`${n} players: every Keep is walled in by its own land`, () => {
+    it(`${n}: every Keep is walled in by its own land`, () => {
       for (const k of T.filter((t) => t.isKeep)) {
         for (const t of T) if (t.house !== k.house) expect(g.dist[k.id][t.id], `${k.name} → ${t.name}`).toBeGreaterThanOrEqual(3);
       }
     });
-    it(`${n} players: the Frostfangs have exactly two gateways`, () => {
+    it(`${n}: the Frostfangs have exactly two gateways`, () => {
       const gates = T.filter((t) => t.quadrant === 2 && g.adj[t.id].some((x) => T[x].quadrant !== 2));
       expect(gates.length).toBe(2);
     });
   }
-  it('grows with the player count and is much bigger than the old 42', () => {
+  it('grows with the player count, and the size setting nudges it', () => {
     expect(geoFor(4).nt).toBeGreaterThanOrEqual(84);
     for (let n = MIN_PLAYERS; n < MAX_PLAYERS; n++) expect(geoFor(n + 1).nt).toBeGreaterThan(geoFor(n).nt);
+    expect(geoFor(4, 2).nt).toBeGreaterThan(geoFor(4).nt);
+    expect(geoFor(4, -2).nt).toBeLessThan(geoFor(4).nt);
+    expect(geoFor(7, 2)).toBe(mapGeo(LAYOUTS.length - 1));
+  });
+  it('every territory has a terrain', () => {
+    const T = mapGeo(LAYOUTS.length - 1).territories;
+    expect(T.every((t) => t.terrain)).toBe(true);
+    expect(T.filter((t) => t.isKeep).every((t) => t.terrain === 'keep')).toBe(true);
   });
 });
 
@@ -68,16 +77,38 @@ describe('setup', () => {
       const g = geo(s);
       expect(new Set(s.players.map((p) => p.house)).size).toBe(n);
       for (const p of s.players) {
+        const keep = g.keepOf(p.house);
         const mine = s.owner.flatMap((o, t) => (o === p.seat ? [t] : []));
-        expect(mine.length).toBe(g.perHouse);
-        expect(mine.every((t) => g.territories[t].house === p.house)).toBe(true);
-        expect(s.owner[g.keepOf(p.house)]).toBe(p.seat);
-        expect(mine.reduce((a, t) => a + s.armies[t], 0)).toBe(START_ARMIES[n]);
+        expect(mine.length).toBeGreaterThanOrEqual(4);
+        expect(mine.length).toBeLessThan(g.perHouse);
+        expect(mine.every((t) => g.territories[t].house === p.house && g.dist[keep][t] <= 1)).toBe(true);
+        expect(s.owner[keep]).toBe(p.seat);
+        expect(mine.reduce((a, t) => a + s.armies[t], 0)).toBe(s.opts.troops);
         expect(s.priv!.passage[p.seat]!.length).toBe(2);
+        // Nobody starts touching another player: there's neutral land in between.
+        for (const t of mine) for (const x of g.adj[t]) expect(s.owner[x] === p.seat || s.owner[x] === NEUTRAL).toBe(true);
       }
-      expect(s.owner.some((o) => o === NEUTRAL)).toBe(n < 7);
+      expect(s.owner.some((o) => o === NEUTRAL)).toBe(true);
     });
   }
+  it('settings pick the valley size, the troops, and switch alliances and the siege off', () => {
+    const rng = mulberry(8);
+    const s = createGame(['A', 'B', 'C'], rng, { settings: { size: 2, troops: 2, alliances: false, siege: true } });
+    expect(s.opts.layout).toBe(resolveSettings(3).layout + 2);
+    expect(s.opts.troops).toBeGreaterThan(resolveSettings(3, { size: 2 }).troops);
+    expect(s.opts.alliances).toBe(false);
+    expect(s.opts.siege).toBe(false); // no alliances, no siege
+    passage(s, rng);
+    s.warBegun = true;
+    expect(act(s, s.cur, { type: 'invite', to: (s.cur + 1) % 3, public: true }, ctx(rng))).toEqual({ ok: false, err: 'Alliances are off in this war.' });
+  });
+  it('spreads the players out so neighbours are as rare as possible', () => {
+    const g = geoFor(3);
+    for (let i = 0; i < 20; i++) {
+      const hs = spreadHouses(g, 3, Math.random);
+      for (const a of hs) for (const b of hs) if (a !== b) expect(g.dist[g.keepOf(a)][g.keepOf(b)]).toBeGreaterThan(5);
+    }
+  });
   it('the Passage kills one card per player and starts the war', () => {
     const rng = mulberry(5);
     const s = createGame(['A', 'B', 'C'], rng);
@@ -398,6 +429,92 @@ function runBotGame(n: number, seed: number) {
   }
   return { s, steps, errors };
 }
+
+describe('terrain', () => {
+  it('forests add cover, and it shows in the log', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const forest = g.territories.find((t) => t.terrain === 'forest')!.id;
+    const from = beside(s, seat, forest);
+    s.owner[forest] = NEUTRAL; s.armies[forest] = 3; s.armies[from] = 10;
+    expect(act(s, seat, { type: 'attack', from, to: forest }, ctx(rng)).ok).toBe(true);
+    const ev = [...s.log].reverse().find((e) => e.k === 'battle')!;
+    expect(ev.tD).toBe(BALANCE.forestDef);
+    expect(ev.rolls[0].d[0] - ev.rolls[0].raw.d[0]).toBe(BALANCE.forestDef);
+  });
+  it('mountains give the high ground', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const mtn = g.territories.find((t) => t.terrain === 'mountain')!.id;
+    const to = g.adj[mtn].find((x) => g.territories[x].terrain !== 'forest' && !g.territories[x].isKeep)!;
+    s.owner[mtn] = seat; s.armies[mtn] = 10; s.owner[to] = NEUTRAL; s.armies[to] = 3;
+    expect(act(s, seat, { type: 'attack', from: mtn, to }, ctx(rng)).ok).toBe(true);
+    const ev = [...s.log].reverse().find((e) => e.k === 'battle')!;
+    expect(ev.tA).toBe(BALANCE.mountainAtk);
+    expect(ev.rolls[0].a[0] - ev.rolls[0].raw.a[0]).toBe(BALANCE.mountainAtk);
+  });
+  it('a fortify march halts on mountains, water or marsh it has to cross', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const T = g.territories;
+    s.phase = 'fortify';
+    // find a → rough → b where a and b don't touch
+    let a = -1, rough = -1, b = -1;
+    for (const t of T) {
+      if (!isRough(t.terrain)) continue;
+      const ns = g.adj[t.id];
+      for (const x of ns) for (const y of ns) if (x !== y && !g.adj[x].includes(y) && a < 0) { a = x; rough = t.id; b = y; }
+    }
+    expect(a).toBeGreaterThanOrEqual(0);
+    s.owner = s.owner.map(() => NEUTRAL);
+    for (const t of [a, rough, b]) s.owner[t] = seat;
+    s.armies[a] = 10; s.armies[rough] = 1; s.armies[b] = 1;
+    expect(fortifyRoute(s, seat, a, b)).toEqual({ path: [a, rough, b], stop: rough });
+    expect(act(s, seat, { type: 'fortify', from: a, to: b, n: 6 }, ctx(rng))).toEqual({ ok: true });
+    expect([s.armies[a], s.armies[rough], s.armies[b]]).toEqual([4, 7, 1]);
+    expect(s.log.at(-1)).toMatchObject({ k: 'fortify', from: a, to: rough, aim: b, path: [a, rough] });
+    // …and it can march on from the rough ground next turn
+    expect(fortifyRoute(s, seat, rough, b)!.stop).toBe(b);
+  });
+});
+
+describe('attack reasons', () => {
+  it('explain why an attack is refused', () => {
+    const { s, seat, g } = setupDuel();
+    const mine = s.owner.findIndex((o, t) => o === seat && g.adj[t].some((x) => s.owner[x] !== seat));
+    const next = g.adj[mine].find((x) => s.owner[x] !== seat)!;
+    s.armies[mine] = 1;
+    expect(attackBlocker(s, seat, mine, next)).toMatch(/only 1 army/);
+    s.armies[mine] = 5;
+    expect(attackBlocker(s, seat, mine, next)).toBeNull();
+    const far = s.owner.findIndex((o, t) => o !== seat && g.dist[mine][t] > 3);
+    expect(attackBlocker(s, seat, mine, far)).toMatch(/doesn't border|across the chasm/);
+  });
+});
+
+describe('replay trail', () => {
+  it('records what each action changed on the map', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const from = s.owner.findIndex((o, t) => o === seat && g.adj[t].some((x) => s.owner[x] !== seat));
+    const to = g.adj[from].find((x) => s.owner[x] !== seat)!;
+    s.armies[from] = 60; s.armies[to] = 1;
+    const before = s.trail.length;
+    expect(act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng)).ok).toBe(true);
+    const f = s.trail.at(-1)!;
+    expect(s.trail.length).toBe(before + 1);
+    expect(f).toMatchObject({ v: s.version, seat, seq: s.seq, cur: seat, ph: 'attack' });
+    const d = new Map<number, [number, number]>();
+    for (let i = 0; i < f.d.length; i += 3) d.set(f.d[i], [f.d[i + 1], f.d[i + 2]]);
+    expect(d.get(to)).toEqual([s.owner[to], s.armies[to]]);
+    expect(viewFor(s, null).trail.at(-1)).toEqual(f);
+    expect(TRAIL_MAX).toBeGreaterThan(100);
+  });
+  it('loads wars saved before settings existed', () => {
+    const rng = mulberry(4);
+    const s = createGame(['A', 'B'], rng) as any;
+    delete s.opts; delete s.trail;
+    expect(act(s, 0, { type: 'choose', card: s.priv.passage[0][0] }, ctx(rng)).ok).toBe(true);
+    expect(s.opts.alliances).toBe(true);
+    expect(s.trail.length).toBe(1);
+  });
+});
 
 describe('full bot games', () => {
   const N = 42;

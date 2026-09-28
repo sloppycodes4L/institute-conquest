@@ -182,7 +182,9 @@ export function describe(s: GameState, e: GameEvent): string {
       ], sd)
       : `☠ ${who(s, e.victim)} is finished. Their lands fall to the wilds.`;
     case 'concede': return `${who(s, e.seat)} throws down their sword and walks into the snow. Coward.`;
-    case 'fortify': return `${who(s, e.seat)} marches ${e.n} from ${terr(e.from)} to ${terr(e.to)}.`;
+    case 'fortify': return e.aim != null
+      ? `${who(s, e.seat)} marches ${e.n} from ${terr(e.from)} toward ${terr(e.aim)}, but the column halts at ${terr(e.to)}. Rough going.`
+      : `${who(s, e.seat)} marches ${e.n} from ${terr(e.from)} to ${terr(e.to)}.`;
     case 'moveStd': return `⚑ ${who(s, e.seat)} carries the Standard to ${terr(e.to)}.`;
     case 'earned': return `${who(s, e.seat)} loots a card from the dead.`;
     case 'endTurn': return '';
@@ -229,6 +231,9 @@ export const RULES_HTML = `
 <h2>How to Conquer the Institute</h2>
 <p>Every House gets a castle, a Standard, and a slice of the valley full of children with swords. Make one House out of many.
 Up to <b>7 players</b>, one per House. The valley grows with the number of players.</p>
+<h3>Setting up a war</h3>
+<p>Whoever creates the war picks the <b>map size</b> and <b>starting troops</b> (both default to the recommended settings), and can switch
+<b>Alliances</b> and the <b>Siege on Olympus</b> off. Then <b>the Sorting</b>: hit <b>Start Selection</b> and the wheel deals each Gold a House.</p>
 <h3>Controls</h3>
 <p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
 <b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
@@ -240,17 +245,29 @@ Or, with allies, <b>take House Olympus</b> (below) and share the win.</p>
 <p>You're dealt two Characters. Keep one as your <b>General</b> (your Primus); the other dies. A General's <b>Passive</b> is always on.
 If the card's House (its suit) matches your House, the Passive gets <b>+1</b>. Your General is always shown bottom-left; every rival Primus is in the roster.</p>
 <h3>The valley</h3>
-<p>You start holding your whole House slice, with your Keep in the middle, walled in by your own land. You can attack <b>any territory touching yours</b>.
-The quadrants are split by burning chasms you can only cross on the land bridges.</p>
+<p>You start holding the heart of your House slice: your Keep and the land around it. The rest of your slice, and every House nobody plays,
+is held by <b>neutral garrisons</b>, thickest on the fronts facing another player. The Houses are dealt so players sit as far apart as possible,
+so the first rounds are a land grab before the killing starts. You can attack <b>any territory touching yours</b>.
+The quadrants are split by burning chasms you can only cross on the land bridges. <b>Zoom in</b> to read the territory names.</p>
+<h3>Terrain</h3>
+<p><b>⛰ Mountains:</b> the high ground. Attacking <i>from</i> a mountain adds <b>+1</b> to your highest attack die.
+<b>🌲 Forests:</b> cover. Defending a forest adds <b>+2</b> to the highest defense die.
+<b>⛰ Mountains, 🌊 water and 🌾 marsh</b> are hard going: a Fortify march can end on one, or start from one, but never cross one.
+If every route crosses rough ground, the troops <b>halt on the first rough territory</b> and march on next turn (the guide line shows where they'll stop).
+Hover any territory to see its terrain.</p>
 <h3>Your turn: Draft, Attack, Fortify</h3>
 <p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + quadrant bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your General.
 Click a territory to add armies; use <b>−</b>/<b>+</b> to adjust it, or <b>Undo</b> to take back everything you placed this Draft (Shift-click also removes).
 Play cards now: trade any <b>3 for 10 armies</b>, or play one for its <b>Active</b>. Cards of a House you own get a bonus.
 A Proctor card only works if you own its House; otherwise discard it for 2 cards (locked until next turn). Holding 5+ cards? Trade before you attack.</p>
-<p><b>Attack.</b> Pick one of your territories and every target it can hit lights up. Attack as often as you like.
+<p><b>Cards.</b> Hover a card (or hit its <b>🔍</b>) to see, on the map, every territory it would hit. Playing one asks you to confirm, with a preview of its War Log line.
+When anyone else plays a card, it's pinned on the map beside what it hit until you <b>Acknowledge</b> it.</p>
+<p><b>Attack.</b> Pick one of your territories and every target it can hit lights up (or just click an enemy territory, and your strongest neighbour attacks it). Attack as often as you like.
+If an attack isn't allowed, the reason pops up over the map.
 Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
 <b>Keeps</b> are fortresses: +1 to every defense die. Conquer at least one territory to earn a card.</p>
-<p><b>Fortify.</b> One army move through your connected land, plus one Standard move.</p>
+<p><b>Fortify.</b> One army move through your connected land (see Terrain), plus one Standard move.</p>
+<p><b>Watching.</b> Other players' moves (and the AI's) are replayed one at a time with their dice. Speed them up (2×, 4×) or <b>Skip</b> from the bar at the bottom.</p>
 <h3>Alliances</h3>
 <p>Once one House has attacked another, Houses can send each other <b>quiet invitations</b> (the 🤝 button). An alliance is either <b>Public</b> (announced to everyone) or <b>Secret</b> (only its members know).
 Alliances change nothing except this: <b>allies share their Generals' Passives</b>. If an ally attacks an ally, the whole alliance is cancelled on the spot.</p>
@@ -263,7 +280,7 @@ It usually takes three Houses, or two very large ones, so mass your armies at th
 <h3>The Standard: high risk, high reward</h3>
 <p>From the territory holding your Standard you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your General's Active fires for free once per turn.
 There is <b>no retreat</b>. Win, and the territory is yours <b>and every defender you killed joins you as a slave</b>. Lose, and your Standard is captured: <b>your whole House goes to the defender</b>.</p>
-<p>A defending Standard has an honor guard of <b>5 phantom defenders</b> (restored each turn) and rolls up to <b>3 defense dice</b>. Nobody may strike a player's Standard in the first round.
+<p>A defending Standard has an honor guard of <b>5 phantom defenders</b>, shown on its army count as a gold <b>+5</b> (restored each turn) and rolls up to <b>3 defense dice</b>. Nobody may strike a player's Standard in the first round.
 Defenders holding a <b>REACTION</b> card get a few seconds to spring an ambush when a Standard charges them.</p>
 <h3>Neutral Houses</h3>
 <p>Houses nobody plays hold their land as neutral garrisons. Take a neutral Keep to seize its Standard: you <b>own that House</b> (its Proctor, its card bonuses) and its remaining garrisons switch to you.</p>

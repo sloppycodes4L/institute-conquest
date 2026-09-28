@@ -4,7 +4,7 @@
 import { CARD, isSiegeCard } from './cards.ts';
 import {
   type Action, type GameState, BALANCE, NEUTRAL, activeValue, allianceOf, allied, attackTargets, connectedOwned, geo,
-  inviteBlocker, olympusPreview, ownsHouse, passive, reinforcementBreakdown, siegeBlocker, standardAt, territoriesOf,
+  inviteBlocker, olympusPreview, ownsHouse, passive, reinforcementBreakdown, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from './engine.ts';
 
 const armiesOf = (v: GameState, seat: number) => territoriesOf(v, seat).reduce((a, t) => a + v.armies[t], 0);
@@ -136,7 +136,9 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
         const defStd = standardAt(v, to);
         if (defStd >= 0 && v.owner[to] >= 0 && v.turn <= v.players.length) continue;
         const def = v.armies[to] + (defStd >= 0 ? v.standards[defStd].guard : 0);
-        const ratio = (v.armies[from] - 1) / Math.max(1, def);
+        // Forests are worth about a third more defenders; the high ground, a bit more attackers.
+        const tm = terrainMods(v, from, to);
+        const ratio = ((v.armies[from] - 1) * (tm.atk ? 1.15 : 1)) / Math.max(1, def * (tm.def ? 1.35 : 1));
         if (ratio < 1.4) continue;
         let score = ratio + (defStd >= 0 ? 4 : 0) + (g.territories[to].isKeep ? 1.5 : 0) + (v.owner[to] === NEUTRAL ? 0 : 0.5);
         if (from === stdAt && enemyAdj(from).length === 1 && v.armies[from] - 1 < def + 2) score -= 3; // don't strip the Standard

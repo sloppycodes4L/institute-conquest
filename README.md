@@ -9,14 +9,17 @@ A free, non-commercial fan game: Risk-style conquest set in the Institute from P
 
 ## How it plays
 
-- **The Sorting:** 2–7 players get random Houses out of Mars, Minerva, Diana, Apollo, Jupiter, Ceres, and Pluto. Unclaimed Houses become neutral garrisons.
-- **The valley** grows with the player count (77 territories for 2 players, 91 for 4, 112 for 7). Everyone starts holding their whole House slice, with the Keep at least 3 steps from any foreign border.
+- **War settings:** whoever creates the war picks the map size (Smaller … Larger, 77–140 territories) and starting troops (Fewer … Lots), and can switch Alliances and the Siege on Olympus off. Everything defaults to the recommended settings.
+- **The Sorting:** 2–7 players get Houses out of Mars, Minerva, Diana, Apollo, Jupiter, Ceres, and Pluto, revealed on a spinning wheel ("Start Selection"). Players are dealt Houses that sit as far apart as possible; unclaimed Houses become neutral garrisons.
+- **The valley** grows with the player count (77 territories for 2 players, 91 for 4, 112 for 7, at the recommended size). Each player starts holding the heart of their slice (the Keep and its neighbours); the rest is neutral, with thicker garrisons on fronts that face another player. In bot games the first player-vs-player fight comes around round 3 on crowded maps, later on sparse ones (`npx tsx scripts/pace-sim.ts`).
+- **Terrain:** attacking from ⛰ Mountains adds +1 to the highest attack die; defending a 🌲 Forest adds +2 to the highest defense die. A Fortify march can't cross ⛰ mountains, 🌊 water, or 🌾 marsh: it halts on the first one and marches on next turn. Zoom in to read territory names.
 - **The Passage:** each player is dealt 2 Characters, keeps one as their General (Passive always on, +1 if the General is from the player's own House in the books), and the other dies.
 - **Controls:** scroll zooms, left-drag pans, right-drag turns the camera. ◐ (G) greys out everything you don't hold; ⛰ (O) makes Olympus solid, see-through, or hidden.
 - **Turn:** Draft (with −/+ and Undo) → Attack (unlimited; every target the selected territory can hit lights up) → Fortify, with Risk Global Domination dice (3 attack vs 2 defense dice, ties go to the defender).
 - **Reinforcements:** max(3, territories ÷ 3), plus quadrant bonuses, plus a stacking Keep bonus (+2 / +5 / +9 / +14).
-- **Cards:** trade any 3 for 10 armies, or play one for its Active ability. Owning a card's House boosts it. Proctors only work for their House's owner; otherwise discard one to draw 2.
-- **The Standard:** raise it from its territory to attack with +3 phantom soldiers and a free General war cry. There is no retreat.
+- **Cards:** trade any 3 for 10 armies, or play one for its Active ability. Owning a card's House boosts it. Proctors only work for their House's owner; otherwise discard one to draw 2. Hover a card (or 🔍 it) to see the territories it would hit; playing asks for confirmation with a preview of its War Log line. Other players' cards are pinned on the map until you acknowledge them.
+- **Watching:** other players' and the AI's moves replay one at a time with their dice (1×, 2×, 4×, or Skip).
+- **The Standard:** raise it from its territory to attack with +3 phantom soldiers and a free General war cry. There is no retreat. A defending Standard's honor guard shows on its token (for example `11 +5`).
   - Win: every defender you killed joins you as a slave.
   - Lose: your whole House goes to the defender.
   - Defenders holding a REACTION card can ambush a Standard attack.
@@ -36,10 +39,12 @@ The full rules are in the game (the **?** button). Every card is listed in the *
 | UI, copy | `src/ui/` |
 | Local and online sessions | `src/net/session.ts` |
 | Game server (Supabase Edge Function) | `supabase/functions/institute/` |
+| Version shown on the title screen | `src/version.ts` |
 
 The server is authoritative:
 - Every action runs through the same engine as the client, using a crypto RNG.
 - The new version is broadcast over Supabase Realtime, and each client refetches its own private view.
+- Each accepted action also records a small public replay frame (what changed on the map), so clients can replay AI and rival moves step by step.
 - Hands and Passage picks never leave the server except to their owner.
 - The `ic_games` and `ic_players` tables have RLS on with no policies, so only the function can touch them.
 
@@ -51,7 +56,8 @@ npm run dev          # local server
 npm test             # engine tests + 42 bot-vs-bot games (2–7 players)
 npx tsx scripts/sim.ts          # balance simulator (game length, alliances, sieges per player count)
 npx tsx scripts/siege-sim.ts    # how often 2 or 3 allied Houses break Olympus, by army size
-npx tsx scripts/mapcheck.ts     # map stats per player count (add --draw for ASCII)
+npx tsx scripts/mapcheck.ts     # map stats per valley size (add --draw for ASCII)
+npx tsx scripts/pace-sim.ts     # opening pace: the round of the first player-vs-player battle
 npx tsx scripts/smoke-online.ts # full game against the deployed server
 ```
 
