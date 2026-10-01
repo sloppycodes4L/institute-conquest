@@ -13,7 +13,8 @@ import { LocalSession, OnlineSession, allCreds, fetchWarLog, fetchWars, flagLine
 import { ERRORS_FLAVOR, PASSAGE_INTRO, RULES_HTML, TAGLINES, describe, headline } from './copy.ts';
 import { VERSION } from '../version.ts';
 import { assaultFight, attackFight, defenseNote, oddsClass, pct, standardFight, winChance } from './odds.ts';
-import { swordClash } from './sound.ts';
+import { sound, swordClash, type Mood } from './sound.ts';
+import { ELEVEN_SOUNDS } from './audio-manifest.ts';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const el = (html: string) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild as HTMLElement; };
@@ -89,6 +90,8 @@ export class App {
   private localSettings: WarSettings = { ...DEFAULT_SETTINGS };
   /** Player preferences (this device only). */
   private prefs = { follow: store.get('ic-follow') !== '0', sound: store.get('ic-sound') !== '0' };
+  /** The music stays in battle until this long after the last fight (ms timestamp). */
+  private battleUntil = 0;
 
   constructor() {
     this.world = new World(document.getElementById('world')!, geoFor(4));
@@ -104,7 +107,9 @@ export class App {
     let resizeT = 0;
     window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = window.setTimeout(() => this.render(), 120); });
     // The turn clock in the top bar ticks on its own, without re-rendering the HUD.
-    window.setInterval(() => this.tickClock(), 250);
+    window.setInterval(() => { this.tickClock(); this.syncMood(); }, 250);
+    // Every button answers with a soft click.
+    document.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest?.('button:not(:disabled)')) sound.play('click'); }, true);
     // Shift-click in the Draft takes armies back.
     window.addEventListener('pointerdown', (e) => { this.lastShift = e.shiftKey; }, true);
     const q = new URLSearchParams(location.search);
@@ -151,6 +156,7 @@ export class App {
           <button class="btn ghost" data-a="codex">The Codex (all cards)</button>
         </div>
         <p class="fine">A free, non-commercial fan game inspired by Pierce Brown's <i>Red Rising</i>. Not affiliated with or endorsed by the author or publisher. Contains violence and foul language.</p>
+        <p class="fine credits">Music: A.T.W., <i>The Wrath of God</i>.${ELEVEN_SOUNDS.length ? ' Some sound effects made with <a href="https://elevenlabs.io" target="_blank" rel="noopener">elevenlabs.io</a>.' : ''} Press M to mute.</p>
         <div class="version" title="Game version">Version ${VERSION}</div>
       </div></div>`)!;
     const nm = s.querySelector<HTMLInputElement>('#nm')!;
@@ -580,6 +586,7 @@ export class App {
       if (this.skipping || !this.session) return;
       const hl = headline(d, e);
       if (hl) this.banner(hl.title, hl.sub, hl.color, hl.long);
+      this.sfx(d, e);
       switch (e.k) {
         case 'battle': case 'stdBattle': case 'assault':
           cam([e.from, e.k === 'assault' ? OLYMPUS : e.to]);
@@ -639,12 +646,59 @@ export class App {
   private quickEvent(d: GameState, e: GameEvent) {
     const hl = headline(d, e);
     if (hl) this.banner(hl.title, hl.sub, hl.color, hl.long);
+    this.sfx(d, e);
+  }
+
+  /** The sound of one event. Battles sound in showBattle instead, in time with the dice. */
+  private sfx(v: GameState, e: GameEvent) {
+    const p = (name: string, vol = 1, delay = 0) => sound.play(name, { vol, delay });
+    switch (e.k) {
+      case 'place': p('thud', 0.8); break;
+      case 'unplace': case 'undoDraft': p('thud', 0.5); break;
+      case 'phase': if (e.phase === 'attack' && e.seat === this.me) p('horn', 0.6); break;
+      case 'fortify': case 'moveStd': p('march'); break;
+      case 'overwhelm': p('whoosh'); p('warcry', 0.6, 0.12); break;
+      case 'stdRaised': p('horn'); p('warcry', 1, 0.7); this.bumpBattle(); break;
+      case 'warCry': p('warcry', 0.8); break;
+      case 'counter': p('whoosh'); p('clash', 1, 0.15); break;
+      case 'play': p('card'); p('cue', 0.8, 0.2); break;
+      case 'trade': case 'discardProctor': p('card'); break;
+      case 'region': p('cue', 0.7); break;
+      case 'primus': p('confirm'); break;
+      case 'stdCaptured': case 'dominated': p('boom'); p('scream', 0.8, 0.35); break;
+      case 'neutralFall': p('boom', 0.6); break;
+      case 'primusSlain': case 'passage': p('scream', 0.7); break;
+      case 'betrayal': case 'defect': case 'siegeFailed': case 'siegeCollapsed': p('dread'); break;
+      case 'allianceFormed': case 'rallyJoined': case 'allianceRevealed': p('confirm'); break;
+      case 'warBegun': p('drum'); break;
+      case 'siegeBegins': p('thunder'); p('horn', 1, 0.8); this.bumpBattle(); break;
+      case 'olympusTurn': if (e.killed) p('boom', 0.6); break;
+      case 'olympusFalls': p('boom'); p('rumble', 1, 0.3); p('warcry', 1, 0.9); break;
+    }
+  }
+
+  /** Keep the battle music going for a while after a fight. */
+  private bumpBattle() { this.battleUntil = Math.max(this.battleUntil, Date.now() + 45_000); }
+
+  /** What the music should feel like right now (called every tick; the soundtrack only moves when this changes). */
+  private syncMood() {
+    const s = this.session;
+    const v = s?.view;
+    sound.ambience(!!v && s!.status !== 'lobby' && v.phase !== 'over');
+    let m: Mood;
+    if (!s || s.status === 'lobby' || !v) m = 'title';
+    else if (v.phase === 'over') m = this.me == null || v.winners.includes(this.me) || !v.players[this.me] ? 'victory' : 'defeat';
+    else if (v.phase === 'passage') m = 'calm';
+    else if (Date.now() < this.battleUntil) m = 'battle';
+    else m = v.warBegun || v.siege ? 'tense' : 'calm';
+    sound.mood(m);
   }
 
   private turnBanner(v: GameState, seat: number) {
     const p = v.players[seat];
     const mine = seat === this.me;
     if (mine && this.prefs.sound && v.phase !== 'over') swordClash();
+    else if (!mine && v.phase !== 'over') sound.play('drum', { vol: 0.4 });
     // Your turn: bring the camera home to your Standard (or your land if it's been taken).
     if (mine) this.ui.spot = null;
     if (mine && this.prefs.follow && v.phase !== 'over') {
@@ -1554,14 +1608,19 @@ export class App {
     </div></div>`, 'info-menu');
   }
 
-  /** This device's preferences: the camera following the action, and the sound of your turn. */
+  /** This device's preferences: the camera following the action, music and effects, and the sound of your turn. */
   private modalSettings() {
     const row = (k: string, on: boolean, title: string, note: string) => `<div class="set-row inline pref"><div><div class="set-k">${title}</div><div class="set-note">${note}</div></div>
       <div class="seg"><button data-a="pref" data-k="${k}" data-v="1" class="${on ? 'on' : ''}">On</button><button data-a="pref" data-k="${k}" data-v="0" class="${!on ? 'on' : ''}">Off</button></div></div>`;
+    const slider = (k: string, v: number, title: string, note: string) => `<div class="set-row inline pref"><div><div class="set-k">${title}</div><div class="set-note">${note}</div></div>
+      <input type="range" data-a="vol" data-k="${k}" min="0" max="100" value="${Math.round(v * 100)}" aria-label="${title} volume"></div>`;
     this.modal(`<div class="modal"><div class="box" style="max-width:520px">
       <h2>⚙ Settings</h2>
       <div class="settings">
         ${row('follow', this.prefs.follow, 'Follow the action', 'The camera glides to every attack, march and card as rivals and the AI move.')}
+        ${row('mute', !sound.muted, 'Sound', 'Everything on or off. Press M anytime.')}
+        ${slider('music', sound.musicVol, 'Music', 'The soundtrack follows the war: calm, tense, battle.')}
+        ${slider('sfx', sound.sfxVol, 'Effects', 'Steel, dice, war cries and the valley.')}
         ${row('sound', this.prefs.sound, 'Turn chime', 'A clash of swords when your turn begins.')}
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:14px"><button class="btn sm" data-a="pref-test">Hear the chime</button><button class="btn primary" data-a="close">Done</button></div>
@@ -1625,6 +1684,7 @@ export class App {
       const on = b.dataset.v === '1';
       if (b.dataset.k === 'follow') { this.prefs.follow = on; store.set('ic-follow', on ? '1' : '0'); }
       if (b.dataset.k === 'sound') { this.prefs.sound = on; store.set('ic-sound', on ? '1' : '0'); if (on) swordClash(); }
+      if (b.dataset.k === 'mute') sound.setMuted(!on);
       this.modalSettings();
       return;
     }
@@ -1651,6 +1711,11 @@ export class App {
   private onModalInput(e: Event) {
     const t = e.target as HTMLInputElement;
     if (t.dataset.a === 'mm') document.getElementById('mmv')!.textContent = t.value;
+    if (t.dataset.a === 'vol') {
+      const v = +t.value / 100;
+      if (t.dataset.k === 'music') sound.setMusic(v);
+      else { sound.setSfx(v); sound.play('clash', { vol: 0.7 }); }
+    }
   }
 
   /** The Rally Against Olympus: who called it, who answered, and what you can do about it. */
@@ -1733,7 +1798,13 @@ export class App {
   }
 
   private onKey(e: KeyboardEvent) {
-    if (!this.session?.view || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      sound.setMuted(!sound.muted);
+      this.toast(sound.muted ? '🔇 Sound off (M to turn it back on)' : '🔊 Sound on');
+      if (document.getElementById('modal-root')?.dataset.key === 'info-settings') this.modalSettings();
+    }
+    if (!this.session?.view) return;
     if (e.key === 'g' || e.key === 'G') this.toggleFocus();
     if (e.key === 'o' || e.key === 'O') this.cycleOlympus();
     if (e.key === 'Escape') {
@@ -2001,6 +2072,7 @@ export class App {
 
   /** A short error that pops up over the territories involved, flashes them red, and fades. */
   private territoryError(ts: number[], msg: string) {
+    sound.play('deny');
     this.world.flash(ts);
     document.querySelectorAll('.terr-err').forEach((x) => x.remove());
     const p = this.world.screenPos(ts[0]);
@@ -2075,6 +2147,7 @@ export class App {
       if (e.k === 'olympusTurn' && e.killed) this.world.bleed(OLYMPUS, e.killed);
       const hl = headline(v, e);
       if (hl) this.banner(hl.title, hl.sub, hl.color, hl.long);
+      this.sfx(v, e);
     }
   }
 
@@ -2099,7 +2172,11 @@ export class App {
       document.getElementById('bD')!.innerHTML = `<span style="color:${olympus ? '#f3d27a' : e.def >= 0 ? HOUSES[v.players[e.def].house].color : '#aaa'}">${esc(dName)}</span>`;
       document.getElementById('bRes')!.innerHTML = e.k === 'stdBattle' ? '⚑ Standard battle…' : `${esc(this.tname(e.from))} → ${esc(this.tname(to))}`;
       this.world.arrow(e.from, to, e.k === 'battle' ? '#ff3b1f' : '#f3d27a');
+      // Skirmishes with neutral garrisons happen every turn; the battle music is for Houses meeting in the field.
+      if (e.def >= 0 || e.k !== 'battle') this.bumpBattle();
+      sound.play('dice');
       await this.dice.roll(last.raw.a, last.raw.d);
+      this.battleSound(e);
       const mods = (raw: number[], mod: number[]) => raw.map((r, i) => (mod[i] !== r ? `${r}<sup>${mod[i] - r > 0 ? '+' : ''}${mod[i] - r}</sup>` : `${r}`)).join(' ');
       const summary = e.k === 'stdBattle'
         ? (e.won ? `<b>VICTORY</b> after ${e.n} rounds · ${e.enslaved} enslaved` : `<b>THE CHARGE DIES</b> after ${e.n} rounds`)
@@ -2117,6 +2194,16 @@ export class App {
       this.battleHide = window.setTimeout(() => { box.classList.add('hidden'); if (this.ui.target == null) this.world.clearArrow(); }, 2600);
       await new Promise((r) => setTimeout(r, 350));
     }
+  }
+
+  /** Steel as the dice land, a grunt per fallen soldier (up to three), and a cry if the ground was taken. */
+  private battleSound(e: GameEvent) {
+    const lost = (e.aLost ?? 0) + (e.dLost ?? 0);
+    sound.play('clash');
+    if (e.n > 1 || lost >= 3) sound.play('clash', { delay: 0.16, vol: 0.8 });
+    if (e.k === 'assault') sound.play('boom', { vol: 0.6 });
+    for (let i = 0; i < Math.min(lost, 3); i++) sound.play('grunt', { delay: 0.1 + i * 0.17, vol: 0.9 - i * 0.15 });
+    if (e.won) sound.play(e.k === 'battle' ? 'scream' : 'warcry', { delay: 0.45, vol: 0.8 });
   }
 
   /**
@@ -2212,10 +2299,12 @@ export class App {
     document.body.appendChild(box);
     const wg = box.querySelector<SVGGElement>('#wheelG')!;
     let rot = 0, done = false, skip = false;
+    let hush = () => {};
     const close = () => {
       if (done) return;
       done = true;
       skip = true;
+      hush();
       store.set(`ic-sorted-${s.key}`, '1');
       box.remove();
       this.wheelOpen = false;
@@ -2244,7 +2333,7 @@ export class App {
     };
     box.addEventListener('click', async (e) => {
       const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
-      if (a === 'wskip') { skip = true; finish(); return; }
+      if (a === 'wskip') { skip = true; hush(); finish(); return; }
       if (a === 'wdone') { close(); return; }
       if (a !== 'wstart') return;
       box.querySelector('.wheel-btns')!.innerHTML = '<button class="btn ghost" data-a="wskip">Skip</button>';
@@ -2259,8 +2348,10 @@ export class App {
         rot += 360 * (i === 0 ? 5 : 3) + delta;
         wg.style.transition = `transform ${dur}ms cubic-bezier(0.12, 0.72, 0.16, 1)`;
         wg.style.transform = `rotate(${rot}deg)`;
+        hush = sound.spin(dur, 360 * (i === 0 ? 5 : 3) + delta, SEG);
         await sleep(dur + 150);
         if (skip) break;
+        sound.play('drum', { vol: 0.8 });
         reveal(p);
         this.world.focus(g.keepOf(p.house));
         this.world.setHighlights(null, g.territories.filter((t) => t.house === p.house).map((t) => t.id), 'place');

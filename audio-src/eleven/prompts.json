@@ -1,0 +1,98 @@
+{
+  "clash-1.mp3": {
+    "prompt": "Two heavy steel longswords clashing hard, one sharp metallic impact with a short ring, close up, dry, no music",
+    "duration": 1,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:03:57.127Z"
+  },
+  "clash-2.mp3": {
+    "prompt": "Two heavy steel longswords clashing hard, one sharp metallic impact with a short ring, close up, dry, no music",
+    "duration": 1,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:03:58.574Z"
+  },
+  "clash-3.mp3": {
+    "prompt": "Two heavy steel longswords clashing hard, one sharp metallic impact with a short ring, close up, dry, no music",
+    "duration": 1,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:00.234Z"
+  },
+  "dice-1.mp3": {
+    "prompt": "Five bone dice shaken briefly in a leather cup, thrown onto a wooden table, tumbling and settling",
+    "duration": 1.2,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:23.015Z"
+  },
+  "dice-2.mp3": {
+    "prompt": "Five bone dice shaken briefly in a leather cup, thrown onto a wooden table, tumbling and settling",
+    "duration": 1.2,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:24.415Z"
+  },
+  "horn-1.mp3": {
+    "prompt": "A single long blast of an ancient bronze war horn echoing across a mountain valley, no music",
+    "duration": 3,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:25.859Z"
+  },
+  "warcry-1.mp3": {
+    "prompt": "A crowd of fifty young soldiers roaring a battle cry as they charge, ancient warfare, outdoors, no music, no words",
+    "duration": 2.5,
+    "loop": false,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:30.577Z"
+  },
+  "warcry-2.mp3": {
+    "prompt": "A crowd of fifty young soldiers roaring a battle cry as they charge, ancient warfare, outdoors, no music, no words",
+    "duration": 2.5,
+    "loop": false,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:32.130Z"
+  },
+  "march-1.mp3": {
+    "prompt": "A column of soldiers marching on packed dirt, leather boots, light armor and scabbards rattling, outdoors, no music",
+    "duration": 2,
+    "loop": false,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:33.947Z"
+  },
+  "card-1.mp3": {
+    "prompt": "A stiff parchment card flicked and slapped down onto a wooden table",
+    "duration": 0.6,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:35.124Z"
+  },
+  "card-2.mp3": {
+    "prompt": "A stiff parchment card flicked and slapped down onto a wooden table",
+    "duration": 0.6,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:36.297Z"
+  },
+  "wind-1.mp3": {
+    "prompt": "Cold steady wind across an empty highland valley, soft gusts, no birds, no music",
+    "duration": 20,
+    "loop": true,
+    "influence": 0.4,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T20:04:40.385Z"
+  }
+}

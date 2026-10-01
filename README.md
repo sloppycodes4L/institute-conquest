@@ -17,7 +17,7 @@ A free, non-commercial fan game: Risk-style conquest set in the Institute from P
 - **Keeps:** no walls. A House's Keep holds with its armies, the honor guard (it travels with the Standard) and Passives (defKeep, stdGuard, and any Primus): 10 armies beat 1 army plus a 5-strong guard ~80% of the time.
 - **Primus:** conquer a Keep other than your home Keep and you may swear in a Character from your hand of that Keep's House as its Primus (on the spot, or in a later Draft). Its Passive stacks with your General's (no House bonus, not shared with allies); lose the Keep and the Primus is slain.
 - **The Passage:** each player is dealt 2 Characters, keeps one as their General (Passive always on, +1 if the General is from the player's own House in the books), and the other dies.
-- **Controls:** scroll zooms, left-drag pans, right-drag turns the camera. ◐ (G) greys out everything you don't hold; ⛰ (O) makes Olympus solid, see-through, or hidden. Click a House in the roster to light up its land. ⚙ Settings: the camera follows the action (on by default) and a clash of swords marks your turn.
+- **Controls:** scroll zooms, left-drag pans, right-drag turns the camera. ◐ (G) greys out everything you don't hold; ⛰ (O) makes Olympus solid, see-through, or hidden. Click a House in the roster to light up its land. ⚙ Settings: the camera follows the action (on by default), music and effects volume, and a clash of swords marks your turn. M mutes everything.
 - **Turn:** Draft (with −/+ and Undo) → Attack (unlimited; every target the selected territory can hit lights up) → Fortify, with Risk Global Domination dice (3 attack vs 2 defense dice, ties go to the defender).
 - **The map:** the four quadrants are separate landmasses around the sea beneath Olympus, split by glowing chasms that can't be crossed. Every war rolls its own land bridges (railed causeways marked "LAND BRIDGE") between neighbouring quadrants and three ⚓ port sea lanes to the far shores.
 - **Reinforcements:** max(3, territories ÷ 3), plus region bonuses (each House slice's shore, heart and marches, outlined in gold on the map with their bonus), plus a stacking Keep bonus (+2 / +5 / +9 / +14).
@@ -56,6 +56,30 @@ The server is authoritative:
 - Hands and Passage picks never leave the server except to their owner.
 - The full War Log is appended to `ic_logs` (migration in `supabase/migrations/`), kept 90 days, readable only by that war's players (private lines only by the Houses that saw them).
 - The `ic_games`, `ic_players` and `ic_logs` tables have RLS on with no policies, so only the function can touch them.
+
+## Sound
+
+The soundtrack follows the war: **calm** until two Houses meet, **tense** after, **battle** for 45 seconds after any fight between Houses (or a Standard charge, or the Siege on Olympus), then **victory** or **defeat**. A battle track starts just before its build, so the climax lands on the fighting. Effects mark the dice, the steel, every fallen soldier, cards, marches, captured Standards, betrayals and the Sorting wheel.
+
+- **Music:** 24 tracks from *A.T.W. - The Wrath of God* (the developer's own library), 36 MB, streamed one at a time.
+- **Effects:** the local sound library, sorted on the Desktop as `institute-conquest-audio-sorted` (see its README). Under 1 MB, all fetched on the first click.
+- **ElevenLabs** fills only the gaps the library can't: steel clashes, dice, a war horn, war cries, marching, cards and a wind loop. Until a sound is generated, the game uses a stand-in (a synthesized clash, dice and march; the timpani for the horn; the library's crowd clip for war cries). The game never calls ElevenLabs: it's a build-time tool, and its output is committed like any other asset. On the free plan, outputs are non-commercial and need attribution, which the title screen adds automatically once any are used.
+
+| File | What it does |
+|---|---|
+| `scripts/audio-picks.ts` | Which clips make each sound, the ElevenLabs prompts, and the music for each mood |
+| `scripts/audio-build.ts` | Library + ElevenLabs takes → `public/audio/` and `src/ui/audio-manifest.ts` (needs ffmpeg) |
+| `scripts/sfx-gen.ts` | Generates the ElevenLabs takes into `audio-src/eleven/` (saved, so each costs credits once) |
+| `src/ui/sound.ts` | Playback: mixing, moods and crossfades, stand-ins, ambience |
+
+```bash
+# once: put your key in .env.local (git-ignored, never bundled):  ELEVENLABS_API_KEY=...
+node scripts/sfx-gen.ts --check      # key works? credits left?
+node scripts/sfx-gen.ts --dry        # what it would make (spends nothing)
+node scripts/sfx-gen.ts              # make the missing takes
+node scripts/sfx-gen.ts --force horn # redo a take you don't like
+node scripts/audio-build.ts          # rebuild public/audio from the picks
+```
 
 ## Develop
 

@@ -406,6 +406,10 @@ body.sorting #hud .leftcol, body.sorting #hud .rightcol, body.sorting #hud .topb
 .tip .tt-odds { margin-top: 4px; font-size: 13px; }
 .set-row.pref { gap: 14px; padding: 8px 0; border-bottom: 1px solid rgba(77,37,24,.4); }
 .set-row.pref .set-note { font-size: 14px; }
+.set-row.pref .seg { flex: none; }
+.set-row.pref input[type=range] { width: 160px; flex: none; accent-color: var(--blood-hi); }
+.fine.credits { margin-top: 4px; opacity: .8; }
+.fine.credits a { color: inherit; }
 
 /* Laptops and tablets: cards shrink so they never swallow the map. */
 @media (max-height: 820px), (max-width: 1180px) {
