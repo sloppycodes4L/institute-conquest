@@ -401,6 +401,162 @@ describe('combat rules', () => {
   });
 });
 
+describe('reactions', () => {
+  /** `seat` lined up against a rival territory, the rival holding `cards`. */
+  function ambushSetup(cards: string[], foeArmies = 6) {
+    const { s, seat, rng, g } = setupDuel();
+    const foe = s.players.find((p) => p.seat !== seat)!.seat;
+    const to = s.owner.findIndex((o, t) => o === foe && !g.territories[t].isKeep && standardAtT(s, t) < 0);
+    const from = beside(s, seat, to);
+    s.armies[from] = 60; s.armies[to] = foeArmies;
+    s.priv!.hands[foe] = cards.map((id) => ({ id, locked: false }));
+    return { s, seat, foe, from, to, rng, g };
+  }
+  const standardAtT = (s: GameState, t: number) => s.standards.findIndex((st) => !st.captured && st.at === t);
+
+  it('any attack on a House holding a REACTION card waits for its answer', () => {
+    const { s, seat, foe, from, to, rng } = ambushSetup(['weasel']);
+    const before = s.armies.slice();
+    expect(act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng, 1000))).toEqual({ ok: true });
+    expect(s.reaction).toMatchObject({ defender: foe, from, to, commit: null, blitz: true });
+    expect(s.armies).toEqual(before); // not a die cast yet
+    expect(actingSeat(s)).toBe(foe);
+    expect(act(s, seat, { type: 'endAttack' }, ctx(rng)).ok).toBe(false);
+    expect(act(s, foe, { type: 'react', card: 'weasel' }, ctx(rng, 2000))).toEqual({ ok: true });
+    expect(s.reaction).toBeNull();
+    const counter = s.log.find((e) => e.k === 'counter')!;
+    expect(counter).toMatchObject({ seat: foe, card: 'weasel', vs: seat, from, to });
+    const battle = s.log.find((e) => e.k === 'battle')!;
+    expect(battle.ph0).toBe(counter.n);
+    expect(battle.m[5]).toBe(1); // +1 to every defense die
+    expect(s.priv!.hands[foe]).toHaveLength(0);
+  });
+
+  it('the ambushers die last: the land holds until every phantom is down', () => {
+    const { s, seat, foe, from, to, rng } = ambushSetup(['jackal'], 1);
+    s.armies[from] = 3; // two can fight
+    act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng, 1000));
+    act(s, foe, { type: 'react', card: 'jackal' }, ctx(rng, 2000));
+    // One real soldier plus 4+ phantoms with +1 on every die, against two attackers: the land holds.
+    expect(s.owner[to]).toBe(foe);
+  });
+
+  it('a skipped ambush is not offered again in the same battle', () => {
+    const { s, seat, foe, from, to, rng } = ambushSetup(['weasel'], 30);
+    act(s, seat, { type: 'attack', from, to }, ctx(rng, 1000));
+    expect(act(s, foe, { type: 'react', card: null }, ctx(rng, 2000))).toEqual({ ok: true });
+    expect(s.log.filter((e) => e.k === 'battle')).toHaveLength(1);
+    expect(act(s, seat, { type: 'attack', from, to }, ctx(rng, 3000))).toEqual({ ok: true });
+    expect(s.reaction).toBeNull();
+    expect(s.log.filter((e) => e.k === 'battle')).toHaveLength(2);
+  });
+
+  it('"skip until my turn" stops the prompts until that House\'s next turn, and can be taken back', () => {
+    const { s, seat, foe, from, to, rng, g } = ambushSetup(['weasel'], 30);
+    act(s, seat, { type: 'attack', from, to }, ctx(rng, 1000));
+    expect(act(s, foe, { type: 'react', card: null, hold: true }, ctx(rng, 2000))).toEqual({ ok: true });
+    expect(s.reactHold).toEqual([foe]);
+    const other = s.owner.findIndex((o, t) => o === foe && t !== to && g.adj[t].some((x) => s.owner[x] === seat) && standardAtT(s, t) < 0);
+    const from2 = g.adj[other].find((x) => s.owner[x] === seat)!;
+    s.armies[from2] = 30; s.armies[other] = 30;
+    act(s, seat, { type: 'attack', from: from2, to: other }, ctx(rng, 3000));
+    expect(s.reaction).toBeNull();
+    // Only the skipper sees its own setting.
+    expect(viewFor(s, seat).reactHold).toEqual([]);
+    expect(viewFor(s, foe).reactHold).toEqual([foe]);
+    // Cancel it: prompted again.
+    expect(act(s, foe, { type: 'holdReactions', on: false }, ctx(rng, 4000))).toEqual({ ok: true });
+    s.ts.battle = null;
+    act(s, seat, { type: 'attack', from: from2, to: other }, ctx(rng, 5000));
+    expect(s.reaction?.defender).toBe(foe);
+    act(s, foe, { type: 'react', card: null }, ctx(rng, 6000));
+    // Its own turn clears it.
+    expect(act(s, foe, { type: 'holdReactions', on: true }, ctx(rng))).toEqual({ ok: true });
+    s.phase = 'fortify';
+    act(s, seat, { type: 'endTurn' }, ctx(rng));
+    expect(s.cur).toBe(foe);
+    expect(s.reactHold).toEqual([]);
+  });
+
+  it('the attacker\'s turn clock stands still while the defender decides', () => {
+    const { s, seat, foe, from, to, rng } = ambushSetup(['weasel'], 30);
+    s.deadline = 50_000;
+    act(s, seat, { type: 'attack', from, to }, ctx(rng, 10_000));
+    act(s, foe, { type: 'react', card: null }, ctx(rng, 18_000));
+    expect(s.deadline).toBe(58_000);
+  });
+
+  it('a Proctor REACTION only answers to the owner of its House', () => {
+    const { s, seat, foe, from, to, rng } = ambushSetup(['p-pluto']);
+    const ownsPluto = s.players[foe].house === HOUSES.findIndex((h) => h.id === 'pluto');
+    act(s, seat, { type: 'attack', from, to }, ctx(rng, 1000));
+    expect(s.reaction != null).toBe(ownsPluto);
+  });
+
+  it('bots save their ambush for what matters', () => {
+    const { s, seat, foe, from, to, rng } = ambushSetup(['weasel'], 2);
+    act(s, seat, { type: 'attack', from, to }, ctx(rng, 1000));
+    expect(botAction(viewFor(s, foe), foe, rng)).toEqual({ type: 'react', card: null }); // 2 soldiers: not worth it
+    s.armies[to] = 9;
+    expect(botAction(viewFor(s, foe), foe, rng)).toEqual({ type: 'react', card: 'weasel' });
+  });
+});
+
+describe("the Proctors' Book", () => {
+  it('snapshots every turn start, and counts battles won only between Houses', () => {
+    const { s, seat, rng, g } = setupDuel();
+    const foe = s.players.find((p) => p.seat !== seat)!.seat;
+    expect(s.stats!.hist.length).toBeGreaterThan(0);
+    const h0 = s.stats!.hist.at(-1)!;
+    expect(h0.t[seat]).toBeGreaterThan(0);
+    // Beat a neutral: no battle won.
+    const wild = s.owner.findIndex((o, t) => o === NEUTRAL && !g.territories[t].isKeep && g.adj[t].length > 0);
+    const from1 = beside(s, seat, wild);
+    s.armies[from1] = 3; s.armies[wild] = 2;
+    act(s, seat, { type: 'attack', from: from1, to: wild, blitz: true }, ctx(rng));
+    expect(s.stats!.won[seat]).toBe(0);
+    // Take a rival's territory: a battle won.
+    const to = s.owner.findIndex((o, t) => o === foe && s.standards.every((st) => st.at !== t));
+    const from = beside(s, seat, to);
+    s.armies[from] = 200; s.armies[to] = 1;
+    s.priv!.hands[foe] = [];
+    act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng));
+    if (s.ts.mustMove) act(s, seat, { type: 'move', n: s.ts.mustMove.min }, ctx(rng));
+    expect(s.stats!.won[seat]).toBe(1);
+    const n = s.stats!.hist.length;
+    s.phase = 'fortify';
+    act(s, seat, { type: 'endTurn' }, ctx(rng));
+    expect(s.stats!.hist.length).toBe(n + 1);
+    expect(s.stats!.hist.at(-1)).toMatchObject({ seat: foe, turn: s.turn });
+    expect(s.stats!.hist.at(-1)!.w[seat]).toBe(1);
+  });
+
+  it('a repelled blitz is a battle won for the defender', () => {
+    const { s, seat, rng } = setupDuel();
+    const foe = s.players.find((p) => p.seat !== seat)!.seat;
+    const to = s.owner.findIndex((o, t) => o === foe && s.standards.every((st) => st.at !== t));
+    const from = beside(s, seat, to);
+    s.armies[from] = 2; s.armies[to] = 300;
+    s.priv!.hands[foe] = [];
+    act(s, seat, { type: 'attack', from, to, blitz: true }, ctx(rng));
+    expect(s.stats!.won[foe]).toBe(1);
+  });
+
+  it('only shows a secret alliance to its members', () => {
+    const { s, seat, rng } = setupDuel(['A', 'B', 'C']);
+    const [b, c] = s.players.filter((p) => p.seat !== seat).map((p) => p.seat);
+    s.warBegun = true;
+    act(s, seat, { type: 'invite', to: b, public: false }, ctx(rng));
+    act(s, b, { type: 'answer', invite: s.invites[0].id, accept: true }, ctx(rng));
+    s.phase = 'fortify';
+    act(s, seat, { type: 'endTurn' }, ctx(rng));
+    expect(s.stats!.hist.at(-1)!.al).toHaveLength(1);
+    expect(viewFor(s, seat).stats!.hist.at(-1)!.al).toHaveLength(1);
+    expect(viewFor(s, c).stats!.hist.at(-1)!.al).toHaveLength(0);
+    expect(viewFor(s, null).stats!.hist.at(-1)!.al).toHaveLength(0);
+  });
+});
+
 describe('alliances', () => {
   function threeWay(seed = 31) {
     const { s, seat, rng, g } = setupDuel(['A', 'B', 'C'], seed);
@@ -635,6 +791,11 @@ describe('alliances', () => {
     expect(act(s, a, { type: 'assault', from: foot, blitz: true }, ctx(rng))).toEqual({ ok: true });
     expect(s.phase).toBe('over');
     expect(s.winners.sort()).toEqual([a, b, c].sort());
+    // The final tally: every defender the garrison started with fell to House a.
+    const end = s.log.find((e) => e.k === 'olympusFalls')!;
+    expect(end.dmg[a]).toBe(end.start);
+    expect(end.hits[a]).toBe(1);
+    expect(s.log.find((e) => e.k === 'assault')!.proctor).toBe(`p-${HOUSES[s.players[a].house].id}`);
   });
 
   it('a siege that runs out of time breaks the alliance', () => {

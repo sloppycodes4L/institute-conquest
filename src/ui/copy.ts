@@ -181,7 +181,8 @@ export function describe(s: GameState, e: GameEvent): string {
         `⚑ ${who(s, e.seat)} RAISES THE STANDARD and charges ${terr(e.to)} with ${e.commit}. Everyone in the valley just shat themselves.`,
         `⚑ The Standard of ${house(s.players[e.seat].house)} goes up. ${e.commit} fanatics march on ${terr(e.to)}. No retreat.`,
       ], sd);
-    case 'counter': return `⚔ AMBUSH! ${who(s, e.seat)} springs ${card(e.card)}: ${e.n} ghosts rise from the ditches to defend.`;
+    case 'ambushWait': return `⚔ ${who(s, e.seat)} marches on ${terr(e.to)}. ${who(s, e.def)} is reaching for something...`;
+    case 'counter': return `⚔ AMBUSH! ${who(s, e.seat)} springs ${card(e.card)}${e.to != null ? ` at ${terr(e.to)}` : ''}: ${e.n} ghosts rise from the ditches to defend, and every defense die gets +1.`;
     case 'warCry': return `${card(e.general)} leads the charge: ${esc(e.effect)}.`;
     case 'stdBattle': return e.won
       ? pick([
@@ -233,11 +234,7 @@ export function headline(s: GameState, e: GameEvent): { title: string; sub: stri
     case 'primusSlain': return { title: 'A PRIMUS FALLS', sub: `${CARD[e.card]?.name ?? 'The Primus'} dies with ${T[e.t]?.name ?? 'the Keep'}`, color: '#888' };
     case 'kicked': return { title: 'THROWN OUT', sub: `${s.players[e.seat].name} is out. ${e.alive ? 'An AI takes their House.' : ''}`, color: '#888' };
     case 'siegeProposed': return { title: 'A SIEGE IS CALLED', sub: `${s.players[e.seat].name} wants to storm Olympus. Vote.`, color: '#f3d27a' };
-    case 'siegeBegins': return { title: 'TO OLYMPUS!', sub: `${e.garrison} defenders. ${e.turns} allied turns. No second chances.`, color: '#f3d27a', long: true };
-    case 'siegeFailed': return { title: 'THE PROCTORS LAUGH', sub: 'The siege failed, and the alliance shatters', color: '#888', long: true };
-    case 'olympusFalls': return { title: 'OLYMPUS FALLS', sub: `Houses ${names(e.members)} rule the Institute together`, color: '#f3d27a', long: true };
     case 'stdRaised': return { title: 'THE STANDARD IS RAISED', sub: `${s.players[e.seat].name} charges ${T[e.to].name}`, color: hc(e.seat) };
-    case 'counter': return { title: 'AMBUSH', sub: `${CARD[e.card].name} springs the trap`, color: hc(e.seat) };
     case 'dominated': return e.captor >= 0
       ? { title: `HOUSE ${HOUSES[s.players[e.victim].house].name.toUpperCase()} KNEELS`, sub: `${s.players[e.victim].name} is dominated by ${s.players[e.captor].name}`, color: hc(e.captor) }
       : { title: `HOUSE ${HOUSES[s.players[e.victim].house].name.toUpperCase()} FALLS`, sub: `${s.players[e.victim].name} is out`, color: '#888' };
@@ -260,7 +257,7 @@ go to your front and the turn passes. Then <b>the Sorting</b>: hit <b>Start Sele
 <h3>Controls</h3>
 <p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
 <b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. Click a House in the roster to light up its land.
-<b>⚙ Settings</b>: the camera follows the action (on by default), and a clash of swords tells you it's your turn. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
+<b>⚙ Settings</b>: the camera follows the action (on by default), and a war horn tells you it's your turn. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
 <h3>Winning</h3>
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
 A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.
@@ -307,13 +304,19 @@ Answering walks you out of your old alliance, and your old allies hear it as a b
 <p>When an alliance is all that is left (every rival House dominated and every neutral Standard taken), any member can call a <b>Siege on Olympus</b>. Majority vote decides.
 Olympus is defended by the <b>Proctors of the attacking Houses</b>, and gets all of their powers. It holds about 11 soldiers per territory of a House slice (143 on the 4-player map), fights behind walls (+1 to its defense dice), regrows every allied turn, and smites troops at its Foot.
 Assault it from the <b>Foot of Olympus</b> (the inner ring, next to the chasm) with the normal dice; everyone rolls their own assaults and plays their own cards, including <b>Relics</b> that only work in the siege.
-Each ally gets 3 turns. Break it and the whole alliance wins. Fail and the Proctors laugh, and the alliance shatters.
+Each ally gets 3 turns. Every assault is that House against <b>its own Proctor</b>, and the siege panel keeps score: when it ends, the final tally shows each House's share of the damage.
+Break it and the whole alliance wins. Fail and the Proctors laugh, and the alliance shatters.
 It usually takes three Houses, or two very large ones, so mass your armies at the Foot before you vote.</p>
 <h3>The Standard: high risk, high reward</h3>
 <p>Once per turn, from the territory holding your Standard, you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your General's Active fires for free.
 There is <b>no retreat</b>. Win, and the territory is yours <b>and every defender you killed joins you as a slave</b>. Lose, and your Standard is captured: <b>your whole House goes to the defender</b>.</p>
 <p>A defending Standard has an honor guard of <b>5 phantom defenders</b>, shown on its army count as a gold <b>+5</b> (restored each turn); it rolls the normal 2 defense dice. 10 armies against a lone soldier and the guard win about 80% of the time. Nobody may strike a player's Standard in the first round.
-Defenders holding a <b>REACTION</b> card get a few seconds to spring an ambush when a Standard charges them.</p>
+A <b>REACTION</b> card can ambush a Standard's charge too (below).</p>
+<h3>Ambushes: REACTION cards</h3>
+<p>When a rival attacks one of your territories (a normal attack or a Standard's charge) and you hold a <b>REACTION</b> card, the attack <b>pauses</b> before the first die and your REACTION cards glow.
+<b>Play</b> one: <b>+n phantom defenders</b> (they die last) and <b>+1 to every defense die</b> for that battle. Or <b>Skip</b> and let it through (you won't be asked again in the same battle),
+or <b>Skip until my turn</b>: no more prompts until your next turn begins (cancel it any time from the notice up top). Online you have 25 seconds to decide; the attacker's turn clock waits.
+Neutral garrisons never ambush. When anyone springs one, the whole table sees it: the card, its rule, and how the battle went.</p>
 <h3>Neutral Houses</h3>
 <p>Houses nobody plays hold their land as neutral garrisons. Take a neutral Keep to seize its Standard: you <b>own that House</b> (its Proctor, its card bonuses) and its remaining garrisons switch to you.</p>
 <h3>Primus of a conquered Keep</h3>
@@ -321,6 +324,13 @@ Defenders holding a <b>REACTION</b> card get a few seconds to spring an ambush w
 as its <b>Primus</b> (the game asks on the spot; you can skip, and swear one in during any later Draft while the Keep has no Primus). The card leaves your hand.
 Its <b>Passive</b> works for you on top of your General's (no House-match bonus, and it isn't shared with allies). Lose the Keep and the Primus is <b>slain</b>: the card is discarded.
 A crown ♛ on the Keep's army count and in the roster shows every Primus.</p>
+<h3>The Proctors' Book</h3>
+<p>The <b>📖</b> button (or <b>B</b>) opens the Proctors' running odds on every House: territories, armies and <b>battles won</b> (only against other Houses: taking their land, breaking their blitz, winning a Standard charge),
+and each House's chance to take the Institute, turn by turn on a line chart. The odds update between turns (45% armies, 40% territories, 15% battles won).
+Allies are booked as <b>one side</b>: their lines merge into one braided line and they share the odds, until the alliance breaks and each is booked alone again.</p>
+<h3>When your House falls</h3>
+<p>You'll see how it happened, with the math of the final blow (the armies, the modifiers, the odds and the dice). Then <b>Return to Title</b>, or <b>Spectate</b>:
+watch the rest of the war, read the Book, and keep shouting into the War Log with 💬.</p>
 <h3>At the table</h3>
 <p><b>💬 Emotes:</b> shout a line into the War Log any time (one every 15 seconds). <b>War Logs:</b> every online war's full log, dice and all, is kept for 90 days.
 Open <b>Past wars</b> on the title screen to read it, filter it by turn or House, export it as text, or <b>flag</b> a line with a short note for everyone in that war.

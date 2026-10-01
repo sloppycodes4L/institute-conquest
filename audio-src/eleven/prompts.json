@@ -94,5 +94,21 @@
     "influence": 0.4,
     "model": "eleven_text_to_sound_v2",
     "made": "2026-10-01T20:04:40.385Z"
+  },
+  "shout-1.mp3": {
+    "prompt": "A band of twenty soldiers giving one short sharp unified war shout together, a single \"HAH!\", outdoors, slight echo, no music",
+    "duration": 1.2,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T23:11:06.735Z"
+  },
+  "shout-2.mp3": {
+    "prompt": "A band of twenty soldiers giving one short sharp unified war shout together, a single \"HAH!\", outdoors, slight echo, no music",
+    "duration": 1.2,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-01T23:11:08.134Z"
   }
 }

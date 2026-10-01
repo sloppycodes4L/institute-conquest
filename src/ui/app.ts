@@ -7,13 +7,14 @@ import { CARD, CARDS, EMOTES, OLYMPUS_POWER, fmt, isSiegeCard } from '../engine/
 import {
   type Action, type Frame, type GameEvent, type GameState, type WarSettings, DEFAULT_SETTINGS, EMOTE_COOLDOWN_MS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue, drainLog,
   allianceOf, allied, attackBlocker, attackTargets, connectedOwned, fortifyRoute, geo, housesOwned, inviteBlocker, joinRallyBlocker, mustTrade, olympusPreview,
-  ownsHouse, passive, primiOf, primusOptions, rallyBlocker, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
+  ownsHouse, passive, primiOf, primusOptions, rallyBlocker, reactionCards, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from '../engine/engine.ts';
+import { BOOK_W, bookChart, bookIndexAt, bookLines, bookX, roundOf, type Line } from './book.ts';
 import { LocalSession, OnlineSession, allCreds, fetchWarLog, fetchWars, flagLine, savedCreds, type Creds, type LobbySeat, type Session } from '../net/session.ts';
 import { ERRORS_FLAVOR, PASSAGE_INTRO, RULES_HTML, TAGLINES, describe, headline } from './copy.ts';
 import { VERSION } from '../version.ts';
 import { assaultFight, attackFight, defenseNote, oddsClass, pct, standardFight, winChance } from './odds.ts';
-import { sound, swordClash, type Mood } from './sound.ts';
+import { sound, turnHorn, type Mood } from './sound.ts';
 import { ELEVEN_SOUNDS } from './audio-manifest.ts';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -27,6 +28,8 @@ const AI_NAMES = ['Proctor\'s Pet', 'Some Tall Bastard', 'A Very Angry Gold', 'T
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const SIZE_NAMES: Record<string, string> = { '-2': 'Smaller', '-1': 'Small', '0': 'Recommended', '1': 'Large', '2': 'Larger' };
 const TROOP_NAMES: Record<string, string> = { '-2': 'Fewer', '-1': 'Less', '0': 'Recommended', '1': 'More', '2': 'Lots' };
+/** How each REACTION card looks when it's sprung. */
+const AMBUSH_FX: Record<string, string> = { jackal: 'jaws', weasel: 'snare', moonsong: 'arrows', lucian: 'slash', kiln: 'fire', 'p-pluto': 'ghosts' };
 
 /** What a card would do right now: the territories it touches, and a line or two about it. */
 interface Impact { targets: number[]; tone: 'target' | 'place'; lines: string[] }
@@ -474,7 +477,7 @@ export class App {
     document.getElementById('hud')?.remove();
     document.getElementById('modal-root')?.remove();
     document.getElementById('bloodflash')?.remove();
-    document.querySelectorAll('.showcase, .terr-err, .wheel-wrap').forEach((x) => x.remove());
+    document.querySelectorAll('.showcase, .terr-err, .wheel-wrap, .ambush-fx, .fallen-wrap, .siege-slide').forEach((x) => x.remove());
     document.body.classList.remove('sorting');
     this.world.clearArrow();
     this.world.setGeo(geoFor(4));
@@ -508,7 +511,7 @@ export class App {
     const urgent = !!v.reaction && v.reaction.defender === this.me;
     const gap = this.shownVersion >= 0 && fresh.length > 0 && fresh[0].v !== Math.max(this.shownVersion, this.queue.at(-1)?.v ?? -1) + 1;
     if (this.shownVersion < 0 || urgent || gap || (v.phase === 'over' && !fresh.some((f) => this.replayable(f)))) {
-      if (this.playing) this.skipping = true;
+      if (this.playing) this.skipReplay();
       else this.snap(v);
       return;
     }
@@ -516,6 +519,12 @@ export class App {
     this.queue.push(...fresh);
     if (!this.playing) void this.playQueue();
     else this.render();
+  }
+
+  /** Jump the replay to now, waving off any card or intro it's waiting on (a fallen House and a siege's tally stay). */
+  private skipReplay() {
+    this.skipping = true;
+    document.querySelectorAll('.showcase [data-a=ack], .ambush-fx [data-a=ack], .siege-slide.skippable [data-a=ack]').forEach((b) => b.dispatchEvent(new MouseEvent('click', { bubbles: true })));
   }
 
   /** Show the live view as it is, animating only our own fresh events. */
@@ -555,9 +564,13 @@ export class App {
         this.disp = d; this.shown = d; this.shownVersion = f.v;
         this.world.update(d);
         this.render();
-        if (this.skipping) continue;
+        if (this.skipping) {
+          // Skipped, but never unseen: your House falling, and how a siege ended.
+          for (const e of evs) if ((e.k === 'dominated' && this.fallenHere(e.victim)) || ['olympusFalls', 'siegeFailed', 'siegeCollapsed'].includes(e.k)) this.bigMoment(d, e, evs);
+          continue;
+        }
         if (this.replayable(f)) await this.present(d, evs, f);
-        else for (const e of evs) this.quickEvent(d, e);
+        else for (const e of evs) this.quickEvent(d, e, evs);
       }
     } finally {
       this.playing = false;
@@ -624,6 +637,24 @@ export class App {
           await this.showcase(d, e);
           shown = true;
           break;
+        case 'counter':
+          cam([e.to]);
+          await this.showAmbushPlayed(d, e, this.ambushOutcome(d, e, evs));
+          shown = true;
+          break;
+        case 'dominated':
+          if (this.fallenHere(e.victim)) await this.showFallen(d, e);
+          else await w(1400);
+          shown = true;
+          break;
+        case 'siegeBegins':
+          await this.showSiegeStart(d, e);
+          shown = true;
+          break;
+        case 'olympusFalls': case 'siegeFailed': case 'siegeCollapsed':
+          await this.showSiegeEnd(d, e);
+          shown = true;
+          break;
         case 'turn': {
           const st = d.standards[d.players[e.seat].house];
           if (e.seat !== this.me) cam([st.captured ? territoriesOf(d, e.seat)[0] ?? -1 : st.at]);
@@ -643,10 +674,20 @@ export class App {
   }
 
   /** Events from frames we don't linger on (our own), handled the snappy way. */
-  private quickEvent(d: GameState, e: GameEvent) {
+  private quickEvent(d: GameState, e: GameEvent, evs: GameEvent[]) {
     const hl = headline(d, e);
     if (hl) this.banner(hl.title, hl.sub, hl.color, hl.long);
     this.sfx(d, e);
+    this.bigMoment(d, e, evs);
+  }
+
+  /** Ambushes, sieges and fallen Houses get their own screens, queued with the dice so they play in order. */
+  private bigMoment(v: GameState, e: GameEvent, evs: GameEvent[]) {
+    const then = (fn: () => Promise<void>) => { this.diceQueue = this.diceQueue.then(fn); };
+    if (e.k === 'counter') then(() => this.showAmbushPlayed(v, e, this.ambushOutcome(v, e, evs)));
+    if (e.k === 'siegeBegins') then(() => this.showSiegeStart(v, e));
+    if (e.k === 'olympusFalls' || e.k === 'siegeFailed' || e.k === 'siegeCollapsed') then(() => this.showSiegeEnd(v, e));
+    if (e.k === 'dominated' && this.fallenHere(e.victim)) then(() => this.showFallen(v, e));
   }
 
   /** The sound of one event. Battles sound in showBattle instead, in time with the dice. */
@@ -655,12 +696,10 @@ export class App {
     switch (e.k) {
       case 'place': p('thud', 0.8); break;
       case 'unplace': case 'undoDraft': p('thud', 0.5); break;
-      case 'phase': if (e.phase === 'attack' && e.seat === this.me) p('horn', 0.6); break;
       case 'fortify': case 'moveStd': p('march'); break;
       case 'overwhelm': p('whoosh'); p('warcry', 0.6, 0.12); break;
       case 'stdRaised': p('horn'); p('warcry', 1, 0.7); this.bumpBattle(); break;
       case 'warCry': p('warcry', 0.8); break;
-      case 'counter': p('whoosh'); p('clash', 1, 0.15); break;
       case 'play': p('card'); p('cue', 0.8, 0.2); break;
       case 'trade': case 'discardProctor': p('card'); break;
       case 'region': p('cue', 0.7); break;
@@ -697,7 +736,7 @@ export class App {
   private turnBanner(v: GameState, seat: number) {
     const p = v.players[seat];
     const mine = seat === this.me;
-    if (mine && this.prefs.sound && v.phase !== 'over') swordClash();
+    if (mine && this.prefs.sound && v.phase !== 'over') turnHorn();
     else if (!mine && v.phase !== 'over') sound.play('drum', { vol: 0.4 });
     // Your turn: bring the camera home to your Standard (or your land if it's been taken).
     if (mine) this.ui.spot = null;
@@ -759,6 +798,7 @@ export class App {
           <button class="icon-btn" data-a="focus" id="btnFocus" title="My Lands: grey out everything you don't hold (G)">◐</button>
           <button class="icon-btn" data-a="olympus" id="btnOly" title="Olympus: solid / see-through / hidden (O)">⛰</button>
           <button class="icon-btn" data-a="diplo" id="btnDiplo" title="Diplomacy &amp; alliances">🤝<span class="dot hidden"></span></button>
+          <button class="icon-btn" data-a="book" title="The Proctors' Book: the odds on every House (B)">📖</button>
           <button class="icon-btn" data-a="settings" title="Settings: camera and sound">⚙</button>
           <button class="icon-btn" data-a="emotes" id="btnEmote" title="Emote: shout a line into the War Log">💬</button>
         </div>
@@ -839,6 +879,9 @@ export class App {
     this.world.setFocus(spot ?? (this.focusMode && this.me != null ? this.me : null));
     const root = document.getElementById('modal-root');
     if (root?.dataset.key === 'info-diplo') this.modalDiplo(true);
+    if (root?.dataset.key === 'info-book') this.modalBook(true);
+    this.renderAmbush();
+    this.renderSiege();
   }
 
   private lastEmoteAt = 0;
@@ -1048,7 +1091,13 @@ export class App {
         <div class="nb">The first to answer join their public alliance (${(allianceOf(v, r.by)?.members.length ?? 1)}/${r.slots}).${allianceOf(v, this.me) ? ' Answering walks out on your current allies: they\'ll call it betrayal.' : ''}</div>
         <div class="row"><button class="btn sm gold" data-a="joinRally">Answer it</button><button class="btn sm" data-a="ignoreRally">Ignore</button></div>
       </div>` : '';
-    box.innerHTML = inv + vote + rally;
+    // Your own setting, so it follows the live view even mid-replay.
+    const hold = this.session!.view!.reactHold?.includes(this.me) && v.players[this.me]?.alive ? `<div class="notice hold" style="--c:#9c7a36">
+        <div class="nt">🛡 Ambush prompts on hold</div>
+        <div class="nb">Rivals' attacks go through without asking you until your next turn begins.</div>
+        <div class="row"><button class="btn sm" data-a="unhold">Cancel: ask me again</button></div>
+      </div>` : '';
+    box.innerHTML = hold + inv + vote + rally;
   }
 
   private attackSources(): number[] {
@@ -1107,14 +1156,21 @@ export class App {
       bar.classList.remove('hidden');
       bar.innerHTML = `<span class="hint watching">${sig(p.house, 'sig sm')} Watching <b style="color:${HOUSES[p.house].color}">${esc(p.name)}</b>${p.ai ? ' (AI)' : ''} · ${esc(v.phase)}${this.queue.length > 1 ? ` · ${this.queue.length} moves to go` : ''}</span>
         <div class="seg" title="Replay speed">${[1, 2, 4].map((n) => `<button data-a="speed" data-n="${n}" class="${this.speed === n ? 'on' : ''}">${n}×</button>`).join('')}</div>
-        <button class="btn sm" data-a="skip" title="Jump to now">Skip ▸▸</button>`;
+        <button class="btn sm" data-a="skip" title="Jump to now">Skip ▸▸</button>
+        ${this.me != null && v.players[this.me] && !v.players[this.me].alive ? '<button class="btn sm" data-a="emotes" title="Spectators can still shout into the War Log">💬</button>' : ''}`;
       return;
     }
     if (v.phase === 'passage' || v.phase === 'over') { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
     bar.classList.remove('hidden');
     if (v.reaction) {
       const r = v.reaction;
-      bar.innerHTML = r.defender === this.me ? `<span class="hint">A Standard is charging you!</span>` : `<span class="hint">${esc(v.players[r.defender].name)} is deciding whether to spring an ambush…</span>`;
+      bar.innerHTML = r.defender === this.me ? `<span class="hint">⚔ You're under attack. Spring an ambush, or let them come.</span>` : `<span class="hint">⏸ ${esc(v.players[r.defender].name)} is deciding whether to spring an ambush…</span>`;
+      return;
+    }
+    if (this.me != null && v.players[this.me] && !v.players[this.me].alive) {
+      const p = v.players[v.cur];
+      bar.innerHTML = `<span class="hint">👁 Spectating. Your House has fallen; ${esc(p.name)} has the field.</span>
+        <button class="btn sm" data-a="emotes">💬 Cheer or jeer</button><button class="btn sm" data-a="book">📖 The Book</button>`;
       return;
     }
     if (!this.myTurn()) {
@@ -1266,7 +1322,7 @@ export class App {
   private playableNow(id: string, locked: boolean) {
     const v = this.v, c = CARD[id];
     if (locked || this.me == null || this.playing) return false;
-    if (v.reaction) return v.reaction.defender === this.me && c.active.kind === 'counter';
+    if (v.reaction) return v.reaction.defender === this.me && reactionCards(v, this.me).includes(id);
     if (!this.myTurn() || v.phase !== 'draft' || this.ui.pending || this.ui.confirm) return false;
     return c.active.kind !== 'counter' && (c.kind !== 'proctor' || ownsHouse(v, this.me, c.house)) && (!isSiegeCard(c) || this.sieging());
   }
@@ -1288,7 +1344,7 @@ export class App {
     const hand = v.me?.hand ?? [];
     const box = document.getElementById('hand')!;
     if (v.phase === 'passage' || !hand.length) { box.innerHTML = ''; this.renderInspector(); return; }
-    box.innerHTML = hand.map((h) => this.cardHTML(h.id, { sel: u.trade.has(h.id), locked: h.locked, btns: this.cardButtons(h.id, h.locked), mag: true, cls: `${u.inspect === h.id ? 'inspecting' : ''} ${this.playableNow(h.id, h.locked) ? 'playable' : ''}` })).join('');
+    box.innerHTML = hand.map((h) => this.cardHTML(h.id, { sel: u.trade.has(h.id), locked: h.locked, btns: this.cardButtons(h.id, h.locked), mag: true, cls: `${u.inspect === h.id ? 'inspecting' : ''} ${this.playableNow(h.id, h.locked) ? `playable${v.reaction ? ' react-ready' : ''}` : ''}` })).join('');
     if (!box.dataset.hover) {
       box.dataset.hover = '1';
       // Hovering a card lights up what it would hit.
@@ -1350,7 +1406,7 @@ export class App {
         break;
       }
       case 'steal': out.lines.push(`Steal ${n} random card${n === 1 ? '' : 's'} from a rival you pick.`); break;
-      case 'counter': out.lines.push('REACTION: only when a Standard charges one of your territories. You can still trade it.'); break;
+      case 'counter': out.lines.push(`REACTION: when a rival attacks one of your territories, the attack pauses and you may spring it: +${n} phantom defenders and +1 to every defense die for that battle. You can still trade it.`); break;
       default: out.lines.push(esc(fmt(c.active.text, n)));
     }
     if (c.kind === 'proctor' && !ownsHouse(v, me, c.house)) out.lines.unshift(`<span class="warn">You don't own House ${HOUSES[c.house].name}: discard it for 2 cards instead.</span>`);
@@ -1508,24 +1564,6 @@ export class App {
       this.modal(`<div class="modal"><div class="box" style="text-align:center"><h2>Blood on the floor</h2><p class="prose">You walked out. Now wait while the others finish killing their friends.</p></div></div>`, 'passage-wait');
       return;
     }
-    if (v.reaction && v.reaction.defender === this.me) {
-      const r = v.reaction;
-      const counters = (v.me?.hand ?? []).filter((h) => !h.locked && CARD[h.id].active.kind === 'counter');
-      const m = this.modal(`<div class="modal"><div class="box" style="text-align:center">
-        <div class="logo-sub" style="color:var(--blood-hi)">⚑ THE STANDARD CHARGES ⚑</div>
-        <h2>${esc(v.players[v.cur].name)} is coming for ${esc(this.tname(r.to))} with ${r.commit} + 3</h2>
-        <p class="prose">Spring an ambush? Win this and their whole House is yours.</p>
-        ${s.mode === 'online' ? '<div class="timer"><div id="rtimer"></div></div>' : ''}
-        <div class="cards-row">${counters.map((h) => this.cardHTML(h.id, { btns: `<div class="btns"><button class="btn primary" data-a="react" data-id="${h.id}">Spring it</button></div>` })).join('')}</div>
-        <button class="btn" data-a="react" data-id="">Let them come</button>
-      </div></div>`, `react-${r.from}-${r.to}-${v.version}`);
-      if (m && s.mode === 'online') {
-        const bar = m.querySelector<HTMLElement>('#rtimer');
-        const tick = () => { if (!bar?.isConnected) return; const left = Math.max(0, r.deadline - Date.now()); bar.style.width = `${(left / 25000) * 100}%`; if (left > 0) setTimeout(tick, 250); };
-        tick();
-      }
-      return;
-    }
     if (this.myTurn() && v.ts.mustMove) {
       const mm = v.ts.mustMove;
       const n = Math.max(mm.min, Math.min(this.ui.moveN > 1 ? this.ui.moveN : mm.max, mm.max));
@@ -1608,7 +1646,7 @@ export class App {
     </div></div>`, 'info-menu');
   }
 
-  /** This device's preferences: the camera following the action, music and effects, and the sound of your turn. */
+  /** This device's preferences: the camera following the action, music and effects, and the horn for your turn. */
   private modalSettings() {
     const row = (k: string, on: boolean, title: string, note: string) => `<div class="set-row inline pref"><div><div class="set-k">${title}</div><div class="set-note">${note}</div></div>
       <div class="seg"><button data-a="pref" data-k="${k}" data-v="1" class="${on ? 'on' : ''}">On</button><button data-a="pref" data-k="${k}" data-v="0" class="${!on ? 'on' : ''}">Off</button></div></div>`;
@@ -1621,9 +1659,9 @@ export class App {
         ${row('mute', !sound.muted, 'Sound', 'Everything on or off. Press M anytime.')}
         ${slider('music', sound.musicVol, 'Music', 'The soundtrack follows the war: calm, tense, battle.')}
         ${slider('sfx', sound.sfxVol, 'Effects', 'Steel, dice, war cries and the valley.')}
-        ${row('sound', this.prefs.sound, 'Turn chime', 'A clash of swords when your turn begins.')}
+        ${row('sound', this.prefs.sound, 'Turn horn', 'A war horn, and your soldiers shouting back, when your turn begins.')}
       </div>
-      <div style="display:flex;justify-content:space-between;margin-top:14px"><button class="btn sm" data-a="pref-test">Hear the chime</button><button class="btn primary" data-a="close">Done</button></div>
+      <div style="display:flex;justify-content:space-between;margin-top:14px"><button class="btn sm" data-a="pref-test">Hear the horn</button><button class="btn primary" data-a="close">Done</button></div>
     </div></div>`, 'info-settings', true);
   }
 
@@ -1671,6 +1709,97 @@ export class App {
     </div></div>`, 'info-diplo', refresh);
   }
 
+  /** How many snapshots the open Book was drawn from (it redraws only when a new turn begins). */
+  private bookN = -1;
+  /**
+   * The Proctors' Book: every House ranked by its odds to take the Institute, with territories, armies and battles won
+   * (against Houses), and the odds turn by turn. Allies are booked as one side and share their odds and their line.
+   */
+  private modalBook(refresh = false) {
+    const v = this.v;
+    const lines = bookLines(v);
+    if (refresh && lines.length === this.bookN) return;
+    this.bookN = lines.length;
+    const last = lines.at(-1), prev = lines.at(-2);
+    const delta = (now: number, was: number | undefined, unit = '') => {
+      if (was == null || now === was) return '';
+      return `<span class="bk-d ${now > was ? 'up' : 'down'}">${now > was ? '▲' : '▼'}${Math.abs(now - was)}${unit}</span>`;
+    };
+    const sideOf = (l: Line | undefined, seat: number) => l?.sides.find((sd) => sd.members.includes(seat));
+    const cards = !last ? '' : [...v.players].sort((a, b) => (last.pct[b.seat] - last.pct[a.seat]) || (last.snap.a[b.seat] - last.snap.a[a.seat])).map((p, i) => {
+      const s = last.snap, seat = p.seat;
+      const alive = s.t[seat] > 0;
+      const side = sideOf(last, seat);
+      const allies = side && side.members.length > 1 ? side.members.filter((m) => m !== seat) : [];
+      // The last alliance this House was booked in, if it has since ended.
+      let broken = '';
+      if (!allies.length) {
+        const j = lines.map((l) => (sideOf(l, seat)?.members.length ?? 0) > 1).lastIndexOf(true);
+        if (j >= 0 && j < lines.length - 1) {
+          const was = sideOf(lines[j], seat)!.members.filter((m) => m !== seat);
+          broken = `<div class="bk-al broken">⚔ Alliance with ${was.map((m) => `${sig(v.players[m].house, 'sig sm')} ${esc(v.players[m].name)}`).join(', ')} ended in R${roundOf(v, lines[j + 1].snap.turn)}. Booked alone again.</div>`;
+        }
+      }
+      const fell = !alive ? lines.findIndex((l) => l.snap.t[seat] === 0) : -1;
+      const pv = prev?.snap;
+      return `<div class="bk-card ${alive ? '' : 'fallen'} ${seat === this.me ? 'me' : ''}" style="--c:${HOUSES[p.house].color}">
+        <div class="bk-rank">${alive ? `#${i + 1}` : '☠'}</div>
+        <div class="bk-who">${sig(p.house)} <b>${esc(p.name)}</b>${seat === this.me ? ' <span class="you">YOU</span>' : ''}${p.ai ? ' <span class="ai-tag">AI</span>' : ''}<div class="fine">House ${HOUSES[p.house].name}</div></div>
+        <div class="bk-odds"><b>${alive ? `${last.pct[seat] < 1 && last.pct[seat] > 0 ? '<1' : Math.round(last.pct[seat])}%` : '—'}</b><span>${!alive ? `fell in R${roundOf(v, lines[Math.max(0, fell)].snap.turn)}` : allies.length ? 'shared odds' : 'to win'}</span>
+          ${alive && prev ? delta(Math.round(last.pct[seat]), Math.round(prev.pct[seat]), ' pts') : ''}</div>
+        <div class="bk-stats">
+          <div><span>Territories</span><b>${s.t[seat]}</b>${delta(s.t[seat], pv?.t[seat])}</div>
+          <div><span>Armies</span><b>${s.a[seat]}</b>${delta(s.a[seat], pv?.a[seat])}</div>
+          <div><span>Battles won</span><b>${s.w[seat]}</b>${delta(s.w[seat], pv?.w[seat])}</div>
+        </div>
+        ${allies.length ? `<div class="bk-al">🤝 Booked with ${allies.map((m) => `${sig(v.players[m].house, 'sig sm')} ${esc(v.players[m].name)}`).join(', ')}: one side, one line, shared odds.</div>` : broken}
+      </div>`;
+    }).join('');
+    const legend = v.players.map((p) => `<span class="bk-key"><i style="background:${HOUSES[p.house].color}"></i>${HOUSES[p.house].sigil} ${esc(p.name)}</span>`).join('');
+    const asOf = last ? `As of R${roundOf(v, last.snap.turn)}${last.snap.seat >= 0 ? `, the start of ${esc(v.players[last.snap.seat].name)}'s turn` : ', the end of the war'}.` : '';
+    this.modal(`<div class="modal"><div class="box book" style="max-width:780px">
+      <div class="logo-sub">THE PROCTORS ARE BETTING</div>
+      <h2>📖 The Proctors' Book</h2>
+      <p class="fine" style="margin:0 0 10px">${asOf} The odds update between turns: 45% armies, 40% territories, 15% battles won (only against other Houses, never neutrals). Allies are booked as one side: their line merges and they share the odds until the alliance breaks.</p>
+      ${bookChart(v, lines)}
+      <div class="bk-legend">${legend}<span class="bk-key braid"><i></i>allies (braided)</span></div>
+      <div class="bk-cards">${cards || '<p class="fine">No turns yet.</p>'}</div>
+      <div style="text-align:right;margin-top:10px"><button class="btn primary" data-a="close">Close</button></div>
+    </div></div>`, 'info-book', refresh);
+    this.wireBookHover(lines);
+  }
+
+  /** The chart's crosshair: it snaps to the nearest turn and lists every side's odds there. */
+  private wireBookHover(lines: Line[]) {
+    const root = document.getElementById('modal-root');
+    const svg = root?.querySelector<SVGSVGElement>('.bk-chart svg');
+    const tip = root?.querySelector<HTMLElement>('.bk-tip');
+    const cross = svg?.querySelector<SVGLineElement>('.bk-cross');
+    if (!svg || !tip || !cross || lines.length < 2) return;
+    const v = this.v;
+    const hide = () => { tip.classList.add('hidden'); cross.classList.add('hidden'); };
+    svg.addEventListener('pointerleave', hide);
+    svg.addEventListener('pointermove', (e) => {
+      const r = svg.getBoundingClientRect();
+      const sx = ((e.clientX - r.left) / r.width) * BOOK_W;
+      const i = bookIndexAt(lines, sx);
+      const l = lines[i];
+      const cx = bookX(lines, i);
+      cross.setAttribute('x1', String(cx)); cross.setAttribute('x2', String(cx));
+      cross.classList.remove('hidden');
+      const rows = [...l.sides].sort((a, b) => b.pct - a.pct).map((sd) => {
+        const keys = sd.members.map((m) => `<i style="background:${HOUSES[v.players[m].house].color}"></i>`).join('');
+        const names = document.createElement('span');
+        names.textContent = sd.members.map((m) => v.players[m].name).join(' + ');
+        return `<div class="bk-tr"><span class="bk-lk">${keys}</span><b>${Math.round(sd.pct)}%</b> ${names.innerHTML}</div>`;
+      }).join('');
+      tip.innerHTML = `<div class="bk-th">R${roundOf(v, l.snap.turn)}${l.snap.seat >= 0 ? ` · ${esc(v.players[l.snap.seat].name)}'s turn` : ' · the end'}</div>${rows}`;
+      tip.classList.remove('hidden');
+      const px = ((cx / BOOK_W) * r.width);
+      tip.style.left = `${px > r.width * 0.6 ? px - tip.offsetWidth - 12 : px + 12}px`;
+    });
+  }
+
   private async onModalClick(e: Event) {
     const b = (e.target as HTMLElement).closest('[data-a]') as HTMLElement | null;
     const root = document.getElementById('modal-root')!;
@@ -1683,12 +1812,12 @@ export class App {
     if (a === 'pref') {
       const on = b.dataset.v === '1';
       if (b.dataset.k === 'follow') { this.prefs.follow = on; store.set('ic-follow', on ? '1' : '0'); }
-      if (b.dataset.k === 'sound') { this.prefs.sound = on; store.set('ic-sound', on ? '1' : '0'); if (on) swordClash(); }
+      if (b.dataset.k === 'sound') { this.prefs.sound = on; store.set('ic-sound', on ? '1' : '0'); if (on) turnHorn(); }
       if (b.dataset.k === 'mute') sound.setMuted(!on);
       this.modalSettings();
       return;
     }
-    if (a === 'pref-test') { swordClash(); return; }
+    if (a === 'pref-test') { turnHorn(); return; }
     if (a === 'copy') { navigator.clipboard?.writeText(b.dataset.link!).then(() => this.toast('Link copied.')); return; }
     if (a === 'concede') { if (confirm('Throw down your sword? Your House goes to the wilds.')) { this.modal(null); await this.send({ type: 'concede' }); } return; }
     if (a === 'ack') { this.modal(null); this.session?.ackHandoff?.(); return; }
@@ -1807,6 +1936,10 @@ export class App {
     if (!this.session?.view) return;
     if (e.key === 'g' || e.key === 'G') this.toggleFocus();
     if (e.key === 'o' || e.key === 'O') this.cycleOlympus();
+    if ((e.key === 'b' || e.key === 'B') && document.getElementById('hud')) {
+      if (document.getElementById('modal-root')?.dataset.key === 'info-book') this.modal(null);
+      else this.modalBook();
+    }
     if (e.key === 'Escape') {
       this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.spot = null; this.ui.emotes = false;
       this.endPreview();
@@ -1820,7 +1953,12 @@ export class App {
       // Clicking a glowing card (not one of its buttons) plays it: straight into the preview.
       const card = (e.target as HTMLElement).closest<HTMLElement>('#hand .gcard.playable, #inspector .gcard.playable');
       if (card?.dataset.card) {
-        if (this.v.reaction) { await this.send({ type: 'react', card: card.dataset.card }); return; }
+        // Mid-ambush, a stray click never springs a card: the prompt's own buttons do that.
+        if (this.v.reaction) {
+          const b = document.querySelector<HTMLElement>(`#ambush [data-id="${card.dataset.card}"]`);
+          b?.classList.remove('nudge'); void b?.offsetWidth; b?.classList.add('nudge');
+          return;
+        }
         return this.startPlay(card.dataset.card);
       }
       return;
@@ -1834,7 +1972,20 @@ export class App {
       case 'focus': return this.toggleFocus();
       case 'olympus': return this.cycleOlympus();
       case 'diplo': return this.modalDiplo();
+      case 'book': return this.modalBook();
       case 'settings': return this.modalSettings();
+      case 'react-play': return void this.send({ type: 'react', card: b.dataset.id! });
+      case 'react-skip': return void this.send({ type: 'react', card: null });
+      case 'react-hold': {
+        const err = await this.send({ type: 'react', card: null, hold: true });
+        if (!err) this.toast('No more ambush prompts until your turn. Cancel it from the notice up top.');
+        return;
+      }
+      case 'unhold': {
+        const err = await this.send({ type: 'holdReactions', on: false });
+        if (!err) this.toast('You\'ll be asked again the next time a rival attacks you.');
+        return;
+      }
       case 'spot': {
         const seat = +b.dataset.seat!;
         u.spot = u.spot === seat ? null : seat;
@@ -1865,7 +2016,7 @@ export class App {
         return;
       }
       case 'speed': return this.setSpeed(+b.dataset.n!);
-      case 'skip': this.skipping = true; document.querySelector('.showcase [data-a=ack]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })); return;
+      case 'skip': this.skipReplay(); return;
       case 'tab-roster': u.mobileTab = u.mobileTab === 'roster' ? 'none' : 'roster'; return this.render();
       case 'tab-log': u.mobileTab = u.mobileTab === 'log' ? 'none' : 'log'; return this.render();
       case 'min-roster': if (window.innerWidth > 900) { u.rosterMin = !u.rosterMin; this.render(); } return;
@@ -2145,6 +2296,7 @@ export class App {
       if (e === lastTurn) this.turnBanner(v, e.seat);
       if (e.k === 'invite' && e.to === this.me) this.toast(`📜 ${v.players[e.from].name} whispers an alliance offer. Check 🤝.`);
       if (e.k === 'olympusTurn' && e.killed) this.world.bleed(OLYMPUS, e.killed);
+      this.bigMoment(v, e, fresh);
       const hl = headline(v, e);
       if (hl) this.banner(hl.title, hl.sub, hl.color, hl.long);
       this.sfx(v, e);
@@ -2167,7 +2319,7 @@ export class App {
       const olympus = e.k === 'assault';
       const to = olympus ? OLYMPUS : e.to;
       const aName = v.players[e.seat].name;
-      const dName = olympus ? 'Olympus' : e.def >= 0 ? v.players[e.def].name : 'Neutral';
+      const dName = olympus ? (CARD[e.proctor]?.name ?? 'Olympus') : e.def >= 0 ? v.players[e.def].name : 'Neutral';
       document.getElementById('bA')!.innerHTML = `<span style="color:${HOUSES[v.players[e.seat].house].color}">${esc(aName)}</span>`;
       document.getElementById('bD')!.innerHTML = `<span style="color:${olympus ? '#f3d27a' : e.def >= 0 ? HOUSES[v.players[e.def].house].color : '#aaa'}">${esc(dName)}</span>`;
       document.getElementById('bRes')!.innerHTML = e.k === 'stdBattle' ? '⚑ Standard battle…' : `${esc(this.tname(e.from))} → ${esc(this.tname(to))}`;
@@ -2361,6 +2513,276 @@ export class App {
         rot -= jitter;
       }
       if (!done) finish();
+    });
+  }
+
+  // =========================================================================
+  // ambushes (REACTION cards)
+
+  private ambushKey = '';
+  /** Under attack while holding a REACTION card: the attack waits, the cards glow, and this panel asks. */
+  private renderAmbush() {
+    const s = this.session, v = s?.view;
+    const r = v?.reaction;
+    const box = document.getElementById('ambush');
+    if (!s || !v || !r || this.me == null || r.defender !== this.me || this.playing || s.handoff != null || !document.getElementById('hud')) {
+      box?.remove();
+      this.ambushKey = '';
+      return;
+    }
+    const key = `${r.from}>${r.to}@${r.deadline}`;
+    if (box && key === this.ambushKey) return;
+    this.ambushKey = key;
+    box?.remove();
+    const me = this.me, T = geo(v).territories, att = v.players[v.cur];
+    const std = r.commit != null;
+    const sh = standardAt(v, r.to);
+    const guard = sh >= 0 ? v.standards[sh].guard : 0;
+    // Their chance to take it if they blitz, without and with each ambush.
+    const base = std ? standardFight(v, v.cur, r.from, r.to, r.commit!) : attackFight(v, v.cur, r.from, r.to);
+    const theirOdds = (id?: string) => winChance(id ? { ...base, def: base.def + activeValue(v, me, CARD[id]), defAll: base.defAll + 1, overwhelm: false } : base);
+    const cards = reactionCards(v, me);
+    const p0 = theirOdds();
+    const panel = el(`<div id="ambush" class="ambush" style="--c:${HOUSES[att.house].color}">
+      <div class="am-h">⚔ ${std ? 'THE STANDARD CHARGES' : 'YOU ARE ATTACKED'} <span>the attack waits on you</span></div>
+      <div class="am-what">${sig(att.house)} <b>${esc(att.name)}</b> ${std ? 'raises the Standard against' : 'attacks'} <b>${esc(T[r.to].name)}</b> (${v.armies[r.to]}${guard ? ` +${guard} guard` : ''})
+        from <b>${esc(T[r.from].name)}</b> (${std ? `${r.commit} + 3 phantoms` : v.armies[r.from]})${r.blitz ? ', and they mean to blitz' : ''}.${std ? ' If the charge dies, their whole House is yours.' : ''}</div>
+      ${s.mode === 'online' ? '<div class="timer"><div id="atimer"></div></div>' : ''}
+      <div class="am-cards">${cards.map((id) => {
+        const c = CARD[id], n = activeValue(v, me, c), p1 = theirOdds(id);
+        return `<button class="am-card" data-a="react-play" data-id="${id}" style="--hc:${HOUSES[c.house].color}">
+          <b>Play ${esc(c.name)}</b><span>+${n} phantom defenders · +1 to every defense die</span>
+          <span class="am-odds">Their odds: <s>${pct(p0)}</s> → <b class="odds ${oddsClass(1 - p1)}">${pct(p1)}</b></span></button>`;
+      }).join('')}</div>
+      <div class="am-btns"><button class="btn" data-a="react-skip" title="Let this attack through. You'll be asked again next time.">Skip</button>
+        <button class="btn ghost" data-a="react-hold" title="Let every attack through without asking until your next turn begins. You can cancel it.">Skip until my turn</button></div>
+    </div>`);
+    document.getElementById('hud')!.appendChild(panel);
+    this.world.arrow(r.from, r.to, '#ff3b1f');
+    this.world.focus(r.to);
+    this.world.flash([r.to], '#ff3b1f', 1600);
+    sound.play('drum', { vol: 0.7 });
+    if (s.mode === 'online') {
+      const bar = panel.querySelector<HTMLElement>('#atimer');
+      const total = Math.max(1, r.deadline - (r.at ?? r.deadline - 25_000));
+      const tick = () => { if (!bar?.isConnected) return; const left = Math.max(0, r.deadline - Date.now()); bar.style.width = `${(left / total) * 100}%`; if (left > 0) setTimeout(tick, 250); };
+      tick();
+    }
+  }
+
+  /** What the battle after an ambush came to, in one line. */
+  private ambushOutcome(v: GameState, e: GameEvent, evs: GameEvent[]): string {
+    const b = evs.find((x) => x.id > e.id && (x.k === 'battle' || x.k === 'stdBattle') && x.from === e.from && x.to === e.to);
+    if (!b) return '';
+    const att = `<b>${esc(v.players[b.seat].name)}</b>`, def = `<b>${esc(v.players[e.seat].name)}</b>`, t = `<b>${esc(geo(v).territories[b.to].name)}</b>`;
+    if (b.k === 'stdBattle') return b.won
+      ? `The charge breaks through anyway: ${att} takes ${t}, losing ${b.aLost}.`
+      : `The charge dies in the trap after ${b.n} rounds. ${att}'s whole House now kneels to ${def}.`;
+    if (b.won) return `Not enough. ${att} takes ${t} anyway, losing ${b.aLost} to the ambush.`;
+    return b.blitz
+      ? `The ambush holds! ${att}'s blitz breaks on ${t}: ${b.aLost} attackers dead, ${b.dLost} defenders and ghosts fallen.`
+      : `First blood to the ambush: ${att} loses ${b.aLost}, ${def} ${b.dLost}. The ghosts hold ${t} for the rest of this battle.`;
+  }
+
+  /** A REACTION card was sprung: its name, its rule, how it went, and the ambush itself on screen. */
+  private showAmbushPlayed(v: GameState, e: GameEvent, outcome: string): Promise<void> {
+    const c = CARD[e.card];
+    if (!c || this.skipping) return Promise.resolve();
+    const def = v.players[e.seat], att = v.players[e.vs ?? v.cur];
+    const fx = AMBUSH_FX[e.card] ?? 'slash';
+    const tn = e.to != null ? geo(v).territories[e.to]?.name ?? '' : '';
+    const box = el(`<div class="ambush-fx fx-${fx}" style="--hc:${HOUSES[c.house].color};--dc:${HOUSES[def.house].color}">
+      <div class="fx-layer">${'<i></i>'.repeat(12)}</div>
+      <div class="fx-card">
+        <div class="fx-title">“${esc(c.name)}” played!</div>
+        <div class="fx-who">${sig(def.house)} <b>${esc(def.name)}</b> springs an ambush on ${sig(att.house)} <b>${esc(att.name)}</b>${tn ? ` at <b>${esc(tn)}</b>` : ''}</div>
+        <div class="fx-body">${this.cardHTML(e.card, { an: e.n, forHouse: def.house, ownsCheck: false })}
+          <div class="fx-text"><div class="k">THE RULE</div>
+            <p>${e.n} phantom defenders rise to hold ${esc(tn || 'the ground')}, and every one of ${esc(def.name)}'s defense dice gets +1 for this battle${e.std ? ' against the Standard' : ''}. The phantoms die last.</p>
+            ${outcome ? `<div class="k">THE OUTCOME</div><p class="fx-out">${outcome}</p>` : ''}</div></div>
+        <button class="btn primary" data-a="ack">Continue</button>
+      </div></div>`);
+    document.body.appendChild(box);
+    document.documentElement.classList.remove('shake');
+    void document.documentElement.offsetWidth;
+    document.documentElement.classList.add('shake');
+    setTimeout(() => document.documentElement.classList.remove('shake'), 700);
+    this.ambushSound(fx);
+    if (e.to != null) {
+      if (this.prefs.follow || e.seat === this.me || e.vs === this.me) this.world.focus(e.to);
+      this.world.burst(e.to, HOUSES[def.house].color, true);
+      this.world.flash([e.to], HOUSES[def.house].color, 1800);
+    }
+    if (e.seat === this.me || e.vs === this.me) this.flashBlood(0.5);
+    return new Promise((res) => {
+      let done = false;
+      const close = () => { if (done) return; done = true; box.classList.add('out'); setTimeout(() => box.remove(), 320); res(); };
+      box.querySelector('[data-a=ack]')!.addEventListener('click', close);
+      setTimeout(close, 7000);
+    });
+  }
+
+  private ambushSound(fx: string) {
+    const p = (n: string, vol = 1, delay = 0) => sound.play(n, { vol, delay });
+    switch (fx) {
+      case 'slash': p('whoosh'); p('clash', 1, 0.12); p('clash', 0.8, 0.32); break;
+      case 'arrows': p('whoosh'); p('whoosh', 0.8, 0.14); p('whoosh', 0.7, 0.28); p('grunt', 0.8, 0.5); break;
+      case 'jaws': p('thud'); p('clash', 0.9, 0.1); p('scream', 0.7, 0.35); break;
+      case 'fire': p('boom'); p('scream', 0.6, 0.4); break;
+      case 'ghosts': p('dread'); p('whoosh', 0.6, 0.4); break;
+      case 'snare': p('whoosh'); p('thud', 0.9, 0.25); p('grunt', 0.8, 0.35); break;
+    }
+  }
+
+  // =========================================================================
+  // a House falls
+
+  /** Is this seat's fall shown on this screen (online: your own; hot-seat: any human's)? */
+  private fallenHere(seat: number) {
+    const s = this.session;
+    if (!s) return false;
+    return s.mode === 'online' ? seat === s.seat : !s.view?.players[seat]?.ai;
+  }
+
+  /** The math of one battle or charge, as a small table. */
+  private blowHTML(v: GameState, f: GameEvent) {
+    const T = geo(v).territories;
+    const att = esc(v.players[f.seat].name), def = f.def >= 0 ? esc(v.players[f.def].name) : 'the garrison';
+    const m: number[] = f.m ?? [0, 0, 0, 0, 0, 0];
+    const mods = [
+      m[0] ? `+${m[0]} to ${att}'s highest die (cards, Passives)` : '',
+      m[1] ? `+${m[1]} to ${att}'s lowest compared die (⛰ high ground)` : '',
+      m[2] ? `+${m[2]} to every one of ${att}'s dice (fury)` : '',
+      m[3] ? `+${m[3]} to ${def}'s highest die (Keep Passives)` : '',
+      m[4] ? `+${m[4]} to ${def}'s lowest die (🌲 forest cover)` : '',
+      m[5] ? `+${m[5]} to every one of ${def}'s dice (ambush)` : '',
+    ].filter(Boolean);
+    const std = f.k === 'stdBattle';
+    const att0 = std ? `${f.a0 ?? f.commit ?? '?'} soldiers + ${f.aPh0 ?? 3} phantoms` : f.a0 != null ? `${f.a0} armies (${f.a0 - 1} could fight)` : '?';
+    const def0 = std ? `${f.d0 ?? '?'} soldiers${f.dPh0 ? ` + ${f.dPh0} guard and ambushers` : ''}` : f.d0 != null ? `${f.d0} soldiers${f.g0 ? ` + ${f.g0} honor guard` : ''}${f.ph0 ? ` + ${f.ph0} ambushers` : ''}` : '?';
+    const odds = f.a0 != null && f.d0 != null ? winChance({
+      att: std ? f.a0 + (f.aPh0 ?? 3) : f.a0 - 1, def: std ? f.d0 + (f.dPh0 ?? 0) : f.d0 + (f.g0 ?? 0) + (f.ph0 ?? 0), defCap: f.def >= 0 ? 2 : 1,
+      atkHigh: m[0], atkLow: m[1], atkAll: m[2], defHigh: m[3], defLow: m[4], defAll: m[5],
+    }) : null;
+    const last = Array.isArray(f.rolls) && f.rolls.length ? f.rolls[f.rolls.length - 1] : null;
+    const dice = (raw: number[], mod: number[]) => raw.map((r, i) => (mod[i] !== r ? `${r}<sup>+${mod[i] - r}</sup>` : `${r}`)).join(' ');
+    return `<table class="blow">
+      <tr><th>${std ? '⚑ The charge' : '⚔ The attack'}</th><td>${att} from <b>${esc(T[f.from].name)}</b>: ${att0}</td></tr>
+      <tr><th>🛡 The defense</th><td>${def} at <b>${esc(T[f.to].name)}</b>: ${def0}</td></tr>
+      ${mods.length ? `<tr><th>🎲 Modifiers</th><td>${mods.join('<br>')}</td></tr>` : ''}
+      ${odds != null ? `<tr><th>⚖ The odds</th><td>${att} had a <b>${pct(odds)}</b> chance going in${std ? ' (before the war cry)' : ' to win a blitz'}.</td></tr>` : ''}
+      <tr><th>☠ The toll</th><td>${f.n} roll${f.n === 1 ? '' : 's'}: ${att} lost <b>${f.aLost}</b>, ${def} lost <b>${f.dLost}</b>.</td></tr>
+      ${last ? `<tr><th>🎲 Last roll</th><td><span class="dice-l">${dice(last.raw.a, last.a)}</span> vs <span class="dice-l">${dice(last.raw.d, last.d)}</span> <span class="fine">(highest against highest, ties to the defender)</span></td></tr>` : ''}
+    </table>`;
+  }
+
+  /** You're out: how it happened, the math of the last fight, and what next (back to the title, or stay and watch). */
+  private showFallen(v: GameState, dom: GameEvent): Promise<void> {
+    const seat = dom.victim, p = v.players[seat];
+    const g = geo(v), T = g.territories;
+    const before = v.log.filter((x) => x.id < dom.id);
+    const conceded = before.some((x) => x.k === 'concede' && x.seat === seat);
+    const cap = [...before].reverse().find((x) => x.k === 'stdCaptured' && x.house === p.house);
+    const blow = cap ? [...before].reverse().find((x) => x.id < cap.id && (x.k === 'battle' || x.k === 'stdBattle')) : undefined;
+    const captor = dom.captor >= 0 ? `<b style="color:${HOUSES[v.players[dom.captor].house].color}">${esc(v.players[dom.captor].name)}</b>` : 'the wilds';
+    const how = conceded ? 'You threw down your sword and walked into the snow. Your land went to the wilds.'
+      : blow?.k === 'stdBattle' && blow.seat === seat ? `You raised the Standard at <b>${esc(T[blow.from].name)}</b> and charged <b>${esc(T[blow.to].name)}</b>. The charge died, and a Standard lost in battle takes its whole House with it: everything you had now kneels to ${captor}.`
+      : blow ? `${captor} took <b>${esc(T[blow.to].name)}</b>, where your Standard stood. Lose the Standard, lose the House.`
+      : `${captor} captured your Standard. Lose the Standard, lose the House.`;
+    const online = this.session?.mode === 'online';
+    const box = el(`<div class="fallen-wrap"><div class="fallen" style="--c:${HOUSES[p.house].color}">
+      <div class="logo-sub">☠ THE INSTITUTE HAS NO MORE USE FOR YOU</div>
+      <h1>${sig(p.house)} House ${HOUSES[p.house].name} has fallen</h1>
+      ${!online ? `<div class="fine" style="margin:-4px 0 8px">${esc(p.name)}</div>` : ''}
+      <p class="prose">${how}</p>
+      ${blow && !conceded ? `<div class="k">THE FINAL BLOW</div>${this.blowHTML(v, blow)}` : ''}
+      ${dom.captor >= 0 ? `<p class="fine">${captor} took ${dom.terr} territor${dom.terr === 1 ? 'y' : 'ies'} and ${dom.cards} card${dom.cards === 1 ? '' : 's'} from you. You were out in round ${roundOf(v, v.turn)}.</p>` : ''}
+      <div class="row fallen-btns"><button class="btn" data-a="title">Return to Title</button><button class="btn primary" data-a="spectate">${online ? 'Spectate' : 'Keep watching'}</button></div>
+      <p class="fine">Spectators watch the rest of the war, open the 📖 Book, and can still shout into the War Log with 💬.</p>
+    </div></div>`);
+    document.body.appendChild(box);
+    sound.play('dread');
+    return new Promise((res) => {
+      box.addEventListener('click', (e) => {
+        const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
+        if (a === 'title') { box.remove(); res(); this.showTitle(); }
+        if (a === 'spectate') { box.remove(); res(); this.render(); this.toast('Spectating. 💬 to cheer or jeer.'); }
+      });
+    });
+  }
+
+  // =========================================================================
+  // the Siege on Olympus
+
+  /** While the siege lasts: the walls, the clock, and each House against its own Proctor, with the damage so far. */
+  private renderSiege() {
+    const v = this.session?.view ? this.v : null;
+    let box = document.getElementById('siegebar');
+    const sg = v?.siege;
+    if (!v || !sg || v.phase === 'over' || !document.getElementById('hud')) { box?.remove(); return; }
+    box ??= el('<div id="siegebar" class="siegebar"></div>');
+    // Desktop: at the head of the right column, pushing the log down. Phones: a bar over the map.
+    const home = window.innerWidth > 900 ? document.getElementById('rightcol')! : document.getElementById('hud')!;
+    if (box.parentElement !== home) home.prepend(box);
+    const full = Math.max(sg.start, sg.garrison);
+    box.innerHTML = `<div class="sb-h">🏛 THE SIEGE OF OLYMPUS <span>${sg.turnsLeft} allied turn${sg.turnsLeft === 1 ? '' : 's'} left</span></div>
+      <div class="sb-bar" title="Olympus's garrison"><i style="width:${(100 * sg.garrison) / full}%"></i><span>${sg.garrison} / ${sg.start} on the walls</span></div>
+      ${sg.members.map((m) => {
+        const p = v.players[m], pr = CARD[`p-${HOUSES[p.house].id}`];
+        return `<div class="sb-row ${m === v.cur ? 'cur' : ''}" style="--c:${HOUSES[p.house].color}" title="${esc(pr.name)} holds House ${HOUSES[p.house].name}'s wall: ${esc(OLYMPUS_POWER[pr.id]?.text ?? '')}">
+          ${sig(p.house, 'sig sm')} <b>${esc(p.name)}</b><span class="vs">vs</span><span class="pr">${esc(pr.name)}</span><span class="grow"></span><b>${sg.dmg?.[m] ?? 0}</b><span class="fine">killed</span></div>`;
+      }).join('')}`;
+  }
+
+  /** The siege begins: every House is shown the Proctor whose wall it must break. */
+  private showSiegeStart(v: GameState, e: GameEvent): Promise<void> {
+    if (this.skipping) return Promise.resolve();
+    const duels = e.members.map((m: number) => {
+      const p = v.players[m], pr = CARD[`p-${HOUSES[p.house].id}`];
+      return `<div class="ss-duel" style="--c:${HOUSES[p.house].color}">
+        <div class="ss-h">${sig(p.house)} <b>${esc(p.name)}</b><span class="ss-hn">House ${HOUSES[p.house].name}</span></div>
+        <div class="ss-vs">VS</div>
+        <div class="ss-p"><b>${esc(pr.name)}</b><span>${esc(OLYMPUS_POWER[pr.id]?.text ?? '')}</span></div></div>`;
+    }).join('');
+    return this.slide(`<div class="logo-sub">TO OLYMPUS</div><h1>The Siege begins</h1>
+      <p class="prose"><b>${e.garrison}</b> defenders behind the walls, and <b>${e.turns}</b> allied turns to break them. Each House storms the wall its own Proctor commands: every assault is that House against its Proctor.</p>
+      <div class="ss-duels">${duels}</div>`, 'To the walls', true);
+  }
+
+  /** The siege is over: who did the damage. Each House's share of the defenders killed, by assault or by Relic. */
+  private showSiegeEnd(v: GameState, e: GameEvent): Promise<void> {
+    const won = e.k === 'olympusFalls';
+    const members: number[] = e.members ?? [];
+    const dmg = (m: number) => e.dmg?.[m] ?? 0;
+    const total = members.reduce((a, m) => a + dmg(m), 0);
+    const top = Math.max(1, ...members.map(dmg));
+    const rows = [...members].sort((a, b) => dmg(b) - dmg(a)).map((m) => {
+      const p = v.players[m], pr = CARD[`p-${HOUSES[p.house].id}`];
+      const share = total ? (100 * dmg(m)) / total : 0;
+      const lost = e.lost?.[m] ?? 0, hits = e.hits?.[m] ?? 0;
+      const margin = dmg(m) - lost;
+      return `<div class="se-row">
+        <div class="se-who">${sig(p.house)} <b>${esc(p.name)}</b>${won && e.seat === m ? ' <span class="se-blow" title="Struck the last blow">♛ last blow</span>' : ''}<span class="fine">vs ${esc(pr.name)}</span></div>
+        <div class="se-bar"><i style="width:${(100 * dmg(m)) / top}%;background:${HOUSES[p.house].color}"></i></div>
+        <div class="se-num"><b>${Math.round(share)}%</b><span>${dmg(m)} killed · ${lost} lost · ${hits} assault${hits === 1 ? '' : 's'} · margin <b class="${margin >= 0 ? 'up' : 'down'}">${margin >= 0 ? '+' : ''}${margin}</b></span></div>
+      </div>`;
+    }).join('');
+    const title = won ? 'Olympus falls' : e.k === 'siegeFailed' ? 'The Proctors laugh' : 'The siege collapses';
+    const sub = won ? `Houses ${members.map((m) => HOUSES[v.players[m].house].name).join(', ')} rule the Institute together.`
+      : e.k === 'siegeFailed' ? `${e.garrison} defenders still held the walls when time ran out. The alliance shatters.` : 'The alliance broke, and the siege with it.';
+    return this.slide(`<div class="logo-sub">THE SIEGE OF OLYMPUS · THE TALLY</div><h1>${title}</h1>
+      <p class="prose">${sub} <b>${total}</b> defenders fell in all${e.start ? ` (the garrison started at ${e.start}, and regrew every allied turn)` : ''}.</p>
+      <div class="k">CONTRIBUTION · SHARE OF THE DAMAGE</div>
+      <div class="se-rows">${rows}</div>
+      <p class="fine">Damage counts every defender a House killed, by assault or by Relic. Margin is defenders killed minus the House's own soldiers lost to the walls and to Olympus's smites.</p>`, 'Continue');
+  }
+
+  /** A full-screen slide that waits for its button (`skippable`: Skip on the replay waves it off). */
+  private slide(html: string, btn: string, skippable = false): Promise<void> {
+    const box = el(`<div class="siege-slide ${skippable ? 'skippable' : ''}"><div class="ss-box">${html}<button class="btn gold big" data-a="ack">${esc(btn)}</button></div></div>`);
+    document.body.appendChild(box);
+    return new Promise((res) => {
+      box.querySelector('[data-a=ack]')!.addEventListener('click', () => { box.remove(); res(); });
     });
   }
 

@@ -5,7 +5,7 @@ import { CARD, isSiegeCard } from './cards.ts';
 import {
   type Action, type GameState, BALANCE, NEUTRAL, activeValue, allianceOf, allied, armyTotal, attackTargets, connectedOwned, geo,
   inviteBlocker, isNeutralKeep, isWildGarrison, joinRallyBlocker, olympusPreview, overwhelms, ownsHouse, passive, primusOptions,
-  rallyBlocker, reinforcementBreakdown, siegeBlocker, standardAt, terrainMods, territoriesOf,
+  rallyBlocker, reactionCards, reinforcementBreakdown, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from './engine.ts';
 
 const armiesOf = (v: GameState, seat: number) => territoriesOf(v, seat).reduce((a, t) => a + v.armies[t], 0);
@@ -48,8 +48,11 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
   }
 
   if (v.reaction) {
-    const c = hand.find((h) => !h.locked && CARD[h.id].active.kind === 'counter');
-    return { type: 'react', card: c ? c.id : null };
+    const r = v.reaction;
+    const c = reactionCards(v, seat)[0];
+    // Save the ambush for a Standard charge, a Keep, a Standard, or a garrison worth defending.
+    const worth = r.commit != null || g.territories[r.to].isKeep || standardAt(v, r.to) >= 0 || v.armies[r.to] >= 5;
+    return { type: 'react', card: c && worth ? c : null };
   }
 
   const sieging = !!v.siege?.members.includes(seat);

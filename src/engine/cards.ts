@@ -32,7 +32,7 @@ export type ActiveKind =
   | 'draw'        // draw n cards (locked until your next turn)
   | 'harvest'     // +1 army per territory you hold in the Lowlands, +n
   | 'fury'        // all your attack dice +1 for the rest of the turn
-  | 'counter'     // REACTION: +n phantom defenders and +1 to defense dice vs a Standard attack
+  | 'counter'     // REACTION: when a rival attacks you, +n phantom defenders and +1 to defense dice in that battle
   // Relics: only playable during a Siege on Olympus.
   | 'siegeWalls'  // your next n assaults on Olympus ignore its walls
   | 'siegeCut'    // kill n of Olympus's defenders
@@ -93,13 +93,13 @@ const RAW: Raw[] = [
     ['raid', 3, 2, 'Night Raid: kill 1 army in each of up to {n} enemy territories beside yours.'], 'Shh. Sleep, goryhead. Forever.', true],
   // ---------------- PLUTO ----------------
   ['jackal', 'The Jackal', 'Adrius au Augustus, Primus of Pluto', 'pluto', ['slaver', 2, '+{n} extra armies whenever your Standard enslaves a territory.'],
-    ['counter', 4, 2, 'The Trap (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'],
+    ['counter', 4, 2, 'The Trap (REACTION): when a rival attacks you, +{n} phantom defenders and +1 to your defense dice in that battle.'],
     'I\'d cut off my own hand to win. Would you?'],
   ['lilath', 'Lilath au Faran', 'The Bone-Wearer', 'pluto', ['conquest', 1, 'Your first conquest each turn drops +{n} army on the new ground.'],
     ['sabotage', 2, 2, 'Teeth in Her Hair: kill {n} armies in one enemy territory beside yours.'],
     'He sends his regards. I keep the teeth.'],
   ['weasel', 'Weasel', 'Pluto Snare-Setter', 'pluto', ['border', 1, '+{n} army on a random frontline territory each Draft.'],
-    ['counter', 3, 1, 'Snare (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'], 'Step lightly, bloodydamn fool.', true],
+    ['counter', 3, 1, 'Snare (REACTION): when a rival attacks you, +{n} phantom defenders and +1 to your defense dice in that battle.'], 'Step lightly, bloodydamn fool.', true],
   ['rime', 'Rime', 'Frostfang Scout', 'pluto', ['defKeep', 1, '+{n} to your highest defense die in every Keep you hold.'],
     ['moveStd', 3, 2, 'Whiteout: move your Standard to any territory you hold, +{n} armies there.'], 'Nobody tracks you in a blizzard.', true],
   ['gravedigger', 'Gravedigger', 'Pluto\'s Undertaker', 'pluto', ['stdGuard', 2, '+{n} phantom defenders on your Standard.'],
@@ -115,7 +115,7 @@ const RAW: Raw[] = [
   ['quiver', 'Quiver', 'Diana Archer', 'diana', ['fortify', 1, '+{n} extra fortify move each turn.'],
     ['breakLine', 1, 1, 'Pinned Down: the defender rolls only 1 die in your next {n} battle(s).'], 'Keep your head down, Pixie.', true],
   ['moonsong', 'Moonsong', 'Diana Ambusher', 'diana', ['draft', 1, '+{n} reinforcement each Draft.'],
-    ['counter', 3, 2, 'Birchwood Ambush (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'], 'The trees have knives tonight.', true],
+    ['counter', 3, 2, 'Birchwood Ambush (REACTION): when a rival attacks you, +{n} phantom defenders and +1 to your defense dice in that battle.'], 'The trees have knives tonight.', true],
   // ---------------- APOLLO ----------------
   ['novas', 'Novas', 'Primus of Apollo', 'apollo', ['atkStd', 1, '+{n} to your highest attack die when your Standard attacks.'],
     ['atkBuff', 3, 1, 'Sunblind: +1 to your highest attack die for your next {n} battles.'], 'The Proctors love me. Pray they never love you.'],
@@ -129,7 +129,7 @@ const RAW: Raw[] = [
     ['raid', 4, 2, 'Firebrands: kill 1 army in each of up to {n} enemy territories beside yours.'], 'Smell that? That\'s your harvest, Ceres.', true],
   // ---------------- JUPITER ----------------
   ['lucian', '"Lucian"', 'Jupiter\'s Garrison Leader', 'jupiter', ['stdGuard', 2, '+{n} phantom defenders on your Standard.'],
-    ['counter', 3, 2, 'Nobody Suspects Lucian (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'],
+    ['counter', 3, 2, 'Nobody Suspects Lucian (REACTION): when a rival attacks you, +{n} phantom defenders and +1 to your defense dice in that battle.'],
     'Me? I\'m nobody. Just a humble garrison boy.'],
   ['thunderjaw', 'Thunderjaw', 'Primus of Jupiter', 'jupiter', ['atkNeutral', 1, '+{n} to your highest attack die against neutral garrisons.'],
     ['breakLine', 1, 1, 'Thunderclap: the defender rolls only 1 die in your next {n} battle(s).'], 'I am the storm, you damp little shit.', true],
@@ -149,7 +149,7 @@ const RAW: Raw[] = [
   ['barley', 'Barley', 'Ceres Envoy', 'ceres', ['perHouse', 1, '+{n} reinforcement for every House you own.'],
     ['parley', 3, 2, 'Share the Loaf: take a neighboring neutral territory with {n} or fewer armies, no fight.'], 'Bread first. Then we talk. Then I stab you.', true],
   ['kiln', 'Kiln', 'Keeper of the Ovens', 'ceres', ['defKeep', 1, '+{n} to your highest defense die in every Keep you hold.'],
-    ['counter', 3, 2, 'Oven Doors (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'], 'Come on in. It\'s warm.', true],
+    ['counter', 3, 2, 'Oven Doors (REACTION): when a rival attacks you, +{n} phantom defenders and +1 to your defense dice in that battle.'], 'Come on in. It\'s warm.', true],
 ];
 
 const PROCTORS: [string, string, HouseId, [ActiveKind, number, string], string][] = [
@@ -159,7 +159,7 @@ const PROCTORS: [string, string, HouseId, [ActiveKind, number, string], string][
   ['p-minerva', 'Proctor Minerva', 'minerva', ['draw', 3, 'Counsel of the Owl: draw {n} cards (usable next turn).'], 'Wisdom is just cruelty with patience.'],
   ['p-diana', 'Proctor Diana', 'diana', ['longStrike', 3, 'The Wild Hunt: {n} attacks this turn may strike two territories away.'], 'Run, little deer.'],
   ['p-ceres', 'Proctor Ceres', 'ceres', ['armies', 6, 'The Great Harvest: +{n} armies this turn.'], 'Eat. You\'ll need the strength to die properly.'],
-  ['p-pluto', 'Proctor Pluto', 'pluto', ['counter', 6, 'Rigged Underworld (REACTION): vs a Standard attack, +{n} phantom defenders and +1 to your defense dice.'], 'The dead keep excellent secrets.'],
+  ['p-pluto', 'Proctor Pluto', 'pluto', ['counter', 6, 'Rigged Underworld (REACTION): when a rival attacks you, +{n} phantom defenders and +1 to your defense dice in that battle.'], 'The dead keep excellent secrets.'],
 ];
 
 // Relics: stolen war-gear that only matters once the valley turns on Olympus itself.

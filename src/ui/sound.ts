@@ -4,6 +4,7 @@
 // or an API. Everything stays silent until the first click or key press, as browsers require.
 
 import { MUSIC, SFX_TAKES, type Mood } from './audio-manifest.ts';
+import { HORN_END, hornCall } from './horn.ts';
 
 export type { Mood };
 
@@ -18,10 +19,10 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const LEVEL: Record<string, number> = {
   click: 0.22, confirm: 0.45, cue: 0.5, dread: 0.55, thud: 0.4, grunt: 0.45, scream: 0.45, boom: 0.5, whoosh: 0.45,
   drum: 0.7, thunder: 0.55, rumble: 0.55, chaos: 0.4, nature: 0.2, clash: 0.55, dice: 0.5, horn: 0.5, warcry: 0.45,
-  march: 0.5, card: 0.5, wind: 0.15,
+  march: 0.5, card: 0.5, wind: 0.15, shout: 0.5,
 };
 /** A sound with no file borrows another. */
-const STAND_IN: Record<string, string> = { horn: 'drum', warcry: 'chaos', card: 'whoosh' };
+const STAND_IN: Record<string, string> = { horn: 'drum', warcry: 'chaos', card: 'whoosh', shout: 'warcry' };
 /** Musical sounds keep their pitch; the rest vary a little each time so repeats don't sound canned. */
 const STEADY = new Set(['cue', 'dread', 'horn', 'drum', 'nature', 'wind', 'confirm']);
 /** Below this the music swaps between calm and tense only after the current piece has had its say. */
@@ -198,6 +199,8 @@ class Sound {
         this.applyVolumes();
         // Effects are small (well under a megabyte): fetch them all now so the first battle isn't silent.
         for (const [name, n] of Object.entries(SFX_TAKES)) for (let i = 1; i <= n; i++) void this.buffer(`${name}-${i}`);
+        // Render the turn horn ahead of time, so the first one doesn't stutter.
+        setTimeout(() => this.hornBuffer(c), 400);
         c.addEventListener('statechange', () => { if (c.state === 'running') { this.syncMusic(); this.syncAmbience(); } });
       }
       if (this.ctx.state !== 'running') void this.ctx.resume();
@@ -269,17 +272,46 @@ class Sound {
     });
   }
 
-  /** The clash of swords that says "your turn" (kept synthesized: it's the game's signature). */
+  private horn: AudioBuffer | null = null;
+  private hornBuffer(c: AudioContext) {
+    if (!this.horn) {
+      const data = hornCall(c.sampleRate);
+      this.horn = c.createBuffer(1, data.length, c.sampleRate);
+      this.horn.getChannelData(0).set(data);
+    }
+    return this.horn;
+  }
+
+  /**
+   * "Your turn": the war horn's call (synthesized, see horn.ts), and the men shouting back. It skips the Effects
+   * slider's low end, so it's never lost: it's the one sound you must hear.
+   */
   chime() {
     const c = this.running();
     if (!c || this.muted) return;
     const out = c.createGain();
-    out.gain.value = 0.5 * Math.max(this.sfxVol, 0.35);
+    out.gain.value = 0.55 * Math.max(this.sfxVol, 0.35);
     out.connect(this.master);
     const t = c.currentTime + 0.03;
-    strike(c, out, t, 690, 0.5);
-    strike(c, out, t + 0.17, 610, 0.45);
-    strike(c, out, t + 0.42, 760, 0.35);
+    const src = c.createBufferSource();
+    src.buffer = this.hornBuffer(c);
+    src.connect(out);
+    src.start(t);
+    // The shout (or its stand-in), right as the last note dies.
+    const name = SFX_TAKES.shout ? 'shout' : SFX_TAKES.warcry ? 'warcry' : null;
+    if (name) {
+      const take = 1 + Math.floor(Math.random() * SFX_TAKES[name]);
+      void this.buffer(`${name}-${take}`).then((buf) => {
+        if (!buf) return;
+        const s = c.createBufferSource();
+        s.buffer = buf;
+        const g = c.createGain();
+        g.gain.value = name === 'shout' ? 0.8 : 0.45;
+        s.connect(g).connect(out);
+        s.start(Math.max(c.currentTime, t + HORN_END - 0.1));
+      });
+    }
+    setTimeout(() => out.disconnect(), 5000);
   }
 
   /** The Sorting wheel: one tick per wedge passing the pointer, slowing with the wheel (an ease-out over `ms`). */
@@ -401,5 +433,5 @@ class Sound {
 
 export const sound = new Sound();
 
-/** Two blades meet, then a third ring: "your turn". */
-export function swordClash() { sound.chime(); }
+/** The war horn and the men's shout: "your turn". */
+export function turnHorn() { sound.chime(); }

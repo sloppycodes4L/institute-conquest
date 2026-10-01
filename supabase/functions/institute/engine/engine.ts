@@ -102,7 +102,13 @@ export interface Player {
 export interface HandCard { id: string; locked: boolean }
 export interface StandardState { at: number; captured: boolean; by: number | null; guard: number }
 export interface Buffs { atk: number; breakLine: number; longStrike: number; fortifyAll: boolean; fury: boolean; siegeWalls: number; siegeAtk: number }
-export interface Battle { key: string; atk: boolean; breakLine: boolean }
+export interface Battle {
+  key: string; atk: boolean; breakLine: boolean;
+  /** Phantom defenders a REACTION card raised for this battle (they die last). */
+  ph?: number;
+  /** A REACTION card was sprung in this battle: +1 to every defense die. */
+  amb?: boolean;
+}
 export interface TurnState {
   reinforcements: number;
   /** Armies placed this Draft, by territory, so they can be taken back. */
@@ -123,7 +129,11 @@ export interface TurnState {
 export interface PrimusSlot { card: string; seat: number }
 /** A public call to arms by the strongest House: the first comers join its (public) alliance. */
 export interface Rally { by: number; slots: number; turn: number }
-export interface Reaction { defender: number; deadline: number; from: number; to: number; commit: number }
+/**
+ * An attack paused while the defender decides whether to spring a REACTION card. `commit` is set for a Standard charge;
+ * otherwise it's a normal attack with its dice and blitz. `at`: when the pause began (the attacker's clock waits).
+ */
+export interface Reaction { defender: number; deadline: number; from: number; to: number; commit?: number | null; dice?: number; blitz?: boolean; at?: number }
 /**
  * One accepted action, as the public map saw it: which territories changed hands or armies (t, owner, armies triples),
  * which Standards moved (house, at, captured triples), and the log up to `seq`. Clients replay these to show
@@ -149,7 +159,17 @@ export interface Siege {
   turnsLeft: number;
   /** Seats whose next turn is safe from Olympus's smite. */
   shield: number[];
+  /** By seat: Olympus's defenders each House killed (assaults and Relics), its own soldiers lost, and its assaults. */
+  dmg?: number[];
+  lost?: number[];
+  hits?: number[];
 }
+
+/** The valley at the start of one turn, for the Proctors' Book: territories, armies and battles won by seat. */
+export interface Snap { turn: number; seat: number; t: number[]; a: number[]; w: number[]; al: { m: number[]; pub: boolean }[] }
+/** Battles won by seat (against other Houses only), and a snapshot per turn. */
+export interface Stats { won: number[]; hist: Snap[] }
+export const HIST_MAX = 400;
 
 export interface GameState {
   v: 2;
@@ -189,6 +209,9 @@ export interface GameState {
   lastEmote?: number[];
   /** When the current turn's timer runs out (ms since epoch), or null with no timer. */
   deadline?: number | null;
+  /** Seats that skip their REACTION prompts until their own next turn (each seat only sees itself here). */
+  reactHold?: number[];
+  stats?: Stats;
   handCounts: number[];
   deckCount: number;
   priv: Private | null;
@@ -206,7 +229,10 @@ export type Action =
   | { type: 'endDraft' }
   | { type: 'attack'; from: number; to: number; dice?: number; blitz?: boolean; commit?: number }
   | { type: 'assault'; from: number; dice?: number; blitz?: boolean }
-  | { type: 'react'; card: string | null }
+  /** Spring a REACTION card, or let the attack through (`hold`: and skip every prompt until your next turn). */
+  | { type: 'react'; card: string | null; hold?: boolean }
+  /** Skip REACTION prompts until your next turn (on), or take that back (off). Any time. */
+  | { type: 'holdReactions'; on: boolean }
   | { type: 'timeout' }
   /** Anyone may call time on a turn whose timer has run out. */
   | { type: 'turnTimeout' }
@@ -252,7 +278,23 @@ export function norm(s: GameState): GameState {
   if (s.rally === undefined) s.rally = null;
   if (!s.allyBan) s.allyBan = s.players.map(() => 0);
   if (!s.lastEmote) s.lastEmote = s.players.map(() => -1e15);
+  if (!s.reactHold) s.reactHold = [];
+  if (!s.stats) s.stats = { won: s.players.map(() => 0), hist: [] };
   return s;
+}
+
+/** Record the valley as it stands, for the Proctors' Book (at every turn start, and when the war ends). */
+function snap(s: GameState, seat: number) {
+  const st = (s.stats ??= { won: s.players.map(() => 0), hist: [] });
+  const t = s.players.map(() => 0), a = s.players.map(() => 0);
+  s.owner.forEach((o, i) => { if (o >= 0) { t[o]++; a[o] += s.armies[i]; } });
+  st.hist.push({ turn: s.turn, seat, t, a, w: [...st.won], al: s.alliances.map((x) => ({ m: [...x.members], pub: x.public })) });
+  if (st.hist.length > HIST_MAX) st.hist.splice(0, st.hist.length - HIST_MAX);
+}
+/** A battle between two Houses was won by `seat`. */
+function wonBattle(s: GameState, seat: number) {
+  const st = (s.stats ??= { won: s.players.map(() => 0), hist: [] });
+  st.won[seat] = (st.won[seat] ?? 0) + 1;
 }
 
 export function shuffle<T>(a: T[], rng: () => number = R): T[] {
@@ -572,6 +614,7 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
     killed: [], ts: freshTurn(), reaction: null, winner: null, winners: [], log: [], seq: 0, uid: 0,
     warBegun: false, alliances: [], invites: [], vote: null, siege: null, siegeCooldown: 0,
     primus: HOUSES.map(() => null), rally: null, allyBan: players.map(() => 0), lastEmote: players.map(() => -1e15),
+    reactHold: [], stats: { won: players.map(() => 0), hist: [] },
     handCounts: [], deckCount: 0,
     priv: { deck, discard: [], hands: players.map(() => []), passage },
   };
@@ -603,6 +646,8 @@ function startTurn(s: GameState, seat: number) {
   s.ts = freshTurn();
   const p = s.players[seat];
   for (const c of hand(s, seat)) c.locked = false;
+  // "Skip until my turn" runs out now.
+  s.reactHold = (s.reactHold ?? []).filter((x) => x !== seat);
   // Your quiet invitations expire when your next turn comes around.
   for (const inv of s.invites.filter((i) => i.from === seat)) log(s, { k: 'inviteExpired', from: inv.from, to: inv.to, vis: [inv.from, inv.to] });
   s.invites = s.invites.filter((i) => i.from !== seat);
@@ -622,6 +667,7 @@ function startTurn(s: GameState, seat: number) {
     if (borders.length) { const t = borders[Math.floor(R() * borders.length)]; s.armies[t] += bp; extras.push(`+${bp} on ${g.territories[t].name}`); }
   }
   s.deadline = s.opts.timer ? NOW + s.opts.timer * 1000 : null;
+  snap(s, seat);
   log(s, { k: 'turn', seat, turn: s.turn, reinf: rb.total, extras });
 }
 
@@ -704,7 +750,7 @@ function onHostility(s: GameState, seat: number, def: number) {
     s.invites = s.invites.filter((i) => !a.members.includes(i.from) && !a.members.includes(i.to));
     log(s, { k: 'betrayal', seat, victim: def, members: a.members, wasPublic: a.public, quip: Math.floor(R() * 1000) });
     if (s.vote?.alliance === a.id) s.vote = null;
-    if (s.siege?.alliance === a.id) { s.siege = null; log(s, { k: 'siegeCollapsed', seat }); }
+    if (s.siege?.alliance === a.id) { const t = siegeTally(s.siege); s.siege = null; log(s, { k: 'siegeCollapsed', seat, ...t }); }
   }
 }
 
@@ -737,7 +783,7 @@ function leaveAlliance(s: GameState, seat: number, leaver = false) {
   if (s.vote && !s.alliances.some((x) => x.id === s.vote!.alliance)) s.vote = null;
   if (s.siege) {
     s.siege.members = s.siege.members.filter((m) => m !== seat);
-    if (!s.alliances.some((x) => x.id === s.siege!.alliance)) { s.siege = null; log(s, { k: 'siegeCollapsed', seat }); }
+    if (!s.alliances.some((x) => x.id === s.siege!.alliance)) { const t = siegeTally(s.siege!); s.siege = null; log(s, { k: 'siegeCollapsed', seat, ...t }); }
   }
 }
 
@@ -763,6 +809,7 @@ function dominate(s: GameState, victim: number, captor: number) {
     s.ts.mustMove = null;
     s.vote = null;
     s.siege = null;
+    snap(s, -1);
     log(s, { k: 'win', seat: s.winner });
   }
 }
@@ -812,36 +859,84 @@ function attack(s: GameState, seat: number, a: Extract<Action, { type: 'attack' 
     conquer(s, seat, from, to, Math.max(1, Math.min(3, a.dice ?? 3, n)));
     return;
   }
-  const battle = startBattle(s, `${from}>${to}`, reach);
   const def = s.owner[to];
+  // A rival holding a REACTION card may spring it before the first die of a new battle.
+  if (def >= 0 && s.ts.battle?.key !== `${from}>${to}` && mayReact(s, def)) {
+    s.reaction = { defender: def, deadline: NOW + REACTION_MS, from, to, commit: null, dice: a.dice, blitz: !!a.blitz, at: NOW };
+    log(s, { k: 'ambushWait', seat, def, from, to });
+    return;
+  }
+  fight(s, seat, from, to, a.dice, !!a.blitz, null);
+}
+
+const modList = (m: Mods) => [m.atkHigh, m.atkLow, m.atkAll, m.defHigh, m.defLow, m.defAll];
+
+/** A normal battle (one roll, or a blitz). `counter`: the REACTION card the defender springs on it. */
+function fight(s: GameState, seat: number, from: number, to: number, diceWanted: number | undefined, blitz: boolean, counter: string | null) {
+  const battle = startBattle(s, `${from}>${to}`, !geo(s).adj[from].includes(to));
+  const def = s.owner[to];
+  if (counter && def >= 0) {
+    const c = takeFromHand(s, def, counter);
+    const n = activeValue(s, def, c);
+    battle.ph = (battle.ph ?? 0) + n;
+    battle.amb = true;
+    log(s, { k: 'counter', seat: def, card: c.id, n, vs: seat, from, to });
+  }
   const tm = terrainMods(s, from, to);
+  const mods = (): Mods => ({ ...attackMods(s, seat, from, to, battle.atk), ...defenseMods(s, to, battle.amb ? 1 : 0) });
+  // Where the battle started, for anyone who wants to check the math afterwards.
+  const start = { a0: s.armies[from], d0: s.armies[to], g0: guardAt(s, to), ph0: battle.ph ?? 0, m: modList(mods()) };
   const rolls: any[] = [];
   let aLost = 0, dLost = 0;
   do {
-    const dice = Math.max(1, Math.min(3, a.dice ?? 3, s.armies[from] - 1));
-    const dUnits = s.armies[to] + guardAt(s, to);
+    const dice = Math.max(1, Math.min(3, diceWanted ?? 3, s.armies[from] - 1));
+    const dUnits = s.armies[to] + guardAt(s, to) + (battle.ph ?? 0);
     const dDice = battle.breakLine ? 1 : Math.min(defenderDiceCap(s, to), dUnits);
-    const m: Mods = { ...attackMods(s, seat, from, to, battle.atk), ...defenseMods(s, to) };
-    const r = roll(dice, dDice, m);
+    const r = roll(dice, dDice, mods());
     s.armies[from] -= r.aLoss;
+    // The real soldiers fall first, then the honor guard, then any ambushers.
     let dl = r.dLoss;
     const realLoss = Math.min(dl, s.armies[to]);
     s.armies[to] -= realLoss; dl -= realLoss;
     const h = standardAt(s, to);
-    if (dl > 0 && h >= 0) s.standards[h].guard = Math.max(0, s.standards[h].guard - dl);
+    if (dl > 0 && h >= 0) { const gl = Math.min(dl, s.standards[h].guard); s.standards[h].guard -= gl; dl -= gl; }
+    if (dl > 0 && battle.ph) battle.ph = Math.max(0, battle.ph - dl);
     aLost += r.aLoss; dLost += r.dLoss;
     rolls.push({ a: r.a, d: r.d, raw: r.raw, aLoss: r.aLoss, dLoss: r.dLoss });
-    if (s.armies[to] === 0 && guardAt(s, to) === 0) {
-      log(s, { k: 'battle', seat, def, from, to, rolls, n: rolls.length, aLost, dLost, won: true, blitz: !!a.blitz, tA: tm.atk, tD: tm.def });
+    if (s.armies[to] === 0 && guardAt(s, to) === 0 && !battle.ph) {
+      if (def >= 0) wonBattle(s, seat);
+      log(s, { k: 'battle', seat, def, from, to, rolls, n: rolls.length, aLost, dLost, won: true, blitz, tA: tm.atk, tD: tm.def, ...start });
       conquer(s, seat, from, to, dice);
       return;
     }
-  } while (a.blitz && s.armies[from] >= 2);
-  log(s, { k: 'battle', seat, def, from, to, rolls, n: rolls.length, aLost, dLost, won: false, blitz: !!a.blitz, tA: tm.atk, tD: tm.def });
+  } while (blitz && s.armies[from] >= 2);
+  // A blitz that runs dry against another House is a battle that House won.
+  if (def >= 0 && blitz) wonBattle(s, def);
+  log(s, { k: 'battle', seat, def, from, to, rolls, n: rolls.length, aLost, dLost, won: false, blitz, tA: tm.atk, tD: tm.def, ...start });
 }
 
-function counterCards(s: GameState, seat: number) {
-  return hand(s, seat).filter((c) => !c.locked && CARD[c.id].active.kind === 'counter');
+/** A REACTION card `seat` may spring (a Proctor only answers to the owner of its House). */
+const springable = (s: GameState, seat: number, c: HandCard) =>
+  !c.locked && CARD[c.id].active.kind === 'counter' && (CARD[c.id].kind !== 'proctor' || ownsHouse(s, seat, CARD[c.id].house));
+const counterCards = (s: GameState, seat: number) => hand(s, seat).filter((c) => springable(s, seat, c));
+/** The REACTION cards `seat` could spring right now (works on the full state or on that seat's own view). */
+export function reactionCards(s: GameState, seat: number): string[] {
+  const h = s.priv ? s.priv.hands[seat] : s.me?.seat === seat ? s.me.hand : [];
+  return h.filter((c) => springable(s, seat, c)).map((c) => c.id);
+}
+/** Would `seat` be asked to spring a REACTION card right now (it holds one, and isn't skipping until its turn)? */
+function mayReact(s: GameState, seat: number) {
+  return counterCards(s, seat).length > 0 && !(s.reactHold ?? []).includes(seat);
+}
+
+/** The defender has answered (or the clock ran out): the paused attack goes ahead, with `counter` if they sprang one. */
+function resolveReaction(s: GameState, counter: string | null) {
+  const r = s.reaction!;
+  s.reaction = null;
+  // The attacker's turn clock stood still while the defender decided.
+  if (s.deadline && r.at != null) s.deadline += Math.max(0, NOW - r.at);
+  if (r.commit != null) resolveStandard(s, s.cur, r.from, r.to, r.commit, counter);
+  else fight(s, s.cur, r.from, r.to, r.dice, !!r.blitz, counter);
 }
 
 function standardAttack(s: GameState, seat: number, from: number, to: number, commit: number) {
@@ -852,10 +947,8 @@ function standardAttack(s: GameState, seat: number, from: number, to: number, co
   const def = s.owner[to];
   s.ts.stdRaised = true;
   onHostility(s, seat, def);
-  if (def >= 0 && counterCards(s, def).length) {
-    s.reaction = { defender: def, deadline: NOW + REACTION_MS, from, to, commit };
-    // The attacker's clock waits while the defender decides.
-    if (s.deadline) s.deadline += REACTION_MS;
+  if (def >= 0 && mayReact(s, def)) {
+    s.reaction = { defender: def, deadline: NOW + REACTION_MS, from, to, commit, at: NOW };
     log(s, { k: 'stdRaised', seat, from, to, commit, def, pending: true });
     return;
   }
@@ -876,7 +969,7 @@ function resolveStandard(s: GameState, seat: number, from: number, to: number, c
     const c = takeFromHand(s, def, counter);
     const n = activeValue(s, def, c);
     dPh += n; defAll = 1;
-    log(s, { k: 'counter', seat: def, card: c.id, n });
+    log(s, { k: 'counter', seat: def, card: c.id, n, vs: seat, from, to, std: true });
   }
   let wcAtk = false, wcBreak = false, wcFury = false;
   if (!s.ts.warCry && me.general) {
@@ -908,6 +1001,7 @@ function resolveStandard(s: GameState, seat: number, from: number, to: number, c
     atkAll: s.ts.buffs.fury || wcFury ? 1 : 0,
     ...defenseMods(s, to, defAll),
   };
+  const start = { a0: aReal, aPh0: aPh, d0: dReal, dPh0: dPh, m: modList(m) };
   const rolls: any[] = [];
   const stdH = standardAt(s, to);
   const cap = defenderDiceCap(s, to);
@@ -930,11 +1024,13 @@ function resolveStandard(s: GameState, seat: number, from: number, to: number, c
     s.ts.conquered++;
     noteKeep(s, to);
     if (s.ts.conquered === 1) s.armies[to] += passive(s, seat, 'conquest');
-    log(s, { k: 'stdBattle', seat, def, from, to, rolls, n: rolls.length, won: true, enslaved, survivors: aReal, aLost: commit - aReal, dLost: dStart });
+    if (def >= 0) wonBattle(s, seat);
+    log(s, { k: 'stdBattle', seat, def, from, to, rolls, n: rolls.length, won: true, enslaved, survivors: aReal, aLost: commit - aReal, dLost: dStart, commit, ...start });
     if (stdH >= 0 && stdH !== me.house) captureStandard(s, stdH, seat);
   } else {
     s.armies[to] = Math.max(1, dReal);
-    log(s, { k: 'stdBattle', seat, def, from, to, rolls, n: rolls.length, won: false, aLost: commit, dLost: dStart - dReal });
+    if (def >= 0) wonBattle(s, def);
+    log(s, { k: 'stdBattle', seat, def, from, to, rolls, n: rolls.length, won: false, aLost: commit, dLost: dStart - dReal, commit, ...start });
     captureStandard(s, me.house, def);
     if (s.phase !== 'over') advance(s);
   }
@@ -1075,8 +1171,19 @@ function beginSiege(s: GameState, a: Alliance) {
   s.siege = {
     alliance: a.id, members: [...a.members], garrison: o.garrison, start: o.garrison, proctors: o.proctors,
     regen: o.regen, smite: o.smite, defHigh: o.defHigh, turnsLeft: o.turns, shield: [],
+    dmg: s.players.map(() => 0), lost: s.players.map(() => 0), hits: s.players.map(() => 0),
   };
   log(s, { k: 'siegeBegins', members: [...a.members], garrison: o.garrison, proctors: o.proctors, turns: o.turns });
+}
+
+/** Who did what in a siege, for its final tally: damage dealt to Olympus, soldiers lost, assaults made (by seat). */
+export function siegeTally(sg: Siege) {
+  return { members: [...sg.members], start: sg.start, proctors: [...sg.proctors], dmg: [...(sg.dmg ?? [])], lost: [...(sg.lost ?? [])], hits: [...(sg.hits ?? [])] };
+}
+/** Credit `seat` in the siege's tally. */
+function siegeCredit(sg: Siege, seat: number, k: 'dmg' | 'lost' | 'hits', n: number) {
+  const arr = (sg[k] ??= []);
+  arr[seat] = (arr[seat] ?? 0) + n;
 }
 
 /** At the start of each allied turn in a siege: Olympus regrows and smites the Foot. */
@@ -1087,7 +1194,7 @@ function olympusTurn(s: GameState, seat: number) {
     s.siege = null;
     if (a) s.alliances = s.alliances.filter((x) => x !== a);
     s.siegeCooldown = s.turn + BALANCE.olyCooldown * s.players.length;
-    log(s, { k: 'siegeFailed', members: sg.members, garrison: sg.garrison });
+    log(s, { k: 'siegeFailed', garrison: sg.garrison, ...siegeTally(sg) });
     return;
   }
   sg.turnsLeft--;
@@ -1101,6 +1208,7 @@ function olympusTurn(s: GameState, seat: number) {
       s.armies[pool[Math.floor(R() * pool.length)]]--;
       killed++;
     }
+    siegeCredit(sg, seat, 'lost', killed);
   }
   sg.shield = sg.shield.filter((x) => x !== seat);
   log(s, { k: 'olympusTurn', seat, regen: sg.regen, killed, garrison: sg.garrison, turnsLeft: sg.turnsLeft });
@@ -1133,19 +1241,26 @@ function assault(s: GameState, seat: number, a: Extract<Action, { type: 'assault
     };
     const r = roll(dice, dDice, m);
     s.armies[from] -= r.aLoss;
+    const killed = Math.min(r.dLoss, sg.garrison);
     sg.garrison -= r.dLoss;
-    aLost += r.aLoss; dLost += r.dLoss;
+    aLost += r.aLoss; dLost += killed;
     rolls.push({ a: r.a, d: r.d, raw: r.raw, aLoss: r.aLoss, dLoss: r.dLoss });
   } while (a.blitz && s.armies[from] >= 2 && sg.garrison > 0);
   const won = sg.garrison <= 0;
-  log(s, { k: 'assault', seat, from, rolls, n: rolls.length, aLost, dLost, garrison: Math.max(0, sg.garrison), won, blitz: !!a.blitz, walls: walls > 0 });
+  siegeCredit(sg, seat, 'dmg', dLost);
+  siegeCredit(sg, seat, 'lost', aLost);
+  siegeCredit(sg, seat, 'hits', 1);
+  // Each House storms the wall its own Proctor commands.
+  const proctor = `p-${HOUSES[s.players[seat].house].id}`;
+  log(s, { k: 'assault', seat, from, rolls, n: rolls.length, aLost, dLost, garrison: Math.max(0, sg.garrison), won, blitz: !!a.blitz, walls: walls > 0, proctor, start: sg.start });
   if (won) {
     sg.garrison = 0;
     s.phase = 'over';
     s.winner = seat;
     s.winners = [...sg.members];
     s.ts.mustMove = null;
-    log(s, { k: 'olympusFalls', seat, members: sg.members });
+    snap(s, -1);
+    log(s, { k: 'olympusFalls', seat, ...siegeTally(sg) });
   }
 }
 
@@ -1158,7 +1273,7 @@ function playCard(s: GameState, seat: number, a: Extract<Action, { type: 'play' 
   const def = CARD[a.card];
   if (!def) fail('Unknown card.');
   if (!hand(s, seat).some((c) => c.id === a.card && !c.locked)) fail('That card is not playable (missing or locked).');
-  if (def.active.kind === 'counter') fail('Counter cards can only be played when a Standard attacks you. You can still trade them.');
+  if (def.active.kind === 'counter') fail('REACTION cards are sprung when a rival attacks you. You can still trade them.');
   if (def.kind === 'proctor' && !ownsHouse(s, seat, def.house)) fail(`You don't own House ${HOUSES[def.house].name}. Discard this Proctor for 2 cards instead.`);
   if (isSiegeCard(def) && !s.siege?.members.includes(seat)) fail('Relics only work during a Siege on Olympus. You can still trade them.');
   const n = activeValue(s, seat, def);
@@ -1219,7 +1334,7 @@ function playCard(s: GameState, seat: number, a: Extract<Action, { type: 'play' 
     }
     case 'draw': { let k = 0; for (let i = 0; i < n; i++) if (drawCard(s, seat, true)) k++; detail = { drew: k }; break; }
     case 'siegeWalls': s.ts.buffs.siegeWalls += n; break;
-    case 'siegeCut': { const sg = s.siege!; const k = Math.min(n, sg.garrison - 1); sg.garrison -= k; detail = { killed: k }; break; }
+    case 'siegeCut': { const sg = s.siege!; const k = Math.min(n, sg.garrison - 1); sg.garrison -= k; siegeCredit(sg, seat, 'dmg', k); detail = { killed: k }; break; }
     case 'siegeLevy': s.ts.reinforcements += n; break;
     case 'siegeMoon': s.siege!.shield.push(seat); s.ts.buffs.siegeAtk = 1; break;
   }
@@ -1436,6 +1551,12 @@ function apply(s: GameState, seat: number, a: Action) {
       tallyVote(s);
       return;
     }
+    case 'holdReactions': {
+      if (!s.players[seat].alive) fail('The dead ambush no one.');
+      s.reactHold = (s.reactHold ?? []).filter((x) => x !== seat);
+      if (a.on) s.reactHold.push(seat);
+      return;
+    }
     case 'vote': {
       const v = s.vote;
       if (!v) fail('Nobody has called for a siege.');
@@ -1452,13 +1573,14 @@ function apply(s: GameState, seat: number, a: Action) {
     const r = s.reaction;
     if (a.type === 'react') {
       if (seat !== r.defender) fail('Not your ambush to spring.');
-      if (a.card && !counterCards(s, seat).some((c) => c.id === a.card)) fail('That is not a counter card in your hand.');
-      resolveStandard(s, s.cur, r.from, r.to, r.commit, a.card);
+      if (a.card && !counterCards(s, seat).some((c) => c.id === a.card)) fail('That is not a REACTION card in your hand.');
+      if (a.hold && !a.card) s.reactHold = [...(s.reactHold ?? []).filter((x) => x !== seat), seat];
+      resolveReaction(s, a.card);
       return;
     }
     if (a.type === 'timeout') {
       if (NOW < r.deadline) fail('The defender still has time.');
-      resolveStandard(s, s.cur, r.from, r.to, r.commit, null);
+      resolveReaction(s, null);
       return;
     }
     fail('Waiting on the defender to react.');
@@ -1592,7 +1714,7 @@ function apply(s: GameState, seat: number, a: Action) {
       advance(s);
       return;
     }
-    case 'react': case 'timeout': fail('No Standard attack is pending.');
+    case 'react': case 'timeout': fail('No attack is waiting on an ambush.');
   }
   fail('Unknown action.');
 }
@@ -1630,6 +1752,9 @@ export function viewFor(s: GameState, seat: number | null): GameState {
   v.alliances = v.alliances.filter((a) => a.public || (seat != null && a.members.includes(seat)));
   v.invites = v.invites.filter((i) => seat != null && (i.from === seat || i.to === seat));
   if (v.vote && !v.alliances.some((a) => a.id === v.vote!.alliance)) v.vote = null;
+  v.reactHold = (v.reactHold ?? []).filter((x) => x === seat);
+  // The Book only shows alliances this seat could see at the time.
+  if (v.stats) v.stats.hist = v.stats.hist.map((h) => ({ ...h, al: h.al.filter((x) => x.pub || (seat != null && x.m.includes(seat))) }));
   if (seat != null && priv) v.me = { seat, hand: JSON.parse(JSON.stringify(priv.hands[seat])), passage: priv.passage[seat] };
   return v;
 }

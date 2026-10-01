@@ -61,6 +61,8 @@ export const SFX: Record<string, SfxGroup> = {
   dice: { eleven: { prompt: 'Five bone dice shaken briefly in a leather cup, thrown onto a wooden table, tumbling and settling', duration: 1.2, takes: 2, influence: 0.5 } },
   horn: { eleven: { prompt: 'A single long blast of an ancient bronze war horn echoing across a mountain valley, no music', duration: 3, takes: 1, influence: 0.5 } },
   warcry: { eleven: { prompt: 'A crowd of fifty young soldiers roaring a battle cry as they charge, ancient warfare, outdoors, no music, no words', duration: 2.5, takes: 2, influence: 0.45 } },
+  /** The men answering the turn horn: one short shout, not a charge. */
+  shout: { eleven: { prompt: 'A band of twenty soldiers giving one short sharp unified war shout together, a single "HAH!", outdoors, slight echo, no music', duration: 1.2, takes: 2, influence: 0.5 } },
   march: { eleven: { prompt: 'A column of soldiers marching on packed dirt, leather boots, light armor and scabbards rattling, outdoors, no music', duration: 2, takes: 1, influence: 0.45 } },
   card: { eleven: { prompt: 'A stiff parchment card flicked and slapped down onto a wooden table', duration: 0.6, takes: 2, influence: 0.5 } },
   wind: { eleven: { prompt: 'Cold steady wind across an empty highland valley, soft gusts, no birds, no music', duration: 20, takes: 1, loop: true, influence: 0.4 }, keepHead: true },
