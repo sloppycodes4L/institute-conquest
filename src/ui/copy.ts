@@ -257,7 +257,8 @@ go to your front and the turn passes. Then <b>the Sorting</b>: hit <b>Start Sele
 <h3>Controls</h3>
 <p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
 <b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. Click a House in the roster to light up its land.
-<b>⚙ Settings</b>: the camera follows the action (on by default), and a war horn tells you it's your turn. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.</p>
+<b>⚙ Settings</b>: the camera follows the action (on by default), and a war horn tells you it's your turn. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.
+<b>🎓 The Proctor's Guide</b> (or <b>T</b>): step-by-step lessons on your first turn, then hints, and each new mechanic explained the first time you meet it. Set it to Full, Hints or Off, or replay any lesson.</p>
 <h3>Winning</h3>
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
 A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.

@@ -9,6 +9,8 @@ A free, non-commercial fan game: Risk-style conquest set in the Institute from P
 
 ## How it plays
 
+- **The Proctor's Guide (🎓, T):** a tutorial layer for first-time players. A new browser is asked once, on its first Create, Join, Local or Practice: *Guide me*, *Hints only* or *No guide*. *Guide me* walks the first turn in ten lessons (gold **Read** cards pause the war and light up one part of the HUD; red **Your move** cards wait for you to do the thing), then a recap with one question, then two turns of hints, then it steps back. Cards, the Standard, Primuses, terrain, ambushes, alliances and the Siege are explained the first time they appear. In timed wars nothing pauses. The 🎓 menu (and ⚙ Settings) sets Full, Hints or Off and replays any lesson. Browsers that played before .007 start with it off. Progress is per device (`ic-tutor`, `ic-tutor-seen`, `ic-tutor-hints`).
+- **Practice war:** a button on the title screen for a small war against one AI, with no timer.
 - **War settings:** whoever creates the war picks the map size (Smaller … Larger, 77–140 territories) and starting troops (Fewer … Lots), can switch Alliances and the Siege on Olympus off, and can set a turn timer (None, 60, 90 or 120 seconds; when it runs out, unplaced armies go to the front and the turn passes). Everything defaults to the recommended settings.
 - **The Sorting:** 2–7 players get Houses out of Mars, Minerva, Diana, Apollo, Jupiter, Ceres, and Pluto, revealed on a spinning wheel ("Start Selection"). The valley's seven slices keep their land (names, biomes, regions, the Frostfangs) from war to war, but Houses are dealt onto them at random: the players get the slices whose Keeps are furthest apart (then the fewest touching slices), any House can land on any of them, and the Houses nobody drew fill the rest as neutrals.
 - **The valley** grows with the player count (77 territories for 2 players, 91 for 4, 112 for 7, at the recommended size). Each player starts holding the heart of their slice (the Keep and its neighbours); the rest is neutral, with thick garrisons on fronts that face another player (14) and on marches by a neutral House (6). In bot games the first player-vs-player fight comes around round 3 (round 4 with 2 players) (`node scripts/pace-sim.ts`).
@@ -48,6 +50,7 @@ The full rules are in the game (the **?** button). Every card is listed in the *
 | AI Primus | `src/engine/bot.ts` |
 | 3D valley, dice | `src/render/` |
 | UI, copy | `src/ui/` |
+| The Proctor's Guide: lesson schedule (pure, tested) and its HUD layer | `src/ui/lessons.ts`, `src/ui/guide.ts` |
 | Local and online sessions | `src/net/session.ts` |
 | Game server (Supabase Edge Function) | `supabase/functions/institute/` |
 | Version shown on the title screen | `src/version.ts` |
@@ -90,7 +93,7 @@ node scripts/audio-build.ts          # rebuild public/audio from the picks
 ```bash
 npm install
 npm run dev          # local server
-npm test             # engine tests + 42 bot-vs-bot games (2–7 players)
+npm test             # engine tests + 42 bot-vs-bot games (2–7 players) + the guide's lesson schedule
 node scripts/sim.ts          # balance simulator (game length, alliances, sieges per player count)
 node scripts/siege-sim.ts    # how often 2 or 3 allied Houses break Olympus, by army size
 node scripts/mapcheck.ts     # map stats per valley size (add --draw for ASCII)

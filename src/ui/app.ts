@@ -16,6 +16,8 @@ import { VERSION } from '../version.ts';
 import { assaultFight, attackFight, defenseNote, oddsClass, pct, standardFight, winChance } from './odds.ts';
 import { sound, turnHorn, type Mood } from './sound.ts';
 import { ELEVEN_SOUNDS } from './audio-manifest.ts';
+import { Guide } from './guide.ts';
+import type { GuideCtx, Level } from './lessons.ts';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const el = (html: string) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild as HTMLElement; };
@@ -95,6 +97,14 @@ export class App {
   private prefs = { follow: store.get('ic-follow') !== '0', sound: store.get('ic-sound') !== '0' };
   /** The music stays in battle until this long after the last fight (ms timestamp). */
   private battleUntil = 0;
+  /** The Proctor's Guide: the tutorial layer over the HUD (src/ui/guide.ts). Whether this browser is new is read before the title screen saves a name. */
+  private guide = new Guide({
+    store,
+    isNew: !store.get('ic-tutor') && !store.get('ic-name') && !store.get('ic-last-code') && !allCreds().length,
+    focus: (t) => { if (this.prefs.follow) this.world.focus(t); },
+    // A Read card closed: the replay queued behind it plays, and local AIs move again.
+    onUnblock: () => { if (this.session && this.queue.length && !this.playing) void this.playQueue(); this.session?.kick?.(); },
+  });
 
   constructor() {
     this.world = new World(document.getElementById('world')!, geoFor(4));
@@ -154,6 +164,7 @@ export class App {
           <div class="row"><input class="field" id="code" maxlength="5" placeholder="CODE" style="text-transform:uppercase;letter-spacing:.2em;text-align:center"><button class="btn big" data-a="join">Join</button></div>
           ${last && savedCreds(last) ? `<button class="btn gold" data-a="rejoin">Rejoin war ${esc(last)}</button>` : ''}
           <button class="btn" data-a="local">Local · Hot-seat & AI</button>
+          <button class="btn" data-a="practice" title="A small war against one AI, no timer">Practice war · You vs 1 AI</button>
           ${allCreds().length ? '<button class="btn ghost" data-a="wars">📜 Past wars (War Logs)</button>' : ''}
           <button class="btn ghost" data-a="rules">How to Play</button>
           <button class="btn ghost" data-a="codex">The Codex (all cards)</button>
@@ -167,15 +178,23 @@ export class App {
     s.addEventListener('click', async (e) => {
       const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
       if (!a) return;
-      if (a === 'create') { const n = nameOk(); if (!n) return; await this.busy(async () => { this.startSession(await OnlineSession.create(n)); }); }
+      // A new player picks a guide level first (before nameOk saves a name, which would make this browser look returning).
+      if (a === 'create') { await this.guide.ensureChosen(); const n = nameOk(); if (!n) return; await this.busy(async () => { this.startSession(await OnlineSession.create(n)); }); }
       if (a === 'join') {
+        await this.guide.ensureChosen();
         const n = nameOk(); if (!n) return;
         const code = s.querySelector<HTMLInputElement>('#code')!.value.trim().toUpperCase();
         if (code.length < 5) return this.toast('Codes are 5 characters.');
         await this.busy(async () => { this.startSession(await OnlineSession.join(code, n)); });
       }
       if (a === 'rejoin' && last) this.resume(last);
-      if (a === 'local') this.showLocalSetup();
+      if (a === 'local') { await this.guide.ensureChosen(); this.showLocalSetup(); }
+      // Practice: the smallest valley, one AI, no turn timer.
+      if (a === 'practice') {
+        await this.guide.ensureChosen();
+        const you = nm.value.trim() || this.name || 'Reaper';
+        this.startSession(new LocalSession([{ seat: 0, name: you, ai: false }, { seat: 1, name: AI_NAMES[0], ai: true }], { ...DEFAULT_SETTINGS, size: -2, timer: 0 }));
+      }
       if (a === 'wars') this.showWars();
       if (a === 'rules') this.modalRules();
       if (a === 'codex') this.modalCodex();
@@ -459,7 +478,7 @@ export class App {
     this.disp = null; this.shown = null; this.shownVersion = -1; this.queue = []; this.playing = false; this.skipping = false;
     this.showcaseOpen = false; this.wheelOpen = false;
     // Local AI seats wait while the screen is still replaying their earlier moves.
-    s.hold = () => this.playing || this.showcaseOpen || this.wheelOpen;
+    s.hold = () => this.playing || this.showcaseOpen || this.wheelOpen || this.guide.blocking;
     if (s instanceof OnlineSession) {
       s.onGone = (msg) => { this.showTitle(); this.toast(msg); };
       store.set('ic-last-code', s.code);
@@ -477,6 +496,7 @@ export class App {
     document.getElementById('hud')?.remove();
     document.getElementById('modal-root')?.remove();
     document.getElementById('bloodflash')?.remove();
+    this.guide.unmount();
     document.querySelectorAll('.showcase, .terr-err, .wheel-wrap, .ambush-fx, .fallen-wrap, .siege-slide').forEach((x) => x.remove());
     document.body.classList.remove('sorting');
     this.world.clearArrow();
@@ -515,7 +535,7 @@ export class App {
       else this.snap(v);
       return;
     }
-    if (!this.playing && !fresh.some((f) => this.replayable(f))) { this.snap(v); return; }
+    if (!this.playing && !this.queue.length && !fresh.some((f) => this.replayable(f))) { this.snap(v); return; }
     this.queue.push(...fresh);
     if (!this.playing) void this.playQueue();
     else this.render();
@@ -541,6 +561,8 @@ export class App {
   }
 
   private async playQueue() {
+    // The replay waits behind an open Read card (onUnblock starts it); meanwhile the screen keeps what it showed.
+    if (this.guide.blocking) { this.disp = this.shown; return; }
     this.playing = true;
     this.skipping = false;
     this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.confirm = null;
@@ -801,6 +823,7 @@ export class App {
           <button class="icon-btn" data-a="book" title="The Proctors' Book: the odds on every House (B)">📖</button>
           <button class="icon-btn" data-a="settings" title="Settings: camera and sound">⚙</button>
           <button class="icon-btn" data-a="emotes" id="btnEmote" title="Emote: shout a line into the War Log">💬</button>
+          <button class="icon-btn guide-btn ${this.guide.level === 'off' ? 'off' : ''}" data-a="guide" id="btnGuide" title="The Proctor's Guide (T)">🎓<span class="g-pip">${this.guide.pip}</span></button>
         </div>
         <div class="emotes hidden" id="emotes"></div>
         <div class="corner right mobile-tabs">
@@ -820,6 +843,7 @@ export class App {
     const hud = document.getElementById('hud')!;
     hud.addEventListener('click', (e) => this.onHudClick(e));
     hud.addEventListener('input', (e) => this.onHudInput(e));
+    this.guide.hudMounted();
   }
 
   /** What the screen shows: the replayed view mid-replay, else the live one. */
@@ -882,6 +906,7 @@ export class App {
     if (root?.dataset.key === 'info-book') this.modalBook(true);
     this.renderAmbush();
     this.renderSiege();
+    this.guide.update(this.guideCtx());
   }
 
   private lastEmoteAt = 0;
@@ -894,6 +919,97 @@ export class App {
     const wait = Math.ceil((this.lastEmoteAt + EMOTE_COOLDOWN_MS - Date.now()) / 1000);
     box.innerHTML = `<div class="em-h">SAY IT TO THE VALLEY${wait > 0 ? ` <span class="fine">(${wait}s)</span>` : ''}</div>
       ${EMOTES.map((line, i) => `<button class="em" data-a="emote" data-n="${i}" ${wait > 0 ? 'disabled' : ''}>${esc(line)}</button>`).join('')}`;
+  }
+
+  /** A plain snapshot of what the guide's lessons look at (src/ui/lessons.ts decides what to show from it). */
+  private guideCtx(): GuideCtx {
+    const s = this.session!, v = this.v, u = this.ui, me = this.me, g = this.g, T = g.territories;
+    const myTurn = this.myTurn();
+    const me0 = me != null ? v.players[me] : undefined;
+    const overlay = !!document.querySelector('.ambush-fx, .siege-slide, .fallen-wrap');
+    const silent = me == null || !me0 || s.handoff != null || this.wheelOpen || this.showcaseOpen || overlay || !me0.alive || v.phase === 'over' || (!!v.reaction && v.reaction.defender !== me);
+    // My own moves since this turn began.
+    let from = v.log.length - 1;
+    while (from >= 0 && v.log[from].k !== 'turn') from--;
+    const turnEvs = myTurn ? v.log.slice(from + 1) : [];
+    const evs = turnEvs.filter((e) => e.seat === me);
+    const fights = evs.filter((e) => ['battle', 'stdBattle', 'overwhelm', 'assault'].includes(e.k));
+    const taken = fights.filter((e) => e.k === 'overwhelm' || (e.won && e.k !== 'assault')).map((e) => T[e.to]?.name ?? '');
+    const lastMarch = evs.filter((e) => e.k === 'fortify').at(-1);
+    const attack = myTurn && v.phase === 'attack';
+    let bestSource: GuideCtx['bestSource'] = null, sources = 0;
+    if (attack && u.sel == null) {
+      const src = this.attackSources();
+      sources = src.length;
+      let best = -1;
+      for (const t of src) for (const x of attackTargets(v, me!, t)) {
+        const p = winChance(attackFight(v, me!, t, x));
+        if (p > best) { best = p; bestSource = { id: t, name: T[t].name, armies: v.armies[t] }; }
+      }
+    }
+    const tgt = attack && u.sel != null ? u.target : null;
+    const note = tgt != null && tgt !== OLYMPUS ? defenseNote(v, u.sel!, tgt) : '';
+    const odds = tgt == null ? null : tgt === OLYMPUS ? winChance(assaultFight(v, u.sel!)) : winChance(attackFight(v, me!, u.sel!, tgt));
+    let interior: GuideCtx['interior'] = null;
+    if (myTurn && v.phase === 'fortify') {
+      for (const t of territoriesOf(v, me!)) {
+        if (v.armies[t] < 2 || !g.adj[t].every((x) => v.owner[x] === me)) continue;
+        if (!interior || v.armies[t] > v.armies[interior.id]) interior = { id: t, name: T[t].name };
+      }
+    }
+    const rb = myTurn && v.phase === 'draft' ? reinforcementBreakdown(v, me!) : null;
+    // Just-in-time lessons: the Standard, terrain and neutral Keeps on the attack bar, and the notices.
+    const myStd = me0 ? v.standards[me0.house] : null;
+    let terrainTarget = false, neutralKeepTarget = false;
+    if (attack && u.sel != null && tgt !== OLYMPUS) {
+      for (const t of tgt != null ? [tgt] : attackTargets(v, me!, u.sel)) {
+        const tm = terrainMods(v, u.sel, t);
+        if (tm.atk || tm.def) terrainTarget = true;
+        if (defenseNote(v, u.sel, t) === 'neutral Keep') neutralKeepTarget = true;
+      }
+    }
+    const region = evs.filter((e) => e.k === 'region').at(-1);
+    const live = s.view!;
+    const mm = myTurn ? v.ts.mustMove : null;
+    return {
+      timed: !!v.opts?.timer, silent, playing: this.playing, phase: v.phase, myTurn,
+      turnKey: `${v.turn}:${v.cur}`, round: Math.ceil(v.turn / Math.max(1, v.players.length)),
+      reinforcements: v.ts.reinforcements, placed: Object.values(v.ts.placed).reduce((a, b) => a + b, 0),
+      pending: !!u.pending || !!u.confirm,
+      sel: myTurn ? u.sel : null, target: myTurn ? u.target : null, targetIsOlympus: tgt === OLYMPUS,
+      targets: attack && u.sel != null ? attackTargets(v, me!, u.sel).length + (this.canAssaultFrom(u.sel) ? 1 : 0) : 0,
+      sources, bestSource, odds, overwhelm: note === 'Overwhelm', oneDie: note === '1 die',
+      fightsThisTurn: fights.length, taken,
+      mustMove: mm ? { from: this.tname(mm.from), to: this.tname(mm.to) } : null,
+      fortifies: myTurn ? v.ts.fortifies : 0,
+      moved: lastMarch ? { n: lastMarch.n, to: T[lastMarch.to]?.name ?? '' } : null,
+      interior,
+      mustTrade: myTurn && v.phase === 'draft' && mustTrade(v, me!),
+      breakdown: rb && { territories: rb.territories, base: rb.base, regions: rb.regions.map((r) => ({ name: r.name, bonus: r.bonus })), keeps: rb.keeps, keepBonus: rb.keepBonus, general: rb.general, total: rb.total },
+      passageOpen: v.phase === 'passage' && !!v.me?.passage && s.handoff == null,
+      hand: myTurn ? v.me?.hand.length ?? 0 : 0,
+      confirm: myTurn && !!u.confirm,
+      canRaiseStd: tgt != null && tgt !== OLYMPUS && !!myStd && !myStd.captured && myStd.at === u.sel && v.armies[u.sel!] >= 2 && !v.ts.stdRaised,
+      canMoveStd: myTurn && v.phase === 'fortify' && !!myStd && !myStd.captured && !v.ts.stdMoved,
+      primusAsk: !!document.getElementById('modal-root')?.dataset.key?.startsWith('primus-'),
+      reactionMine: !this.playing && s.handoff == null && live.reaction?.defender === me,
+      ambushHit: turnEvs.some((e) => e.k === 'counter' && e.vs === me),
+      alliancesOpen: !!v.warBegun && v.opts?.alliances !== false,
+      invitesIn: me == null ? 0 : v.invites.filter((i) => i.to === me).length,
+      rallyOpen: me != null && !!v.rally && !joinRallyBlocker(v, me) && !this.rallyIgnored.has(`${v.rally.by}:${v.rally.turn}`),
+      voteOwed: this.voteOwed(),
+      terrainTarget, neutralKeepTarget,
+      regionTaken: region ? { name: g.regions[region.region]?.name ?? '', bonus: region.bonus } : null,
+      timerSecs: v.opts?.timer ?? 0,
+    };
+  }
+
+  /** ⚙ Settings: the guide's level, the same three as the 🎓 menu. */
+  private guideRow() {
+    const lv = this.guide.level ?? 'off';
+    const names: Record<Level, string> = { full: 'Full', hints: 'Hints', off: 'Off' };
+    return `<div class="set-row inline pref"><div><div class="set-k">Proctor's Guide</div><div class="set-note">🎓 or T opens the guide and its lessons.</div></div>
+      <div class="seg">${(['full', 'hints', 'off'] as const).map((k) => `<button data-a="pref" data-k="guide" data-v="${k}" class="${lv === k ? 'on' : ''}">${names[k]}</button>`).join('')}</div></div>`;
   }
 
   private voteOwed() {
@@ -1660,6 +1776,7 @@ export class App {
         ${slider('music', sound.musicVol, 'Music', 'The soundtrack follows the war: calm, tense, battle.')}
         ${slider('sfx', sound.sfxVol, 'Effects', 'Steel, dice, war cries and the valley.')}
         ${row('sound', this.prefs.sound, 'Turn horn', 'A war horn, and your soldiers shouting back, when your turn begins.')}
+        ${this.guideRow()}
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:14px"><button class="btn sm" data-a="pref-test">Hear the horn</button><button class="btn primary" data-a="close">Done</button></div>
     </div></div>`, 'info-settings', true);
@@ -1809,6 +1926,7 @@ export class App {
     if (a === 'close') { const was = root.dataset.key; this.modal(null); if (was === 'over') root.dataset.key = 'closed-over'; this.render(); return; }
     if (a === 'title') { this.showTitle(); return; }
     if (a === 'settings') { this.modalSettings(); return; }
+    if (a === 'pref' && b.dataset.k === 'guide') { this.guide.setLevel(b.dataset.v as Level); this.modalSettings(); return; }
     if (a === 'pref') {
       const on = b.dataset.v === '1';
       if (b.dataset.k === 'follow') { this.prefs.follow = on; store.set('ic-follow', on ? '1' : '0'); }
@@ -1928,6 +2046,7 @@ export class App {
 
   private onKey(e: KeyboardEvent) {
     if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    if (this.guide.onKey(e)) return;
     if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) {
       sound.setMuted(!sound.muted);
       this.toast(sound.muted ? '🔇 Sound off (M to turn it back on)' : '🔊 Sound on');
@@ -1974,6 +2093,7 @@ export class App {
       case 'diplo': return this.modalDiplo();
       case 'book': return this.modalBook();
       case 'settings': return this.modalSettings();
+      case 'guide': return this.guide.toggleMenu();
       case 'react-play': return void this.send({ type: 'react', card: b.dataset.id! });
       case 'react-skip': return void this.send({ type: 'react', card: null });
       case 'react-hold': {
