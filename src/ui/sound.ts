@@ -177,7 +177,11 @@ class Sound {
 
   musicVol = +(store.get('ic-vol-music') ?? 0.6);
   sfxVol = +(store.get('ic-vol-sfx') ?? 0.8);
-  muted = store.get('ic-mute') === '1';
+  /** Sound starts off: the player turns it on with the Sound checkbox (or M). A new key, so everyone starts silent once. */
+  muted = store.get('ic-sound-on') !== '1';
+  private onMute = new Set<() => void>();
+  /** Called whenever sound is switched on or off, so every switch on screen can follow. */
+  listen(f: () => void) { this.onMute.add(f); }
 
   constructor() {
     const unlock = () => this.unlock();
@@ -222,7 +226,14 @@ class Sound {
   }
   setMusic(v: number) { this.musicVol = v; store.set('ic-vol-music', String(v)); this.applyVolumes(); this.syncMusic(); }
   setSfx(v: number) { this.sfxVol = v; store.set('ic-vol-sfx', String(v)); this.applyVolumes(); }
-  setMuted(m: boolean) { this.muted = m; store.set('ic-mute', m ? '1' : '0'); this.applyVolumes(); this.syncMusic(); this.syncAmbience(); }
+  setMuted(m: boolean) {
+    this.muted = m;
+    store.set('ic-sound-on', m ? '0' : '1');
+    this.applyVolumes();
+    this.syncMusic();
+    this.syncAmbience();
+    this.onMute.forEach((f) => f());
+  }
 
   // --- effects -----------------------------------------------------------
 

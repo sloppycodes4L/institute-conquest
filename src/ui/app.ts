@@ -109,6 +109,14 @@ export class App {
   constructor() {
     this.world = new World(document.getElementById('world')!, geoFor(4));
     document.body.appendChild(this.tip);
+    // The Sound checkbox: always at the bottom of the screen (title and war alike). Sound starts off.
+    const sw = el(`<label class="sound-toggle" title="Sound on or off (M)"><input type="checkbox"> <span>🔊 Sound</span></label>`);
+    const box = sw.querySelector('input')!;
+    box.checked = !sound.muted;
+    // Blur after: the M key ignores focused inputs.
+    box.addEventListener('change', () => { sound.setMuted(!box.checked); box.blur(); });
+    sound.listen(() => { box.checked = !sound.muted; });
+    document.body.appendChild(sw);
     this.world.onPick = (t) => this.pick(t);
     this.world.onHover = (t, x, y) => this.hover(t, x, y);
     this.world.controls.autoRotate = true;
@@ -170,7 +178,7 @@ export class App {
           <button class="btn ghost" data-a="codex">The Codex (all cards)</button>
         </div>
         <p class="fine">A free, non-commercial fan game inspired by Pierce Brown's <i>Red Rising</i>. Not affiliated with or endorsed by the author or publisher. Contains violence and foul language.</p>
-        <p class="fine credits">Music: A.T.W., <i>The Wrath of God</i>.${ELEVEN_SOUNDS.length ? ' Some sound effects made with <a href="https://elevenlabs.io" target="_blank" rel="noopener">elevenlabs.io</a>.' : ''} Press M to mute.</p>
+        <p class="fine credits">Music: A.T.W., <i>The Wrath of God</i>.${ELEVEN_SOUNDS.length ? ' Some sound effects made with <a href="https://elevenlabs.io" target="_blank" rel="noopener">elevenlabs.io</a>.' : ''} Sound is off until you tick Sound below (or press M).</p>
         <div class="version" title="Game version">Version ${VERSION}</div>
       </div></div>`)!;
     const nm = s.querySelector<HTMLInputElement>('#nm')!;
