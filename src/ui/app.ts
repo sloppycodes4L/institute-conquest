@@ -7,16 +7,18 @@ import { CARD, CARDS, EMOTES, OLYMPUS_POWER, fmt, isSiegeCard } from '../engine/
 import {
   type Action, type Frame, type GameEvent, type GameState, type WarSettings, DEFAULT_SETTINGS, EMOTE_COOLDOWN_MS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue, drainLog,
   allianceOf, allied, attackBlocker, attackTargets, connectedOwned, fortifyRoute, geo, housesOwned, inviteBlocker, joinRallyBlocker, mustTrade, olympusPreview,
-  ownsHouse, passive, primiOf, primusOptions, rallyBlocker, reactionCards, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
+  ownsHouse, passive, passiveValue, pickHouse, primiOf, primusOptions, rallyBlocker, ULT, ULT_MIN_PLAYERS, marsPickBlocker, marsTargets, stormCut, stormSide,
+  ULT_ROUND, lockoutLeft, ultBlocker, ultCards, ultCardsOk, ultFight, ultStandings, ultTargets, winScores, guardAgainst, huntsWith, reactionCards, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from '../engine/engine.ts';
 import { BOOK_W, bookChart, bookIndexAt, bookLines, bookX, roundOf, type Line } from './book.ts';
 import { LocalSession, OnlineSession, allCreds, fetchWarLog, fetchWars, flagLine, savedCreds, type Creds, type LobbySeat, type Session } from '../net/session.ts';
 import { ERRORS_FLAVOR, PASSAGE_INTRO, RULES_HTML, TAGLINES, describe, headline } from './copy.ts';
 import { VERSION } from '../version.ts';
-import { assaultFight, attackFight, defenseNote, oddsClass, pct, standardFight, winChance } from './odds.ts';
+import { assaultFight, attackFight, defenseNote, keepWalls, oddsClass, pct, standardFight, winChance } from './odds.ts';
 import { sound, turnHorn, type Mood } from './sound.ts';
 import { ELEVEN_SOUNDS } from './audio-manifest.ts';
 import { Guide } from './guide.ts';
+import { ICON, ULTIMATE, restrictedBy, statusIcons, ultButton, ultOf, type StatusIcon } from './ultimates.ts';
 import type { GuideCtx, Level } from './lessons.ts';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -28,6 +30,28 @@ const store = {
 const sig = (h: number, cls = 'sig') => `<span class="${cls}" style="background:${HOUSES[h].color};${h === 5 ? 'color:#222;text-shadow:none' : ''}">${HOUSES[h].sigil}</span>`;
 const AI_NAMES = ['Proctor\'s Pet', 'Some Tall Bastard', 'A Very Angry Gold', 'The Draft Pick Nobody Wanted', 'Knife in a Nice Coat', 'Lord of Mud', 'The Quiet One'];
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** The order the House picker lists them in. */
+const HOUSE_ORDER = ['mars', 'minerva', 'diana', 'apollo', 'jupiter', 'ceres', 'pluto'].map((id) => HOUSES.findIndex((h) => h.id === id));
+/** A seat's House as a pill, before the war: a button that opens the picker when `edit`, plain text otherwise. `lock`: the host set it. */
+function housePill(seat: number, house: number | null | undefined, edit: boolean, lock = false) {
+  const h = house ?? null;
+  const body = h != null ? `${sig(h)}${HOUSES[h].name}` : '<span class="rnd">🎲</span>Random';
+  const col = h != null ? HOUSES[h].color : 'var(--ink-mute)';
+  return edit
+    ? `<button class="hpick" style="--hc:${col}" data-hopen="${seat}" aria-haspopup="true" title="Pick a House">${lock ? '🔒 ' : ''}${body}<span class="caret">▾</span></button>`
+    : `<span class="hpick ro" style="--hc:${col}">${body}</span>`;
+}
+/** The House picker for seat `i`: Random and the seven Houses. A House another seat holds is greyed out, with who holds it. */
+function housePopover(seats: { name: string; house?: number | null }[], i: number) {
+  const mine = seats[i].house ?? null;
+  return `<div class="hpop" role="menu" aria-label="Pick a House">
+    <button class="wide ${mine == null ? 'on' : ''}" data-house="" data-hseat="${i}" style="--hc:var(--ink-mute)"><span>🎲</span><span>Random<small>Dealt on the Sorting wheel</small></span></button>
+    ${HOUSE_ORDER.map((h) => {
+      const taken = seats.find((s, j) => j !== i && s.house === h);
+      return `<button data-house="${h}" data-hseat="${i}" class="${mine === h ? 'on' : ''}" style="--hc:${HOUSES[h].color}" ${taken ? 'disabled' : ''}>${sig(h)}<span>${HOUSES[h].name}${taken ? `<small>${esc(taken.name)}</small>` : ''}</span></button>`;
+    }).join('')}</div>`;
+}
 const SIZE_NAMES: Record<string, string> = { '-2': 'Smaller', '-1': 'Small', '0': 'Recommended', '1': 'Large', '2': 'Larger' };
 const TROOP_NAMES: Record<string, string> = { '-2': 'Fewer', '-1': 'Less', '0': 'Recommended', '1': 'More', '2': 'Lots' };
 /** How each REACTION card looks when it's sprung. */
@@ -66,6 +90,15 @@ interface UIState {
   primusOpen: number | null;
   /** The emote menu is open. */
   emotes: boolean;
+  /**
+   * An Ultimate being cast: the step of the flow and what has been chosen. `preview`: the war as it would stand after
+   * the cast (shown on the map in the last step). Nothing is spent until Commit.
+   */
+  cast: { step: 'target' | 'cards' | 'picks' | 'preview'; target: number | null; alliance: boolean; cards: string[]; picks: number[]; q: number | null; preview: GameState | null; changed: number[]; hits: number } | null;
+  /** A status icon whose text is open ("seat:icon"). */
+  iconTip: string | null;
+  /** A Revealed hand the Minerva caster has open (the target's seat). */
+  reveal: number | null;
 }
 
 export class App {
@@ -79,6 +112,10 @@ export class App {
   private diceQueue: Promise<void> = Promise.resolve();
   private battleHide = 0;
   private sentPassage = false;
+  /** Choose your Primus: the Character picked but not yet sworn in. */
+  private primusPick: string | null = null;
+  /** The War Council seat whose House picker is open. */
+  private houseOpen: number | null = null;
   private focusMode = store.get('ic-focus') === '1';
   // --- replay of other players' moves ---
   /** The view the screen is showing mid-replay (null when it shows the live view). */
@@ -143,7 +180,7 @@ export class App {
   }
 
   private freshUI(): UIState {
-    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false, regionsMin: window.innerHeight < 760, spot: null, hoverRegion: null, primusOpen: null, emotes: false };
+    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false, regionsMin: window.innerHeight < 760, spot: null, hoverRegion: null, primusOpen: null, emotes: false, cast: null, iconTip: null, reveal: null };
   }
 
   // =========================================================================
@@ -347,12 +384,14 @@ export class App {
   }
 
   showLocalSetup() {
-    const seats: { kind: 'human' | 'ai' | 'empty'; name: string }[] = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
+    let seats: { kind: 'human' | 'ai' | 'empty'; name: string; house?: number | null }[] = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
       kind: i === 0 ? 'human' : i < 3 ? 'ai' : 'empty',
       name: i === 0 ? this.name || 'Reaper' : AI_NAMES[i - 1],
     }));
-    // Two steps: who fights, then the rules of the war.
+    // Two steps: who fights (and as which House), then the rules of the war.
     let step: 'seats' | 'rules' = 'seats';
+    /** The seat whose House picker is open. */
+    let open: number | null = null;
     const ws = this.localSettings;
     const draw = () => {
       const n = seats.filter((x) => x.kind !== 'empty').length;
@@ -361,9 +400,10 @@ export class App {
           <div class="steps"><span class="on">1 · Houses</span><span>2 · War settings</span></div>
           <h2>Local War</h2>
           <p class="fine" style="margin:0 0 14px">Up to ${MAX_PLAYERS} Houses. Hot-seat: pass one device between humans. Empty seats become neutral Houses.</p>
-          ${seats.map((x, i) => `<div class="seat-row">
+          ${seats.map((x, i) => `<div class="seat-row ${x.kind === 'empty' ? 'none' : ''}">
             <div class="seg">${(['human', 'ai', 'empty'] as const).map((k) => `<button data-seat="${i}" data-k="${k}" class="${x.kind === k ? 'on' : ''}">${k === 'human' ? 'Human' : k === 'ai' ? 'AI' : 'None'}</button>`).join('')}</div>
             <input class="field nm" data-name="${i}" value="${esc(x.name)}" maxlength="24" ${x.kind === 'empty' ? 'disabled' : ''}>
+            ${x.kind === 'empty' ? '' : housePill(i, x.house, true)}${open === i ? housePopover(seats, i) : ''}
           </div>`).join('')}
           <div class="row" style="margin-top:12px"><button class="btn" data-a="back">Back</button><button class="btn primary" data-a="next">Next: War settings ▸</button></div>
         </div></div>`)! : this.setScreen(`
@@ -375,13 +415,31 @@ export class App {
         </div></div>`)!;
       s.querySelectorAll<HTMLInputElement>('[data-name]').forEach((inp) => inp.addEventListener('input', () => { seats[+inp.dataset.name!].name = inp.value; }));
       s.addEventListener('click', (e) => {
-        const b = (e.target as HTMLElement).closest('button');
+        const tgt = e.target as HTMLElement;
+        // The House picker: open it from a seat's pill, pick, or click away to close it.
+        const pill = tgt.closest<HTMLElement>('[data-hopen]');
+        if (pill) { const i = +pill.dataset.hopen!; open = open === i ? null : i; draw(); return; }
+        const hb = tgt.closest<HTMLButtonElement>('[data-house]');
+        if (hb) {
+          if (hb.disabled) return;
+          const r = pickHouse(seats, +hb.dataset.hseat!, hb.dataset.house === '' ? null : +hb.dataset.house!, false);
+          if (r.ok) seats = r.lobby; else this.toast(r.err);
+          open = null; draw(); return;
+        }
+        if (open != null) { open = null; draw(); return; }
+        const b = tgt.closest('button');
         if (!b || b.disabled) return;
-        if (b.dataset.seat) { seats[+b.dataset.seat].kind = b.dataset.k as any; draw(); return; }
+        if (b.dataset.seat) {
+          const x = seats[+b.dataset.seat];
+          x.kind = b.dataset.k as any;
+          // An empty seat gives its House back.
+          if (x.kind === 'empty') delete x.house;
+          draw(); return;
+        }
         if (b.dataset.set) { this.applySetting(ws, b.dataset.set, b.dataset.v!); draw(); return; }
         if (b.dataset.a === 'back') this.showTitle();
         if (b.dataset.a === 'prev') { step = 'seats'; draw(); }
-        const chosen: LobbySeat[] = seats.filter((x) => x.kind !== 'empty').map((x, i) => ({ seat: i, name: x.name.trim() || `Gold ${i + 1}`, ai: x.kind === 'ai' }));
+        const chosen: LobbySeat[] = seats.filter((x) => x.kind !== 'empty').map((x, i) => ({ seat: i, name: x.name.trim() || `Gold ${i + 1}`, ai: x.kind === 'ai', house: x.house ?? null }));
         if (b.dataset.a === 'next' || b.dataset.a === 'go') {
           if (chosen.length < 2) return this.toast('You need at least two Houses to have a war.');
           if (!chosen.some((x) => !x.ai)) return this.toast('At least one human, or who is this for?');
@@ -399,6 +457,7 @@ export class App {
     if (k === 'size' || k === 'troops') ws[k] = +v;
     if (k === 'alliances') { ws.alliances = v === '1'; if (!ws.alliances) ws.siege = false; }
     if (k === 'siege') ws.siege = v === '1';
+    if (k === 'ultimates') ws.ultimates = v === '1';
   }
 
   /** Map size, starting troops, and the alliance/siege switches, for `n` players. Read-only unless `edit`. */
@@ -416,7 +475,9 @@ export class App {
     }).join('');
     const troops = [-2, -1, 0, 1, 2].map((d) => `<button data-set="troops" data-v="${d}" class="${ws.troops === d ? 'on' : ''} ${d === 0 ? 'rec' : ''}" ${dis}>
         <span>${TROOP_NAMES[d]}</span><small>${resolveSettings(N, { ...ws, troops: d }).troops}</small></button>`).join('');
-    const toggle = (k: 'alliances' | 'siege', on: boolean, off = false) => `<div class="seg">
+    // House Ultimates need 3 or more Houses: with fewer the switch shows Off and can't be turned.
+    const few = n < ULT_MIN_PLAYERS;
+    const toggle = (k: 'alliances' | 'siege' | 'ultimates', on: boolean, off = false) => `<div class="seg">
         <button data-set="${k}" data-v="1" class="${on ? 'on' : ''}" ${off || !edit ? 'disabled' : ''}>On</button>
         <button data-set="${k}" data-v="0" class="${!on ? 'on' : ''}" ${off || !edit ? 'disabled' : ''}>Off</button></div>`;
     return `<div class="settings">
@@ -429,6 +490,8 @@ export class App {
       <div class="set-row inline"><div class="set-k">Alliances</div>${toggle('alliances', ws.alliances)}</div>
       <div class="set-row inline"><div class="set-k">Siege on Olympus <span class="fine">(win condition)</span></div>${toggle('siege', ws.alliances && ws.siege, !ws.alliances)}</div>
       ${!ws.alliances ? '<div class="set-note">No alliances means no Siege on Olympus: last House standing wins.</div>' : ''}
+      <div class="set-row inline"><div class="set-k">House Ultimates <span class="fine">(comeback powers)</span></div>${toggle('ultimates', ws.ultimates !== false && !few, few)}</div>
+      <div class="set-note">${few ? 'House Ultimates need 3 or more Houses.' : ws.ultimates !== false ? 'From round 4, Houses in the bottom half can spend 3 cards to strike the leader.' : 'No Ultimates in this war.'}</div>
       ${edit ? '<button class="btn sm ghost" data-set="reset" data-v="0">Reset to recommended</button>' : ''}
     </div>`;
   }
@@ -443,7 +506,14 @@ export class App {
         <div class="fine" style="margin:0">Share this code or link. Up to ${MAX_PLAYERS} Houses; the valley grows with every House.</div>
         <div class="code-big">${s.code}</div>
         <div class="row" style="margin-bottom:14px"><input class="field" readonly value="${esc(link)}"><button class="btn" data-a="copy" style="flex:0 0 auto">Copy link</button></div>
-        ${s.lobby.map((l) => `<div class="seat-row"><span class="nm">${esc(l.name)} ${l.seat === s.seat ? '<span class="you">YOU</span>' : ''} ${l.ai ? '<span class="ai-tag">AI</span>' : ''}</span>${l.seat === s.hostSeat ? '<span class="fine" style="margin:0">host</span>' : host && !l.ai ? `<button class="btn sm ghost" data-a="kickSeat" data-seat="${l.seat}">Kick</button>` : ''}</div>`).join('')}
+        ${s.lobby.map((l) => {
+          // A player picks their own House (unless the host set it); the host may set anyone's, AIs included.
+          const locked = l.houseBy === 'host';
+          const edit = host || (l.seat === s.seat && !locked);
+          return `<div class="seat-row"><span class="nm">${esc(l.name)} ${l.seat === s.seat ? '<span class="you">YOU</span>' : ''} ${l.ai ? '<span class="ai-tag">AI</span>' : ''} ${l.seat === s.hostSeat ? '<span class="fine" style="margin:0">host</span>' : ''}</span>
+            ${locked && !l.ai ? '<span class="lockn">set by host</span>' : ''}${housePill(l.seat, l.house, edit, locked && host && !l.ai)}
+            ${host && l.seat !== s.hostSeat && !l.ai ? `<button class="btn sm ghost" data-a="kickSeat" data-seat="${l.seat}">Kick</button>` : ''}${this.houseOpen === l.seat && edit ? housePopover(s.lobby, l.seat) : ''}</div>`;
+        }).join('')}
         ${host ? `<div class="row" style="margin-top:10px">
             <button class="btn" data-a="addBot" ${s.lobby.length >= MAX_PLAYERS ? 'disabled' : ''}>+ AI Primus</button>
             <button class="btn" data-a="removeBot" ${!s.lobby[s.lobby.length - 1]?.ai ? 'disabled' : ''}>− AI</button></div>` : ''}
@@ -454,6 +524,19 @@ export class App {
         <button class="btn ghost" style="margin-top:10px" data-a="leave">Leave</button>
       </div></div>`)!;
     scr.addEventListener('click', async (e) => {
+      // The House picker: open it from a seat's pill, pick (the server has the last word), or click away to close it.
+      const pill = (e.target as HTMLElement).closest<HTMLElement>('[data-hopen]');
+      if (pill) { const i = +pill.dataset.hopen!; this.houseOpen = this.houseOpen === i ? null : i; this.showLobby(); return; }
+      const hb = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-house]');
+      if (hb) {
+        if (hb.disabled) return;
+        this.houseOpen = null;
+        const err = await s.setHouse(+hb.dataset.hseat!, hb.dataset.house === '' ? null : +hb.dataset.house!);
+        if (err) this.toast(err);
+        if (this.session === s && s.status === 'lobby') this.showLobby();
+        return;
+      }
+      if (this.houseOpen != null) { this.houseOpen = null; this.showLobby(); return; }
       const set = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-set]');
       if (set && !set.disabled && host) {
         const next = { ...s.settings };
@@ -483,6 +566,8 @@ export class App {
     this.ui = this.freshUI();
     this.lastEvent = -1;
     this.sentPassage = false;
+    this.primusPick = null;
+    this.houseOpen = null;
     this.disp = null; this.shown = null; this.shownVersion = -1; this.queue = []; this.playing = false; this.skipping = false;
     this.showcaseOpen = false; this.wheelOpen = false;
     // Local AI seats wait while the screen is still replaying their earlier moves.
@@ -520,7 +605,11 @@ export class App {
     const v = s.view!;
     this.world.setGeo(geo(v));
     if (!document.getElementById('hud')) this.mountHUD();
-    if (v.phase === 'passage' && !this.wheelOpen && store.get(`ic-sorted-${s.key}`) !== '1') this.showWheel(v);
+    if (v.phase === 'passage' && !this.wheelOpen && store.get(`ic-sorted-${s.key}`) !== '1') {
+      // The Sorting wheel only spins for Houses drawn at random: when every seat picked its House, there is nothing to spin.
+      if (v.players.some((p) => !this.pickedHouse(v, p.seat))) this.showWheel(v);
+      else store.set(`ic-sorted-${s.key}`, '1');
+    }
     this.ingest(v);
   }
 
@@ -565,6 +654,7 @@ export class App {
     this.world.update(v);
     this.validateUI(v);
     if (this.ui.confirm?.preview) this.world.update(this.ui.confirm.preview);
+    if (this.ui.cast?.preview) this.world.update(this.ui.cast.preview);
     this.render();
   }
 
@@ -573,7 +663,8 @@ export class App {
     if (this.guide.blocking) { this.disp = this.shown; return; }
     this.playing = true;
     this.skipping = false;
-    this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.confirm = null;
+    this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.confirm = null; this.ui.cast = null;
+    document.getElementById('qpanel')?.remove();
     this.world.clearArrow();
     try {
       while (this.queue.length && this.session) {
@@ -596,7 +687,7 @@ export class App {
         this.render();
         if (this.skipping) {
           // Skipped, but never unseen: your House falling, and how a siege ended.
-          for (const e of evs) if ((e.k === 'dominated' && this.fallenHere(e.victim)) || ['olympusFalls', 'siegeFailed', 'siegeCollapsed'].includes(e.k)) this.bigMoment(d, e, evs);
+          for (const e of evs) if ((e.k === 'dominated' && this.fallenHere(e.victim)) || ['olympusFalls', 'siegeFailed', 'siegeCollapsed'].includes(e.k) || (e.k === 'turn' && e.skipped && this.skippedHere(e.seat))) this.bigMoment(d, e, evs);
           continue;
         }
         if (this.replayable(f)) await this.present(d, evs, f);
@@ -667,6 +758,10 @@ export class App {
           await this.showcase(d, e);
           shown = true;
           break;
+        case 'ultimate':
+          await this.showUltimate(d, e, evs);
+          shown = true;
+          break;
         case 'counter':
           cam([e.to]);
           await this.showAmbushPlayed(d, e, this.ambushOutcome(d, e, evs));
@@ -686,6 +781,8 @@ export class App {
           shown = true;
           break;
         case 'turn': {
+          // A Blacked Out turn: the House it happened to gets a screen; everyone else reads the War Log line.
+          if (e.skipped) { if (this.skippedHere(e.seat)) await this.showSkipped(d, e, evs); else { this.whisper(describe(d, evs.find((x) => x.k === 'ultTick' && x.kind === 'blackout' && x.seat === e.seat) ?? e)); await w(1400); } shown = true; break; }
           const st = d.standards[d.players[e.seat].house];
           if (e.seat !== this.me) cam([st.captured ? territoriesOf(d, e.seat)[0] ?? -1 : st.at]);
           this.turnBanner(d, e.seat);
@@ -718,6 +815,7 @@ export class App {
     if (e.k === 'siegeBegins') then(() => this.showSiegeStart(v, e));
     if (e.k === 'olympusFalls' || e.k === 'siegeFailed' || e.k === 'siegeCollapsed') then(() => this.showSiegeEnd(v, e));
     if (e.k === 'dominated' && this.fallenHere(e.victim)) then(() => this.showFallen(v, e));
+    if (e.k === 'turn' && e.skipped && this.skippedHere(e.seat)) then(() => this.showSkipped(v, e, evs));
   }
 
   /** The sound of one event. Battles sound in showBattle instead, in time with the dice. */
@@ -732,11 +830,17 @@ export class App {
       case 'warCry': p('warcry', 0.8); break;
       case 'play': p('card'); p('cue', 0.8, 0.2); break;
       case 'trade': case 'discardProctor': p('card'); break;
+      // House Ultimates reuse what is already there: a card, a boom, the horn.
+      case 'ultimate': p('card'); p('boom', 0.8, 0.12); p('horn', 0.5, 0.3); break;
+      case 'seized': p('thud', 0.7); break;
+      case 'lockout': p('deny', 0.6); break;
       case 'region': p('cue', 0.7); break;
       case 'primus': p('confirm'); break;
       case 'stdCaptured': case 'dominated': p('boom'); p('scream', 0.8, 0.35); break;
       case 'neutralFall': p('boom', 0.6); break;
-      case 'primusSlain': case 'passage': p('scream', 0.7); break;
+      case 'primusSlain': p('scream', 0.7); break;
+      // The Passage killed a card (wars from before .008). Choosing a Primus kills nobody.
+      case 'passage': if (e.killed) p('scream', 0.7); break;
       case 'betrayal': case 'defect': case 'siegeFailed': case 'siegeCollapsed': p('dread'); break;
       case 'allianceFormed': case 'rallyJoined': case 'allianceRevealed': p('confirm'); break;
       case 'warBegun': p('drum'); break;
@@ -835,7 +939,7 @@ export class App {
         </div>
         <div class="emotes hidden" id="emotes"></div>
         <div class="corner right mobile-tabs">
-          <button class="icon-btn" data-a="tab-roster" title="Houses &amp; your General">♜</button>
+          <button class="icon-btn" data-a="tab-roster" title="Houses &amp; your Primus">♜</button>
           <button class="icon-btn" data-a="tab-log" title="Regions &amp; war log">✎</button>
         </div>
         <div class="topbar" id="topbar"></div>
@@ -876,6 +980,8 @@ export class App {
     if (u.target === OLYMPUS && (!this.sieging() || u.sel == null || !this.g.territories[u.sel].foot)) u.target = null;
     if (v.phase !== 'draft') { u.pending = null; u.trade.clear(); }
     if (u.confirm && (!this.myTurn() || v.phase !== 'draft')) this.endPreview();
+    // A cast in progress ends with the Draft, or when the right to cast is gone.
+    if (u.cast && (!this.myTurn() || v.phase !== 'draft' || !!ultBlocker(v, this.me!))) this.endCast();
     if (v.phase === 'draft' && u.target != null) u.target = null;
     if (v.phase !== 'fortify') u.stdMode = false;
     const hand = v.me?.hand.map((c) => c.id) ?? [];
@@ -891,6 +997,10 @@ export class App {
     this.renderLog();
     this.renderActionBar();
     this.renderHand();
+    this.renderQuadrants();
+    this.renderRestrict();
+    this.renderReveal();
+    this.syncMarks();
     this.renderNotices();
     this.renderHighlights();
     this.renderModals();
@@ -977,6 +1087,10 @@ export class App {
       }
     }
     const region = evs.filter((e) => e.k === 'region').at(-1);
+    // House Ultimates: my button on my Draft, what an Ultimate left on my banner, and the icons on my rivals'.
+    const ub = myTurn && v.phase === 'draft' && me0?.alive ? ultButton(v, me!) : null;
+    const hitBy = v.ult && me0?.alive ? statusIcons(v, me!, me).find((x) => ICON[x.id].k !== 'buff' && x.id !== 'locked' && x.house != null) : undefined;
+    const rivalIcon = !!v.ult && v.players.some((p) => p.seat !== me && statusIcons(v, p.seat, me).some((x) => x.id !== 'ready'));
     const live = s.view!;
     const mm = myTurn ? v.ts.mustMove : null;
     return {
@@ -994,7 +1108,8 @@ export class App {
       interior,
       mustTrade: myTurn && v.phase === 'draft' && mustTrade(v, me!),
       breakdown: rb && { territories: rb.territories, base: rb.base, regions: rb.regions.map((r) => ({ name: r.name, bonus: r.bonus })), keeps: rb.keeps, keepBonus: rb.keepBonus, general: rb.general, total: rb.total },
-      passageOpen: v.phase === 'passage' && !!v.me?.passage && s.handoff == null,
+      // The lesson is Choose your Primus: a war begun before .008 finishes its Passage without it.
+      passageOpen: v.phase === 'passage' && !!v.opts?.pick && !!v.me?.passage && s.handoff == null,
       hand: myTurn ? v.me?.hand.length ?? 0 : 0,
       confirm: myTurn && !!u.confirm,
       canRaiseStd: tgt != null && tgt !== OLYMPUS && !!myStd && !myStd.captured && myStd.at === u.sel && v.armies[u.sel!] >= 2 && !v.ts.stdRaised,
@@ -1009,6 +1124,13 @@ export class App {
       terrainTarget, neutralKeepTarget,
       regionTaken: region ? { name: g.regions[region.region]?.name ?? '', bonus: region.bonus } : null,
       timerSecs: v.opts?.timer ?? 0,
+      ultOpen: !!v.ult && v.ult.round >= ULT_ROUND,
+      ultBtn: ub?.state === 'ready' || ub?.state === 'cards' ? ub.state : null,
+      ult: me0 ? { name: ultOf(me0.house).name, line: ultOf(me0.house).one, house: HOUSES[me0.house].name } : null,
+      castOpen: !!u.cast,
+      ultHit: hitBy ? ultOf(hitBy.house!).name : null,
+      rivalIcon,
+      lockedOut: !!v.ult && me != null && lockoutLeft(v, me) > 0,
     };
   }
 
@@ -1030,7 +1152,11 @@ export class App {
     const p = v.players[v.cur];
     const phases = ['draft', 'attack', 'fortify'];
     const top = document.getElementById('topbar')!;
-    if (v.phase === 'passage') { top.innerHTML = `<span class="turn-who">THE PASSAGE</span><span class="reinf">Choose your General</span>`; return; }
+    if (v.phase === 'passage') {
+      const mine = this.me != null && v.players[this.me] ? `House ${HOUSES[v.players[this.me].house].name}` : '';
+      top.innerHTML = v.opts?.pick ? `<span class="turn-who">CHOOSE YOUR PRIMUS</span><span class="reinf">${mine}</span>` : `<span class="turn-who">THE PASSAGE</span><span class="reinf">Choose your General</span>`;
+      return;
+    }
     if (v.phase === 'over') { top.innerHTML = `<span class="turn-who">THE WAR IS OVER</span>`; return; }
     const sg = v.siege;
     top.innerHTML = `
@@ -1059,12 +1185,14 @@ export class App {
   /** A General's passive, spelled out, with its suit (House) and whether it matches. */
   private primusHTML(seat: number, big = false) {
     const v = this.v, p = v.players[seat];
-    if (!p.general || p.general === '?') return `<div class="primus muted">Primus: ${p.general === '?' ? 'chosen, still secret' : 'in the Passage…'}</div>`;
+    // From .008 every Primus is of its own House and its Passive works at the printed value. Older wars keep the House-match +1.
+    const printed = !!v.opts?.pick;
+    if (!p.general || p.general === '?') return `<div class="primus muted">Primus: ${p.general === '?' ? 'chosen, still secret' : printed ? 'still choosing…' : 'in the Passage…'}</div>`;
     const c = CARD[p.general];
-    const match = c.house === p.house;
-    const n = c.passive ? c.passive.n + (match ? 1 : 0) : 0;
+    const match = !printed && c.house === p.house;
+    const n = passiveValue(c, p.house, printed);
     const suit = `<span class="suit" title="Card suit: House ${HOUSES[c.house].name}">${sig(c.house, 'sig sm')} ${HOUSES[c.house].name}</span>`;
-    const badge = match
+    const badge = printed ? '' : match
       ? `<span class="match" title="The card's House matches House ${HOUSES[p.house].name}: Passive +1">★ HOUSE MATCH +1</span>`
       : `<span class="nomatch" title="The card is House ${HOUSES[c.house].name}, the player is House ${HOUSES[p.house].name}: no bonus">≠ House ${HOUSES[p.house].name}</span>`;
     return `<div class="primus ${match ? 'is-match' : ''} ${big ? 'big' : ''}">
@@ -1084,6 +1212,24 @@ export class App {
     }).join('')}</div>`;
   }
 
+  /**
+   * The status icons under a House's banner (or by the viewer's own Primus): the ring says buff, debuff or restriction,
+   * the dot is the House that caused it, the number is how many of the bearer's turns are left. Click one to read it.
+   */
+  private iconsHTML(seat: number, where: 'roster' | 'general') {
+    const v = this.v;
+    const list = statusIcons(v, seat, this.me);
+    if (!list.length) return '';
+    const key = (x: StatusIcon) => `${where}:${seat}:${x.id}`;
+    const open = list.find((x) => this.ui.iconTip === key(x));
+    const canRead = (x: StatusIcon) => x.id === 'revealed' && !!this.session?.view?.me?.seen?.[seat];
+    return `<div class="icons" id="ic-${where}-${seat}">${list.map((x) => {
+      const d = ICON[x.id];
+      return `<button class="ico ${d.k} ${x.glow ? 'glow' : ''} ${open === x ? 'sel' : ''}" style="--h:${x.house != null ? HOUSES[x.house].color : '#7d6b5a'}" data-a="icon" data-key="${key(x)}" ${canRead(x) ? `data-reveal="${seat}"` : ''}
+        aria-label="${d.n}${x.n ? `, ${x.n} turn${x.n === 1 ? '' : 's'} left` : ''}" title="${d.n}: ${esc(d.t)}"><i class="h"></i><svg viewBox="0 0 24 24" aria-hidden="true">${d.svg}</svg>${x.n ? `<span class="t">${x.n}</span>` : ''}</button>`;
+    }).join('')}</div>${open ? `<div class="tt"><b>${ICON[open.id].n}${open.n ? ` · ${open.n} turn${open.n === 1 ? '' : 's'} left` : ''}</b><p>${esc(ICON[open.id].t)}</p><span class="src">${esc(ICON[open.id].src)}${open.house != null ? ` · House ${HOUSES[open.house].name}` : ''}</span></div>` : ''}`;
+  }
+
   /** The online host may hand another human's seat to an AI. */
   private canKick(seat: number) {
     const s = this.session;
@@ -1099,10 +1245,11 @@ export class App {
     const shared = (al?.members ?? []).filter((m) => m !== this.me).map((m) => {
       const p = v.players[m], c = p.general && p.general !== '?' ? CARD[p.general] : null;
       if (!c?.passive) return '';
-      return `<div class="shared">${sig(p.house, 'sig sm')} <b>${esc(c.name)}</b> <span class="muted">(${esc(p.name)})</span>: ${esc(fmt(c.passive.text, c.passive.n + (c.house === p.house ? 1 : 0)))}</div>`;
+      return `<div class="shared">${sig(p.house, 'sig sm')} <b>${esc(c.name)}</b> <span class="muted">(${esc(p.name)})</span>: ${esc(fmt(c.passive.text, passiveValue(c, p.house, !!v.opts?.pick)))}</div>`;
     }).join('');
-    box.innerHTML = `<h3 data-a="min-gen">YOUR GENERAL <span>${this.ui.genMin ? '▸' : '▾'}</span></h3>
+    box.innerHTML = `<h3 data-a="min-gen">YOUR PRIMUS <span>${this.ui.genMin ? '▸' : '▾'}</span></h3>
       ${this.ui.genMin ? '' : `${this.primusHTML(this.me, true)}
+      ${this.iconsHTML(this.me, 'general')}
       ${this.primiHTML(this.me, true)}
       ${shared ? `<div class="shared-h">🤝 SHARED BY ALLIES${al && !al.public ? ' (SECRET)' : ''}</div>${shared}` : ''}
       ${!me.alive ? '<div class="muted">Your House has fallen.</div>' : ''}`}`;
@@ -1127,7 +1274,8 @@ export class App {
         ${this.canKick(seat) ? `<button class="btn sm ghost kick" data-a="kick" data-seat="${seat}" title="Hand ${esc(p.name)}'s House to an AI Primus">🥾 Kick</button>` : ''}
         ${p.alive ? `<div class="meta"><span>${terr.length} terr</span><span>${armies} armies</span><span>${v.handCounts[seat] ?? 0} cards</span>
           <span class="owned" title="Houses owned">${owned.map((h) => sig(h)).join('')}</span></div>
-          <div class="meta">⚑ ${st.captured ? 'captured' : esc(this.g.territories[st.at].name)}${seat === v.cur && v.phase !== 'passage' ? '' : ` · +${reinforcementBreakdown(v, seat).total}/turn`}</div>`
+          <div class="meta">⚑ ${st.captured ? 'captured' : esc(this.g.territories[st.at].name)}${seat === v.cur && v.phase !== 'passage' ? '' : ` · +${reinforcementBreakdown(v, seat).total}/turn`}</div>
+          ${this.iconsHTML(seat, 'roster')}`
         : `<div class="meta">Dominated by ${p.dominatedBy != null && p.dominatedBy >= 0 ? esc(v.players[p.dominatedBy].name) : 'the wilds'}</div>`}
       </div>`;
     }).join('');
@@ -1195,7 +1343,7 @@ export class App {
       const kind = joining ? `to join their ${joining.public ? 'public' : 'secret'} alliance` : i.public ? 'a PUBLIC alliance' : 'a SECRET alliance';
       return `<div class="notice" style="--c:${HOUSES[p.house].color}">
         <div class="nt">📜 A quiet message from ${sig(p.house)} <b>${esc(p.name)}</b></div>
-        <div class="nb">They offer ${kind}. Allies share their Generals' Passives. Attacking an ally ends it.</div>
+        <div class="nb">They offer ${kind}. Allies share their Primuses' Passives. Attacking an ally ends it.</div>
         <div class="row"><button class="btn sm primary" data-a="answer" data-id="${i.id}" data-yes="1">Accept</button><button class="btn sm" data-a="answer" data-id="${i.id}" data-yes="0">Burn it</button></div>
       </div>`;
     }).join('');
@@ -1238,6 +1386,15 @@ export class App {
     const v = this.v, u = this.ui;
     if (this.showcaseOpen) return; // the card on the map owns the highlights
     if (u.confirm) { this.world.setHighlights(null, u.confirm.targets, 'target'); return; }
+    if (u.cast && this.me != null) {
+      const c = u.cast, hid = HOUSES[this.castHouse()].id;
+      if (c.step === 'preview') this.world.setHighlights(null, c.changed, 'target');
+      // Mars: land it may seize glows, and the picks stand out.
+      else if (c.step === 'picks' && hid === 'mars') this.world.setHighlights(null, marsTargets(v, this.me, this.castTargets()).filter((t) => !c.picks.includes(t)), 'target', { picked: c.picks });
+      else if (c.step === 'picks' && c.q != null) this.world.setHighlights(null, stormCut(v, c.target!, c.q).terrs, 'target');
+      else this.world.setHighlights(null, [], 'attack');
+      return;
+    }
     if (u.hoverRegion != null && this.g.regions[u.hoverRegion]) { this.world.setHighlights(null, this.g.regions[u.hoverRegion].terr, 'place'); return; }
     const cardId = u.inspect ?? u.hoverCard;
     if (cardId && !this.playing && !u.pending && v.phase !== 'passage') {
@@ -1308,8 +1465,21 @@ export class App {
         bar.innerHTML = `<span class="hint">${u.pending.needs === 'territory' ? 'Click a glowing territory' : 'Pick a rival'} for <b>${esc(CARD[u.pending.card].name)}</b>.</span><button class="btn sm" data-a="cancel">Cancel</button>`;
         return;
       }
-      const mt = mustTrade(v, this.me!);
+      if (u.cast && (u.cast.step === 'picks' || u.cast.step === 'preview')) { bar.innerHTML = this.castBar(); return; }
+      const mt = mustTrade(v, this.me!) && !v.ts.ultMuted;
       const placedTotal = Object.values(v.ts.placed).reduce((a, b) => a + b, 0);
+      if (v.ts.ultMuted) {
+        // Silenced: the Draft is placed, and that is the turn. The Standard may still move (unless Pinned too).
+        const st = v.standards[v.players[this.me!].house];
+        const canStd = !st.captured && !v.ts.ultPinned && connectedOwned(v, this.me!, st.at).size > 1;
+        bar.innerHTML = `<span class="hint">${v.ts.reinforcements > 0 ? 'Click your territories to place armies.' : 'Silenced: nothing more to do this turn.'}</span>
+          <div class="seg" title="How many each click / + adds">${[1, 3, 5, 'all'].map((n) => `<button data-a="amt" data-n="${n}" class="${u.placeAmt === n ? 'on' : ''}">${n === 'all' ? 'All' : '+' + n}</button>`).join('')}</div>
+          <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶ Undo${placedTotal ? ` (${placedTotal})` : ''}</button>
+          <button class="btn" disabled title="Silenced: no cards this turn">Trade 3 → 10</button><button class="btn" disabled title="Silenced: no attacks this turn">Attack</button><button class="btn" disabled title="Silenced: no Fortify this turn">Fortify</button>
+          ${canStd ? `<button class="btn" data-a="silStd" ${v.ts.reinforcements > 0 ? 'disabled' : ''} title="The Standard may still move">⚑ Move Standard</button>` : ''}
+          <button class="btn primary" data-a="silEnd" ${v.ts.reinforcements > 0 ? 'disabled' : ''}>End Turn ▸</button>`;
+        return;
+      }
       const sel = u.sel != null ? `<span class="selbox"><b>${esc(T[u.sel].name)}</b> ${v.armies[u.sel]}${v.ts.placed[u.sel] ? ` <span class="plus">(+${v.ts.placed[u.sel]})</span>` : ''}
           <button class="btn sm" data-a="minus" ${v.ts.placed[u.sel] ? '' : 'disabled'} title="Take back (Shift-click the territory)">−</button>
           <button class="btn sm" data-a="plus" ${v.ts.reinforcements > 0 ? '' : 'disabled'}>+</button></span>` : '';
@@ -1320,13 +1490,19 @@ export class App {
         <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶ Undo${placedTotal ? ` (${placedTotal})` : ''}</button>
         ${u.trade.size === 3 ? `<button class="btn gold" data-a="trade">Trade 3 → 10 armies</button>` : u.trade.size ? `<span class="hint">${u.trade.size}/3 selected</span>` : ''}
         ${this.primusButton()}
+        ${this.ultButtonHTML()}
         <button class="btn primary" data-a="endDraft" ${v.ts.reinforcements > 0 || mt ? 'disabled' : ''}>End Draft ▸</button>`;
       return;
     }
     if (v.phase === 'attack') {
+      if (v.ts.ultMuted) {
+        bar.innerHTML = `<span class="hint">Silenced: no attacks this turn.</span><button class="btn" disabled title="Silenced: no attacks this turn">Attack</button>
+          <button class="btn" data-a="endAttack" title="Go on to move your Standard">Standard ▸</button><button class="btn primary" data-a="endTurn">End Turn ▸</button>`;
+        return;
+      }
       if (u.sel == null) {
         const n = this.attackSources().length;
-        bar.innerHTML = `<span class="hint">${n ? `Pick one of your ${n} glowing territories to attack from. No limit on attacks.` : 'Nothing can attack right now.'}</span>${v.ts.buffs.longStrike > 0 ? `<span class="hint">(${v.ts.buffs.longStrike} long strike ready)</span>` : ''}
+        bar.innerHTML = `<span class="hint">${n ? `Pick one of your ${n} glowing territories to attack from. No limit on attacks.` : 'Nothing can attack right now.'}</span>${v.ts.buffs.longStrike > 0 ? `<span class="hint">(${v.ts.buffs.longStrike} long strike ready)</span>` : ''}${huntsWith(v, this.me!) ? '<span class="hint">(☾ Wild Hunt: strike 2 spaces away, as often as you like)</span>' : ''}
           <button class="btn" data-a="endAttack">Fortify ▸</button><button class="btn" data-a="endTurn">End Turn</button>`;
         return;
       }
@@ -1337,13 +1513,16 @@ export class App {
           const ally = allied(v, this.me!, o);
           const col = o >= 0 ? HOUSES[v.players[o].house].color : '#a39a88';
           const sh = standardAt(v, t);
-          const guard = sh >= 0 ? v.standards[sh].guard : 0;
+          const uf = ultFight(v, this.me!, t);
+          const guard = sh >= 0 ? guardAgainst(v, this.me!, t) : 0;
           const tm = terrainMods(v, u.sel!, t);
           const icon = tm.def ? ' 🌲' : '';
           const note = defenseNote(v, u.sel!, t);
+          const walls = keepWalls(v, t);
           const p = winChance(attackFight(v, this.me!, u.sel!, t));
-          const tip = ally ? 'Your ally! Attacking ends the alliance. ' : note === 'Overwhelm' ? 'Twice their number: they yield without a fight. ' : note === '1 die' ? 'A lone neutral garrison rolls 1 defense die. ' : tm.def ? 'Forest: +1 to their lowest defense die. ' : '';
-          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${tip}${note === 'Overwhelm' ? 'Certain' : `${pct(p)} chance to take it if you blitz`}">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''} ${note === 'Overwhelm' ? '<span class="odds good">🏳 Overwhelm</span>' : `<span class="odds ${oddsClass(p)}">${pct(p)}</span>${note === '1 die' ? ' <span class="dnote">1🎲</span>' : ''}`}</button>`;
+          const tip = ally ? 'Your ally! Attacking ends the alliance. ' : note === 'Overwhelm' ? 'Twice their number: they yield without a fight. ' : note === '1 die' ? 'A lone neutral garrison rolls 1 defense die. ' : (walls ? `Keep Walls: +${walls} to their highest defense die. ` : '') + (tm.def ? 'Forest: +1 to their lowest defense die. ' : '')
+            + (uf.glared ? 'Glared: −1 on their highest defense die. ' : '') + (uf.radiant ? 'Radiant: +1 on your highest attack die. ' : '') + (uf.hunted ? 'Hunted: no honor guard, and no ambush. ' : '');
+          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${tip}${note === 'Overwhelm' ? 'Certain' : `${pct(p)} chance to take it if you blitz`}">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''} ${note === 'Overwhelm' ? '<span class="odds good">🏳 Overwhelm</span>' : `<span class="odds ${oddsClass(p)}">${pct(p)}</span>${note === '1 die' ? ' <span class="dnote">1🎲</span>' : walls ? ` <span class="dnote">♜+${walls}</span>` : ''}${uf.glared ? ' <span class="dnote">☉−1</span>' : ''}${uf.hunted ? ' <span class="dnote">☾</span>' : ''}`}</button>`;
         }).join('');
         const olyP = this.canAssaultFrom(u.sel) ? winChance(assaultFight(v, u.sel)) : 0;
         const oly = this.canAssaultFrom(u.sel) ? `<button class="chip oly" data-a="tgt" data-t="${OLYMPUS}">🏛 Olympus <b>${v.siege!.garrison}</b> <span class="odds ${oddsClass(olyP)}">${pct(olyP)}</span></button>` : '';
@@ -1371,12 +1550,14 @@ export class App {
       const ally = allied(v, this.me!, v.owner[to]);
       const tm = terrainMods(v, from, to);
       const note = defenseNote(v, from, to);
-      const terr = [tm.atk ? `⛰ your high ground +${tm.atk} (lowest compared die)` : '', tm.def ? `🌲 their forest cover +${tm.def} (lowest die)` : '',
-        note === '1 die' ? '🎲 a lone neutral garrison: 1 defense die' : '', note === 'neutral Keep' ? '♜ neutral Keep: no walls, no modifiers, never yields' : ''].filter(Boolean).join(' · ');
+      const uf = ultFight(v, this.me!, to);
+      const terr = [uf.glared ? '☉ Glared: their highest die −1' : '', uf.radiant ? '☉ Radiant: your highest die +1' : '', uf.hunted ? '☾ Hunted: no honor guard, no ambush' : '',
+        tm.atk ? `⛰ your high ground +${tm.atk} (lowest compared die)` : '', tm.def ? `🌲 their forest cover +${tm.def} (lowest die)` : '',
+        note === '1 die' ? '🎲 a lone neutral garrison: 1 defense die' : '', note === 'neutral Keep' ? `♜ neutral Keep: Walls +${keepWalls(v, to)} (highest die), never yields` : note === 'Keep' ? `♜ Keep Walls +${keepWalls(v, to)} (highest die)` : ''].filter(Boolean).join(' · ');
       const bp = winChance(attackFight(v, this.me!, from, to));
       const sp = canStd ? winChance(standardFight(v, this.me!, from, to, commit)) : 0;
       bar.innerHTML = `
-        <span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>${esc(T[to].name)}</b> (${v.armies[to]}${defStd >= 0 && v.standards[defStd].guard ? ` +${v.standards[defStd].guard} honor guard` : ''})</span>
+        <span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>${esc(T[to].name)}</b> (${v.armies[to]}${defStd >= 0 && guardAgainst(v, this.me!, to) ? ` +${guardAgainst(v, this.me!, to)} honor guard` : ''})</span>
         ${note === 'Overwhelm' ? `<span class="odds big good" title="${v.armies[from] - 1} against ${v.armies[to]}: twice their number or more">🏳 Overwhelm: they yield, no dice</span>`
           : `<span class="odds big ${oddsClass(bp)}" title="Chance to take it if you blitz with everything but one">Blitz wins: ${pct(bp)}</span>`}
         ${terr ? `<span class="terr-chip">${terr}</span>` : ''}
@@ -1384,7 +1565,7 @@ export class App {
         ${diceSeg}
         <button class="btn primary" data-a="roll" ${v.armies[from] < 2 ? 'disabled' : ''}>Roll</button>
         <button class="btn primary" data-a="blitz" ${v.armies[from] < 2 ? 'disabled' : ''}>Blitz</button>
-        ${canStd && !v.ts.stdRaised ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3 <span class="odds ${oddsClass(sp)}" id="stdOdds" title="Chance the charge wins, before your General's war cry">≥${pct(sp)}</span></label>
+        ${canStd && !v.ts.stdRaised ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3 <span class="odds ${oddsClass(sp)}" id="stdOdds" title="Chance the charge wins, before your Primus's war cry">≥${pct(sp)}</span></label>
           <button class="btn gold" data-a="std">⚑ Raise the Standard</button>` : ''}
         ${canStd && v.ts.stdRaised ? '<button class="btn gold" disabled title="The Standard can be raised once per turn">⚑ Raised this turn</button>' : ''}
         <button class="btn sm" data-a="retarget" title="Pick another target">↺</button>
@@ -1393,7 +1574,14 @@ export class App {
     }
     if (v.phase === 'fortify') {
       const st = v.standards[v.players[this.me!].house];
-      const stdBtn = !st.captured && !v.ts.stdMoved ? `<button class="btn ${u.stdMode ? 'gold' : ''}" data-a="stdMode">⚑ ${u.stdMode ? 'Pick where to plant it' : 'Move Standard'}</button>` : '';
+      const stdBtn = !st.captured && !v.ts.stdMoved
+        ? v.ts.ultPinned ? '<button class="btn" disabled title="Pinned: your Standard cannot move this turn">⚑ Move Standard</button>'
+          : `<button class="btn ${u.stdMode ? 'gold' : ''}" data-a="stdMode">⚑ ${u.stdMode ? 'Pick where to plant it' : 'Move Standard'}</button>` : '';
+      if (v.ts.ultMuted || v.ts.ultPinned) {
+        bar.innerHTML = `<span class="hint">${u.stdMode ? 'Pick where to plant your Standard.' : v.ts.ultPinned ? "Pinned: no Fortify this turn, and your Standard can't move." : 'Silenced: no Fortify this turn. Your Standard may still move.'}</span>
+          <button class="btn" disabled title="${v.ts.ultPinned ? 'Pinned' : 'Silenced'}: no Fortify this turn">Fortify</button>${stdBtn}<button class="btn primary" data-a="endTurn">End Turn ▸</button>`;
+        return;
+      }
       const limit = v.ts.buffs.fortifyAll ? '∞' : `${Math.max(0, 1 + passive(v, this.me!, 'fortify') - v.ts.fortifies)}`;
       if (u.sel != null && u.target != null) {
         const max = v.armies[u.sel] - 1;
@@ -1406,6 +1594,260 @@ export class App {
       }
       bar.innerHTML = `<span class="hint">${u.sel == null ? `Pick troops to move (${limit} move${limit === '1' ? '' : 's'} left).` : 'Pick a destination.'}</span>${stdBtn}<button class="btn primary" data-a="endTurn">End Turn ▸</button>`;
     }
+  }
+
+  /**
+   * The Ultimate button: in the Draft bar from the first turn of any war that has Ultimates. Its label is the House's
+   * Ultimate and its second line says why it can't be cast yet. Ready is the only state that glows.
+   */
+  private ultButtonHTML() {
+    const b = this.me != null ? ultButton(this.v, this.me) : null;
+    if (!b) return '';
+    return `<button class="ult ${b.state === 'ready' ? 'ready' : 'off'}" id="ultBtn" data-a="${b.state === 'ready' ? 'ult' : 'ultWhy'}" title="${esc(b.tip)}"><b>⚡ ${esc(b.name)}</b><small>${esc(b.sub)}</small></button>`;
+  }
+
+  // =========================================================================
+  // House Ultimates: the cast flow. One flow, four steps (target, cards, picks for Mars and Jupiter, preview).
+  // Nothing is spent until Commit.
+
+  private castHouse() { return this.v.players[this.me!].house; }
+  private castSteps(): string[] {
+    const hid = HOUSES[this.castHouse()].id;
+    return ['Target', 'Cards', ...(hid === 'mars' ? ['Territories'] : hid === 'jupiter' ? ['Quadrant'] : []), 'Preview'];
+  }
+  /** The Houses the cast would strike, as chosen so far. */
+  private castTargets(): number[] {
+    const c = this.ui.cast!, v = this.v;
+    if (c.target == null) return [];
+    if (HOUSES[this.castHouse()].id === 'jupiter') return stormSide(v, c.target);
+    return ultTargets(v, c.target, c.alliance) ?? [c.target];
+  }
+  private castNames(): string {
+    const ts = this.castTargets(), v = this.v;
+    const n = (x: number) => esc(v.players[x].name);
+    return ts.length < 2 ? n(ts[0]) : `${ts.slice(0, -1).map(n).join(', ')} and ${n(ts[ts.length - 1])}`;
+  }
+  private castAction(): Extract<Action, { type: 'ultimate' }> {
+    const c = this.ui.cast!, hid = HOUSES[this.castHouse()].id;
+    return { type: 'ultimate', target: c.target!, alliance: c.alliance, cards: [...c.cards], ...(hid === 'mars' ? { picks: [...c.picks] } : hid === 'jupiter' && c.q != null ? { picks: [c.q] } : {}) };
+  }
+
+  /** Open the flow from the Ready button: the leader is the target to start with, and the cheapest cards are picked. */
+  private openCast() {
+    const v = this.v, me = this.me!;
+    if (ultBlocker(v, me)) return;
+    const rival = ultStandings(v).find((p) => !p.members.includes(me));
+    if (!rival) return;
+    const w = winScores(v);
+    const u = this.ui;
+    u.sel = null; u.target = null; u.pending = null; u.inspect = null; u.trade.clear();
+    this.endPreview();
+    u.cast = { step: 'target', target: [...rival.members].sort((a, b) => w[b] - w[a])[0], alliance: false, cards: ultCards(v, me) ?? [], picks: [], q: null, preview: null, changed: [], hits: 0 };
+    this.render();
+  }
+  /** Leave the flow (Cancel, Escape, or the turn moved on): the map goes back to the real valley. */
+  private endCast() {
+    const c = this.ui.cast;
+    if (!c) return;
+    this.ui.cast = null;
+    document.getElementById('qpanel')?.remove();
+    const root = document.getElementById('modal-root');
+    if (root?.dataset.key?.startsWith('cast-')) this.modal(null);
+    if (c.preview && this.session?.view) this.world.update(this.v);
+  }
+
+  /** One step forward. Mars and Jupiter stop to pick on the map; then the preview runs the cast on a copy of the war. */
+  private castNext() {
+    const c = this.ui.cast, v = this.v, me = this.me!;
+    if (!c || c.target == null) return;
+    const hid = HOUSES[this.castHouse()].id;
+    if (c.step === 'target') { c.step = 'cards'; return this.render(); }
+    if (c.step === 'cards') {
+      if (!ultCardsOk(v, me, c.cards)) return;
+      if (hid === 'mars') {
+        const valid = marsTargets(v, me, this.castTargets());
+        if (!valid.length) return this.toast("Nothing to seize: none of their land (or the neutrals') lies in a quadrant where you hold land, outside Keeps and Standards.");
+        c.picks = c.picks.filter((t) => valid.includes(t));
+        c.step = 'picks';
+        this.modal(null);
+        this.whisper("<b>Dimmed land can't be seized:</b> Keeps, a Standard's territory, and land in a quadrant where Mars holds nothing.");
+        if (this.prefs.follow) this.world.follow(valid);
+        return this.render();
+      }
+      if (hid === 'jupiter') {
+        const cuts = QUADRANTS.map((_, q) => stormCut(v, c.target!, q).cut);
+        if (c.q == null || (cuts.some((x) => x > 0) && !cuts[c.q])) c.q = cuts.indexOf(Math.max(...cuts));
+        c.step = 'picks';
+        this.modal(null);
+        return this.render();
+      }
+    }
+    // Preview: the exact outcome (no Ultimate has a random part), on the map and in numbers.
+    const sim = this.simulate(this.castAction());
+    if (sim.err) return this.toast(sim.err);
+    c.step = 'preview'; c.preview = sim.state; c.changed = sim.changed; c.hits = sim.event?.hits ?? 0;
+    this.modal(null);
+    document.getElementById('qpanel')?.remove();
+    if (sim.state) this.world.update(sim.state);
+    if (sim.changed.length) { if (this.prefs.follow) this.world.follow(sim.changed); this.world.flash(sim.changed, '#ff9b1f', 1800); }
+    this.render();
+  }
+  private castPrev() {
+    const c = this.ui.cast;
+    if (!c) return;
+    const hid = HOUSES[this.castHouse()].id, picks = hid === 'mars' || hid === 'jupiter';
+    if (c.step === 'preview') {
+      c.step = picks ? 'picks' : 'cards';
+      c.preview = null; c.changed = [];
+      this.world.update(this.v);
+    } else if (c.step === 'picks') c.step = 'cards';
+    else if (c.step === 'cards') c.step = 'target';
+    else return this.endCast();
+    this.render();
+  }
+  private async castCommit() {
+    const c = this.ui.cast;
+    if (!c || c.step !== 'preview') return;
+    const a = this.castAction();
+    const minerva = HOUSES[this.castHouse()].id === 'minerva' && !a.alliance;
+    this.endCast();
+    const err = await this.send(a);
+    // Blackout on one House: its hand is open to the caster from now until the caster's next turn.
+    if (!err && minerva) { this.ui.reveal = a.target; this.toast(`You can read ${this.v.players[a.target].name}'s hand until your next turn: the eye on their banner opens it.`); }
+    this.render();
+  }
+  /** Mars: a click on the map picks a territory to seize, or frees one already picked. */
+  private castPick(t: number) {
+    const c = this.ui.cast!, v = this.v, me = this.me!;
+    const targets = this.castTargets();
+    const valid = marsTargets(v, me, targets), want = Math.min(ULT.marsPicks, valid.length);
+    const i = c.picks.indexOf(t);
+    if (i >= 0) c.picks.splice(i, 1);
+    else if (!valid.includes(t)) return this.territoryError([t], marsPickBlocker(v, me, targets, t) ?? 'That territory cannot be seized.');
+    else if (c.picks.length >= want) return this.toast(`You have picked ${want}. Click one of them again to free it.`);
+    else c.picks.push(t);
+    this.render();
+  }
+  /** A card joins or leaves the three to spend. With three already picked, the newest one that isn't needed gives way. */
+  private castCard(id: string) {
+    const c = this.ui.cast!, house = this.castHouse();
+    const i = c.cards.indexOf(id);
+    if (i >= 0) c.cards.splice(i, 1);
+    else {
+      if (c.cards.length >= 3) {
+        const births = c.cards.filter((x) => CARD[x].house === house);
+        const drop = [...c.cards].reverse().find((x) => CARD[x].house !== house || births.length > 1 || CARD[id].house === house);
+        if (drop) c.cards.splice(c.cards.indexOf(drop), 1);
+      }
+      c.cards.push(id);
+    }
+    this.render();
+  }
+
+  /** The header of the flow's two modal steps: the House's medal, the Ultimate's name, and where you are. */
+  private castHead(step: number) {
+    const h = this.castHouse(), H = HOUSES[h];
+    return `<div class="cast-h"><div class="medal">${H.sigil}</div>
+        <div><div class="sub">House ${H.name} · Ultimate</div><h2>${esc(ultOf(h).name)}</h2></div><button class="btn sm ghost" data-a="cast-close" title="Cancel (Esc)">✕</button></div>
+      <div class="steps">${this.castSteps().map((s, i) => `<span class="${i === step ? 'on' : i < step ? 'done' : ''}">${i < step ? '✓ ' : ''}${i + 1} · ${s}</span>`).join('')}</div>`;
+  }
+  /** Step 1 and 2 of the flow (the map steps live in the action bar). */
+  private castModal() {
+    const c = this.ui.cast!, v = this.v, me = this.me!, h = this.castHouse(), hid = HOUSES[h].id;
+    const w = winScores(v);
+    const pct = (x: number) => `${Math.round(x)}%`;
+    if (c.step === 'target') {
+      const parties = ultStandings(v);
+      const rows = parties.map((p, i) => {
+        const mine = p.members.includes(me);
+        const members = [...p.members].sort((a, b) => w[b] - w[a]);
+        const pub = p.members.length > 1 && !!allianceOf(v, p.members[0])?.public;
+        const who = members.map((m) => `${sig(v.players[m].house)} ${esc(v.players[m].name)}${m === me ? ' <span class="you">YOU</span>' : ''}${members.length > 1 ? ` <span class="p1">${pct(w[m])}</span>` : ''}`).join(' + ');
+        const opt = (seat: number, ally: boolean, label: string, small = '') => `<button class="opt ${c.target === seat && c.alliance === ally ? 'on' : ''}" data-a="cast-tgt" data-seat="${seat}" data-ally="${ally ? 1 : 0}"><i class="rb"></i>${label}${small ? ` <small>${small}</small>` : ''}</button>`;
+        const opts = mine ? '' : members.length > 1
+          ? members.map((m) => opt(m, false, `${esc(v.players[m].name)} only`, hid === 'jupiter' ? 'their Draft is capped' : '')).join('') + (hid === 'jupiter' ? '' : opt(members[0], true, 'Whole alliance', 'every member, weaker hit'))
+          : opt(members[0], false, esc(v.players[members[0]].name));
+        const cut = i > 0 && p.bottom && !parties[i - 1].bottom ? '<div class="cut">Below this line: may cast an Ultimate</div>' : '';
+        return `${cut}<div class="party ${mine ? 'me' : ''}"><div class="ph"><span class="rank">${i + 1}</span><span class="who">${who}${members.length > 1 ? ` <span class="tagx">${pub ? 'Public alliance' : 'Your secret alliance'}</span>` : ''}${i === 0 ? ' <span class="tagx lead">★ Leader</span>' : ''}</span>
+            <span class="pct"><span class="pbar"><i style="width:${Math.min(100, p.score).toFixed(0)}%"></i></span>${pct(p.score)}</span></div>
+          ${opts ? `<div class="opts">${opts}</div>` : ''}</div>`;
+      }).join('');
+      const note = hid === 'jupiter' && this.castTargets().length > 1 ? ' Stormfall strikes the stacks of every member of a public alliance.' : '';
+      return `<div class="modal"><div class="box cast" style="--hc:${HOUSES[h].color}">${this.castHead(0)}
+        <div class="lbl">Standing by Win % · ${parties.length} parties</div>
+        ${rows}
+        <div class="cast-f"><span class="sum">Target: <b>${c.target != null ? this.castNames() : 'pick one'}</b>.${note}</span><span class="row"><button class="btn" data-a="cast-close">Cancel</button><button class="btn primary" data-a="cast-next" ${c.target == null ? 'disabled' : ''}>Next: Cards ▸</button></span></div>
+      </div></div>`;
+    }
+    // Step 2: the three cards.
+    const hand = v.me?.hand ?? [];
+    const ok = ultCardsOk(v, me, c.cards), hasBirth = c.cards.some((id) => CARD[id].house === h);
+    const keep = hand.filter((x) => !c.cards.includes(x.id)).map((x) => esc(CARD[x.id].name));
+    const next = hid === 'mars' ? 'Next: Territories ▸' : hid === 'jupiter' ? 'Next: Quadrant ▸' : 'Preview ▸';
+    return `<div class="modal"><div class="box cast" style="--hc:${HOUSES[h].color}">${this.castHead(1)}
+      <div class="lbl">Spend 3 cards · at least 1 from House ${HOUSES[h].name}</div>
+      <div class="cards-row">${hand.map((x) => {
+        const k = CARD[x.id], on = c.cards.includes(x.id);
+        return `<button class="gcard pick spend ${on ? 'on' : ''}" style="--hc:${HOUSES[k.house].color}" data-a="cast-card" data-id="${x.id}" ${x.locked ? 'disabled title="Locked until your next turn"' : ''} aria-pressed="${on}">${k.house === h ? `<span class="req">REQUIRED · ${HOUSES[h].name.toUpperCase()}</span>` : ''}${on ? '<span class="pickd">SPEND</span>' : ''}
+          <div><div class="nm">${esc(k.name)}</div><div class="tt2">House ${HOUSES[k.house].name}${k.kind === 'proctor' ? ' · Proctor' : k.kind === 'relic' ? ' · Relic' : k.active.kind === 'counter' ? ' · REACTION' : ''}${x.locked ? ' · locked' : ''}</div></div>
+          <div class="blk act"><span class="k">YOU GIVE UP</span>${esc(fmt(k.active.text, activeValue(v, me, k)))}</div></button>`;
+      }).join('')}</div>
+      <div class="cast-f"><span class="sum">${ok ? `Replaces a trade: <b>no +10 armies</b>. You keep ${keep.length ? `<b>${keep.join(', ')}</b>` : 'nothing'}.` : hasBirth ? 'Pick exactly 3 cards.' : `One card must be from <b>House ${HOUSES[h].name}</b>.`}</span>
+        <span class="row"><button class="btn" data-a="cast-prev">◂ Target</button><button class="btn primary" data-a="cast-next" ${ok ? '' : 'disabled'}>${next}</button></span></div>
+    </div></div>`;
+  }
+
+  /** The action bar while the flow is on the map: Mars's picks, Jupiter's quadrant, and the preview with Commit. */
+  private castBar(): string {
+    const c = this.ui.cast!, v = this.v, me = this.me!, h = this.castHouse(), hid = HOUSES[h].id, T = this.g.territories;
+    const name = esc(ultOf(h).name);
+    if (c.step === 'picks' && hid === 'mars') {
+      const want = Math.min(ULT.marsPicks, marsTargets(v, me, this.castTargets()).length);
+      const chips = Array.from({ length: want }, (_, i) => c.picks[i] != null
+        ? `<button class="pchip" data-a="cast-unpick" data-t="${c.picks[i]}" title="Free this pick">${i + 1} · ${esc(T[c.picks[i]].name)} <b>${v.armies[c.picks[i]]}</b></button>`
+        : `<span class="pchip empty">${i + 1} · pick on the map</span>`).join('');
+      return `<span class="hint"><b>⚡ ${name}</b> Pick ${want} territor${want === 1 ? 'y' : 'ies'} to seize.</span>${chips}
+        <button class="btn" data-a="cast-prev">◂ Cards</button><button class="btn primary" data-a="cast-next" ${c.picks.length === want ? '' : 'disabled'}>Preview ▸</button>`;
+    }
+    if (c.step === 'picks') {
+      return `<span class="hint"><b>⚡ ${name}</b> on ${this.castNames()}: every stack over ${ULT.stormCut} in one quadrant is cut to ${ULT.stormCut}.</span>
+        <button class="btn" data-a="cast-prev">◂ Cards</button><button class="btn primary" data-a="cast-next" ${c.q == null ? 'disabled' : ''}>Preview ▸</button>`;
+    }
+    // Preview.
+    const rec = c.preview?.ult?.casts.at(-1);
+    const ally = this.castTargets().length > 1 && c.alliance;
+    const income = (m: number) => reinforcementBreakdown(v, m).total;
+    const tgt = esc(v.players[c.target!].name);
+    let sum = '';
+    switch (hid) {
+      case 'mars': sum = `<b>${rec?.removed ?? 0}</b> destroyed, <b>${rec?.gained ?? 0}</b> join ${HOUSES[h].name}, <b>${c.picks.length}</b> territor${c.picks.length === 1 ? 'y becomes' : 'ies become'} yours.`; break;
+      case 'jupiter': sum = `<b>${rec?.removed ?? 0}</b> armies cut in ${esc(QUADRANTS[c.q!].name)} (${c.hits} territor${c.hits === 1 ? 'y' : 'ies'}). ${tgt}'s next Draft is capped at ${ULT.stormCut} (it would be ${income(c.target!)}).`; break;
+      case 'pluto': sum = `<b>${rec?.removed ?? 0}</b> rot away now from ${c.hits} stack${c.hits === 1 ? '' : 's'}. ${ally ? 'Then 20% more at their next turn, and their next 2 Drafts are cut 30% and 20%.' : 'Then 20% and 10% more at their next turns, and their next 3 Drafts are cut 30%, 20% and 10%.'}`; break;
+      case 'minerva': sum = ally
+        ? `On their next turn each of them drafts 60% less (about <b>${this.castTargets().reduce((a, m) => a + Math.floor(income(m) * ULT.silenceCut), 0)}</b> in all) and can't use cards, attack or Fortify.`
+        : `${tgt}'s next turn is skipped: a Draft of about <b>${income(c.target!)}</b>, and every attack. You read their hand until your next turn.`; break;
+      case 'ceres': sum = ally
+        ? `Their next Drafts are cut 30% (about <b>${this.castTargets().reduce((a, m) => a + Math.floor(income(m) * ULT.titheAlly[0]), 0)}</b>), then 15%. You gain what is taken, up to ${ULT.titheCap}.`
+        : `${tgt}'s next Draft is cut 50% (about <b>${Math.floor(income(c.target!) * ULT.tithe[0])}</b>), the one after 25%. You gain what is taken, up to ${ULT.titheCap}.`; break;
+      case 'apollo': sum = 'Until your next turn their highest defense die is <b>−1</b> against you and your allies. This turn your highest attack die is <b>+1</b> against them.'; break;
+      case 'diana': sum = "Until your next turn their Standard has <b>no honor guard</b> and they spring no ambush against your party, which strikes <b>2 spaces away</b>. Next turn they can't Fortify or move their Standard."; break;
+    }
+    return `<span class="hint"><b>Preview · ${name}</b> on ${this.castNames()}: ${sum}</span>
+      <span class="pchip">Costs ${c.cards.map((id) => esc(CARD[id].name)).join(', ')} · no +10</span><button class="btn" data-a="cast-prev">◂ Back</button><button class="btn gold" data-a="cast-commit">⚡ Commit</button>`;
+  }
+
+  /** Jupiter's step 3: the four quadrants, each with what Stormfall would cut there. */
+  private renderQuadrants() {
+    const c = this.ui.cast, dock = document.querySelector('#hud .dock');
+    let box = document.getElementById('qpanel');
+    if (!c || c.step !== 'picks' || HOUSES[this.castHouse()].id !== 'jupiter' || !dock) { box?.remove(); return; }
+    const v = this.v;
+    const cuts = QUADRANTS.map((_, q) => stormCut(v, c.target!, q));
+    const any = cuts.some((x) => x.cut > 0);
+    if (!box) { box = el('<div class="qpanel" id="qpanel"></div>'); dock.insertBefore(box, dock.firstChild); }
+    box.innerHTML = `<div class="lbl">PICK A QUADRANT</div>
+      <div class="qgrid">${QUADRANTS.map((Q, q) => `<button class="qbtn ${c.q === q ? 'on' : ''}" data-a="cast-q" data-q="${q}" ${any && !cuts[q].cut ? 'disabled' : ''}><b>${esc(Q.name.replace(/^The /, ''))}</b><span class="cutn">${cuts[q].cut ? `−${cuts[q].cut}` : '0'}</span><small>${cuts[q].terrs.length ? `${cuts[q].terrs.length} territor${cuts[q].terrs.length === 1 ? 'y' : 'ies'}` : 'nothing to cut'}</small></button>`).join('')}</div>
+      <div class="fine">Also: ${esc(v.players[c.target!].name)}'s next Draft is capped at ${ULT.stormCut} (it would be ${reinforcementBreakdown(v, c.target!).total}). Standards are immune.</div>`;
   }
 
   /** A Keep of yours without a Primus, and a Character in hand that could be sworn in there. */
@@ -1421,11 +1863,14 @@ export class App {
     const me = this.session?.seat ?? null;
     const myHouse = o.forHouse ?? (v && me != null ? v.players[me].house : -1);
     const owns = o.ownsCheck !== false && v && me != null && v.phase !== 'passage' ? ownsHouse(v, me, c.house) : c.house === myHouse;
-    const pn = c.passive ? c.passive.n + (c.house === myHouse ? 1 : 0) : 0;
+    // From .008 a Passive works at its printed value (as your Primus, or as the Primus of a Keep). Older wars keep the House-match +1 for a General.
+    const printed = !v || !!v.opts?.pick;
+    const matchBonus = !printed && c.house === myHouse;
+    const pn = passiveValue(c, myHouse, printed);
     const an = o.an ?? c.active.n + (c.kind !== 'proctor' && owns ? c.active.bonus : 0);
     const bonusNote = c.active.bonus ? ` <span style="color:var(--gold-dim)">(House ${HOUSES[c.house].name} owners: +${c.active.bonus})</span>` : '';
     const top = c.passive
-      ? `<div class="blk ${c.house === myHouse ? 'bonus' : ''}"><span class="k">PASSIVE · AS GENERAL${c.house === myHouse ? ' · ★ +1 HOUSE MATCH' : ''}</span>${esc(fmt(c.passive.text, pn))}</div>`
+      ? `<div class="blk ${matchBonus ? 'bonus' : ''}"><span class="k">PASSIVE · AS ${printed ? 'PRIMUS' : 'GENERAL'}${matchBonus ? ' · ★ +1 HOUSE MATCH' : ''}</span>${esc(fmt(c.passive.text, pn))}</div>`
       : c.kind === 'relic'
         ? `<div class="blk"><span class="k">SIEGE RELIC</span>Only playable during a Siege on Olympus. Tradeable any time.</div>`
         : `<div class="blk"><span class="k">REQUIRES</span>You must own House ${HOUSES[c.house].name}. Otherwise, discard it for 2 cards.</div>`;
@@ -1454,7 +1899,8 @@ export class App {
   /** The Play / Discard / Trade buttons for a card in your hand, when you can use them. */
   private cardButtons(id: string, locked: boolean) {
     const v = this.v, u = this.ui, c = CARD[id];
-    const draft = this.myTurn() && v.phase === 'draft' && !u.pending && !u.confirm;
+    const draft = this.myTurn() && v.phase === 'draft' && !u.pending && !u.confirm && !u.cast;
+    if (draft && v.ts.ultMuted) return '<div class="btns"><span class="fine" style="margin:0">Silenced: no cards this turn</span></div>';
     if (draft && !locked) {
       const usable = c.active.kind !== 'counter' && (c.kind !== 'proctor' || ownsHouse(v, this.me!, c.house)) && (!isSiegeCard(c) || this.sieging());
       const dud = c.kind === 'proctor' && !ownsHouse(v, this.me!, c.house);
@@ -1542,7 +1988,7 @@ export class App {
    * Try a card play on a copy of the game, so the confirm box can show exactly what the War Log will say.
    * Random effects (stolen or drawn cards) use stand-in cards; only the counts matter for the preview.
    */
-  private simulate(a: Action): { err: string | null; text: string; changed: number[]; state: GameState | null } {
+  private simulate(a: Action): { err: string | null; text: string; changed: number[]; state: GameState | null; event?: GameEvent } {
     const v = this.session!.view!, me = this.me!;
     const s: GameState = JSON.parse(JSON.stringify(v));
     const dummy = () => ({ id: 'p-mars', locked: false });
@@ -1554,12 +2000,12 @@ export class App {
     const r = act(s, me, a, { rng: () => 0.5, now: Date.now() });
     drainLog(); // a make-believe play never reaches any War Log
     if (!r.ok) return { err: r.err, text: '', changed: [], state: null };
-    const e = s.log.filter((x) => x.id > (v.log.at(-1)?.id ?? 0)).find((x) => x.k === 'play');
+    const e = s.log.filter((x) => x.id > (v.log.at(-1)?.id ?? 0)).find((x) => x.k === 'play' || x.k === 'ultimate');
     const changed = s.owner.flatMap((o, t) => (o !== v.owner[t] || s.armies[t] !== v.armies[t] ? [t] : []));
     // The preview shows only what this seat may know: its own hand, and counts for everyone else.
     s.priv = null;
     s.me = { seat: me, hand: [], passage: null };
-    return { err: null, text: e ? describe(s, e) : '', changed, state: s };
+    return { err: null, text: e ? describe(s, e) : '', changed, state: s, event: e };
   }
 
   /**
@@ -1672,6 +2118,36 @@ export class App {
         <button class="btn primary big" data-a="ack">I am ${esc(p.name)}</button></div></div>`, `handoff-${s.handoff}`);
       return;
     }
+    if (v.phase === 'passage' && v.opts?.pick) {
+      // Choose your Primus (.008): every Character of your House, pick one, then swear them in.
+      const me = v.players[this.me!], h = me.house;
+      const opts = v.me?.passage;
+      if (!opts) {
+        const mine = me.general && me.general !== '?' ? CARD[me.general] : null;
+        const ready = v.players.filter((p) => p.general || !p.alive).length;
+        this.modal(`<div class="modal"><div class="box primus-wait" style="text-align:center">
+          <h2>${mine ? `${esc(mine.name)} leads House ${HOUSES[h].name}` : 'Choosing a Primus'}</h2>
+          <p class="prose">Waiting for the other Houses to choose. ${ready} of ${v.players.length} are ready.</p>
+          ${mine ? '<div class="fine">Rivals see your Primus when everyone has chosen.</div>' : ''}
+        </div></div>`, `passage-wait-${ready}`);
+        return;
+      }
+      const pick = this.primusPick && opts.includes(this.primusPick) ? this.primusPick : null;
+      const first = (id: string) => CARD[id].name.replace(/^The /, '').split(' ')[0];
+      this.modal(`<div class="modal"><div class="box primus-pick ${opts.length > 5 ? 'many' : ''}" style="text-align:center">
+        <h2>Choose your Primus</h2>
+        <p class="prose">House ${HOUSES[h].name} is yours. Pick the Gold who leads it: their Passive works for you all war.</p>
+        <div class="cards-row">${opts.map((id) => {
+          const c = CARD[id];
+          return `<button class="gcard pick ${pick === id ? 'on' : ''}" style="--hc:${HOUSES[c.house].color}" data-a="primusPick" data-id="${id}" aria-pressed="${pick === id}">${pick === id ? '<span class="pickd">YOUR PRIMUS</span>' : ''}
+            <div><div class="nm">${esc(c.name)}</div><div class="tt2">${esc(c.title)}</div></div>
+            <div class="blk"><span class="k">PASSIVE · ALL WAR</span>${c.passive ? esc(fmt(c.passive.text, passiveValue(c, h, true))) : '—'}</div>
+            <div class="blk act" title="${esc(fmt(c.active.text, c.active.n + c.active.bonus))}"><span class="k">AS A CARD</span>${esc(fmt(c.active.text, c.active.n + c.active.bonus).split(':')[0])}</div></button>`;
+        }).join('')}</div>
+        <button class="btn primary big" data-a="choose" data-id="${pick ?? ''}" ${pick ? '' : 'disabled'}>${pick ? `Swear in ${esc(first(pick))} ▸` : 'Pick a Primus'}</button>
+      </div></div>`, `passage-${this.me}-${pick ?? ''}`, true);
+      return;
+    }
     if (v.phase === 'passage' && v.me?.passage) {
       const [a, b] = v.me.passage;
       const myHouse = v.players[this.me!].house;
@@ -1686,6 +2162,11 @@ export class App {
     }
     if (v.phase === 'passage') {
       this.modal(`<div class="modal"><div class="box" style="text-align:center"><h2>Blood on the floor</h2><p class="prose">You walked out. Now wait while the others finish killing their friends.</p></div></div>`, 'passage-wait');
+      return;
+    }
+    if (this.ui.cast && (this.ui.cast.step === 'target' || this.ui.cast.step === 'cards')) {
+      const c = this.ui.cast;
+      this.modal(this.castModal(), `cast-${c.step}-${c.target}-${c.alliance}-${c.cards.join(',')}`, true);
       return;
     }
     if (this.myTurn() && v.ts.mustMove) {
@@ -1708,7 +2189,7 @@ export class App {
         this.modal(`<div class="modal"><div class="box" style="text-align:center">
           <div class="logo-sub">♛ A KEEP WITHOUT A MASTER</div>
           <h2>${sig(h)} ${esc(T[ask.keep].name)} is yours</h2>
-          <p class="prose">Swear in one House ${HOUSES[h].name} Character from your hand as its <b>Primus</b>. Its Passive works for you on top of your General's (no House-match bonus, not shared with allies).
+          <p class="prose">Swear in one House ${HOUSES[h].name} Character from your hand as its <b>Primus</b>. Its Passive works for you on top of your own Primus's (not shared with allies).
           The card leaves your hand, and if the Keep falls, the Primus dies with it.</p>
           <div class="cards-row">${ask.cards.map((id) => this.cardHTML(id, { forHouse: -1, ownsCheck: false, btns: `<div class="btns"><button class="btn primary" data-a="primus" data-keep="${ask.keep}" data-id="${id}">♛ Swear in ${esc(CARD[id].name.replace(/^The /, '').split(' ')[0])}</button></div>` })).join('')}</div>
           <button class="btn" data-a="primusSkip" data-keep="${ask.keep}">Not now${v.phase === 'draft' ? '' : ' (you can in a later Draft)'}</button>
@@ -1743,7 +2224,7 @@ export class App {
     const groups = HOUSES.map((h, i) => `<h3 style="font-family:var(--display);color:${h.color};margin:18px 0 6px">${sig(i)} House ${h.name} <span class="fine">· ${esc(h.epithet)}</span></h3>
       <div class="cards-row" style="justify-content:flex-start;margin:0">${CARDS.filter((c) => c.house === i).map((c) => this.cardHTML(c.id, { forHouse: -1, ownsCheck: false })).join('')}</div>`).join('');
     const html = `<div class="modal"><div class="box" style="width:min(1100px,100%)"><h2>The Codex</h2>
-      <p class="fine" style="margin:0">Every card in the deck. A card's suit is its House. Passives work on your General (+1 if the suit matches your House), and on a <b>Primus</b>: a Character sworn in at a Keep you conquered whose House matches its suit (no +1, not shared with allies, slain if the Keep falls). Actives are played in the Draft.
+      <p class="fine" style="margin:0">Every card in the deck. A card's suit is its House. Passives work on your <b>Primus</b> (the Character of your House you chose before the war), and on the Primus of a Keep you conquered: a Character sworn in there whose suit is that Keep's House (not shared with allies, slain if the Keep falls). Actives are played in the Draft.
       Relics only work in a Siege on Olympus, where each attacking House's Proctor defends Olympus. ✦ marks original fan characters.</p>${groups}
       <div style="text-align:right;margin-top:12px"><button class="btn primary" data-a="close">Close</button></div></div></div>`;
     if (document.getElementById('modal-root')) this.modal(html, 'info-codex');
@@ -1799,7 +2280,7 @@ export class App {
     const incoming = v.invites.filter((i) => i.to === me);
     const status = !v.warBegun
       ? '<p class="prose">The Houses are still circling. <b>Diplomacy opens once one House attacks another.</b></p>'
-      : '<p class="prose">Send a quiet invitation. <b>Public</b> alliances are announced to the valley; <b>secret</b> ones only to members. Allies share their Generals\' Passives and nothing else. Attack an ally and the alliance dies on the spot.</p>';
+      : '<p class="prose">Send a quiet invitation. <b>Public</b> alliances are announced to the valley; <b>secret</b> ones only to members. Allies share their Primuses\' Passives and nothing else. Attack an ally and the alliance dies on the spot.</p>';
     const sworn = al ? 'You are already sworn to an alliance: walk out of it first.' : '';
     const inc = incoming.map((i) => `<div class="drow">📜 ${sig(v.players[i.from].house)} <b>${esc(v.players[i.from].name)}</b> offers a ${i.public ? 'public' : 'secret'} alliance
       <span class="grow"></span><button class="btn sm primary" data-a="answer" data-id="${i.id}" data-yes="1" ${sworn ? `disabled title="${sworn}"` : ''}>Accept</button><button class="btn sm" data-a="answer" data-id="${i.id}" data-yes="0">Burn it</button></div>`).join('');
@@ -1947,7 +2428,21 @@ export class App {
     if (a === 'copy') { navigator.clipboard?.writeText(b.dataset.link!).then(() => this.toast('Link copied.')); return; }
     if (a === 'concede') { if (confirm('Throw down your sword? Your House goes to the wilds.')) { this.modal(null); await this.send({ type: 'concede' }); } return; }
     if (a === 'ack') { this.modal(null); this.session?.ackHandoff?.(); return; }
-    if (a === 'choose') { if (this.sentPassage) return; this.sentPassage = true; const err = await this.send({ type: 'choose', card: b.dataset.id! }); this.sentPassage = false; if (!err) this.modal(null); return; }
+    if (a === 'primusPick') { this.primusPick = b.dataset.id!; this.renderModals(); return; }
+    if (a === 'cast-close') { this.endCast(); this.render(); return; }
+    if (a === 'cast-tgt' && this.ui.cast) { this.ui.cast.target = +b.dataset.seat!; this.ui.cast.alliance = b.dataset.ally === '1'; this.ui.cast.picks = []; this.ui.cast.q = null; this.renderModals(); return; }
+    if (a === 'cast-card' && this.ui.cast) { this.castCard(b.dataset.id!); return; }
+    if (a === 'cast-next') { this.castNext(); return; }
+    if (a === 'cast-prev') { this.castPrev(); return; }
+    if (a === 'choose') {
+      if (this.sentPassage || !b.dataset.id) return;
+      this.sentPassage = true;
+      const err = await this.send({ type: 'choose', card: b.dataset.id });
+      this.sentPassage = false;
+      // The update that came back already drew what is next (in hot-seat, the hand-over screen): only clear a modal that is still this one.
+      if (!err) { this.primusPick = null; if (root.dataset.key?.startsWith('passage-')) this.renderModals(); }
+      return;
+    }
     if (a === 'react') { this.modal(null); await this.send({ type: 'react', card: b.dataset.id || null }); return; }
     if (a === 'mmset') { const inp = root.querySelector<HTMLInputElement>('[data-a=mm]')!; inp.value = b.dataset.n!; root.querySelector('#mmv')!.textContent = inp.value; return; }
     if (a === 'move') {
@@ -2070,6 +2565,7 @@ export class App {
     if (e.key === 'Escape') {
       this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.spot = null; this.ui.emotes = false;
       this.endPreview();
+      this.endCast();
       this.world.clearArrow(); this.render();
     }
   }
@@ -2135,6 +2631,23 @@ export class App {
         return;
       }
       case 'primusOpen': u.primusOpen = +b.dataset.keep!; return this.render();
+      case 'icon': {
+        // The Minerva caster opens a Revealed hand from its icon; any other icon just reads itself out.
+        if (b.dataset.reveal != null) { u.reveal = u.reveal === +b.dataset.reveal ? null : +b.dataset.reveal; u.iconTip = null; return this.render(); }
+        u.iconTip = u.iconTip === b.dataset.key ? null : b.dataset.key!;
+        return this.render();
+      }
+      case 'ult': return this.openCast();
+      case 'reveal-close': u.reveal = null; return this.render();
+      // Silenced: the Draft is the whole turn. End it, or go on to the one thing still allowed: moving the Standard.
+      case 'silEnd': { u.sel = null; if (!(await this.send({ type: 'endDraft' }))) await this.send({ type: 'endTurn' }); return; }
+      case 'silStd': { u.sel = null; if (!(await this.send({ type: 'endDraft' })) && !(await this.send({ type: 'endAttack' }))) { u.stdMode = true; this.render(); } return; }
+      case 'cast-next': return this.castNext();
+      case 'cast-prev': return this.castPrev();
+      case 'cast-commit': return this.castCommit();
+      case 'cast-unpick': if (u.cast) { u.cast.picks = u.cast.picks.filter((t) => t !== +b.dataset.t!); this.render(); } return;
+      case 'cast-q': if (u.cast) { u.cast.q = +b.dataset.q!; this.render(); } return;
+      case 'ultWhy': { const w = this.me != null ? ultButton(v, this.me) : null; if (w) this.toast(w.tip); return; }
       case 'emotes': u.emotes = !u.emotes; return this.renderEmotes();
       case 'emote': {
         u.emotes = false;
@@ -2154,7 +2667,7 @@ export class App {
       case 'plus': if (u.sel != null) return this.placeOn(u.sel, false); return;
       case 'minus': if (u.sel != null) return this.placeOn(u.sel, true); return;
       case 'undo': return void this.send({ type: 'undoDraft' });
-      case 'cancel': u.sel = null; u.target = null; u.pending = null; u.stdMode = false; this.endPreview(); this.world.clearArrow(); return this.render();
+      case 'cancel': u.sel = null; u.target = null; u.pending = null; u.stdMode = false; this.endPreview(); this.endCast(); this.world.clearArrow(); return this.render();
       case 'retarget': u.target = null; this.world.clearArrow(); return this.render();
       case 'tgt': {
         const t = +b.dataset.t!;
@@ -2207,6 +2720,7 @@ export class App {
     const u = this.ui;
     const kind = CARD[id].active.kind;
     u.inspect = null;
+    if (kind === 'moveStd' && this.v.ts.ultPinned) return this.toast('Pinned by the Wild Hunt: your Standard cannot move this turn.');
     if (kind === 'sabotage' || kind === 'parley' || kind === 'moveStd') {
       if (!this.cardImpact(id).targets.length) { this.toast(kind === 'parley' ? 'No neutral garrison small enough touches your land.' : 'Nothing in reach for that card right now.'); return this.render(); }
       u.pending = { card: id, needs: 'territory' };
@@ -2278,6 +2792,8 @@ export class App {
     const mine = v.owner[t] === this.me;
     const me = this.me!;
     if (v.phase === 'draft') {
+      // A cast in progress owns the map: Mars picks its territories there; the other steps take no clicks.
+      if (u.cast) { if (u.cast.step === 'picks' && HOUSES[this.castHouse()].id === 'mars') this.castPick(t); return; }
       if (u.pending?.needs === 'territory') {
         const card = u.pending.card;
         if (!this.cardImpact(card).targets.includes(t)) return this.territoryError([t], `${CARD[card].name} can't target ${this.tname(t)}. Pick a glowing territory.`);
@@ -2463,7 +2979,7 @@ export class App {
         : olympus
           ? `${e.n > 1 ? `${e.n} rolls · ` : ''}lost <b>${e.aLost}</b> · killed <b>${e.dLost}</b> · ${e.won ? '<b>OLYMPUS FALLS</b>' : `${e.garrison} left`}`
           : `${e.n > 1 ? `${e.n} rolls · ` : ''}lost <b>${e.aLost}</b> · killed <b>${e.dLost}</b>${e.won ? ' · <b>CONQUERED</b>' : ''}`;
-      const terr = [e.tA ? `⛰ high ground +${e.tA}` : '', e.tD ? `🌲 forest cover +${e.tD}` : ''].filter(Boolean).join(' · ');
+      const terr = [e.tA ? `⛰ high ground +${e.tA}` : '', e.tD ? `🌲 forest cover +${e.tD}` : '', e.glared ? '☉ Glared −1' : '', e.radiant ? '☉ Radiant +1' : '', e.hunted ? '☾ Hunted: no guard' : ''].filter(Boolean).join(' · ');
       document.getElementById('bRes')!.innerHTML = `<span style="color:#ff8a7a">${mods(last.raw.a, last.a)}</span> vs <span>${mods(last.raw.d, last.d)}</span> · ${summary}${terr ? `<div class="terr-note">${terr}</div>` : ''}`;
       // Blood on both sides of the line.
       this.world.bleed(to, e.dLost ?? 0, !!e.won);
@@ -2495,10 +3011,7 @@ export class App {
     if (!c) return Promise.resolve();
     const p = v.players[e.seat];
     const targets: number[] = e.targets?.length ? e.targets : e.t != null ? [e.t] : e.victim != null ? territoriesOf(v, e.victim) : [];
-    this.showcaseOpen = true;
-    this.world.setHighlights(null, targets, 'target');
-    const anchor = e.t ?? e.targets?.[0] ?? null;
-    if (anchor != null) this.world.focus(anchor);
+    const anchor: number | null = e.t ?? e.targets?.[0] ?? null;
     const box = el(`<div class="showcase" style="--hc:${HOUSES[c.house].color}">
       <svg class="lead"><line x1="0" y1="0" x2="0" y2="0"/></svg>
       <div class="sc-body">
@@ -2508,6 +3021,17 @@ export class App {
         <button class="btn primary" data-a="ack" style="width:100%">Acknowledge</button>
       </div>
     </div>`);
+    return this.pinShowcase(box, anchor, targets);
+  }
+
+  /**
+   * Put a showcase (a played card, a cast Ultimate) on the screen beside the territory it hit, with a lead line to it
+   * and its targets lit, until it is acknowledged.
+   */
+  private pinShowcase(box: HTMLElement, anchor: number | null, targets: number[]): Promise<void> {
+    this.showcaseOpen = true;
+    this.world.setHighlights(null, targets, 'target');
+    if (anchor != null) this.world.focus(anchor);
     document.body.appendChild(box);
     const body = box.querySelector<HTMLElement>('.sc-body')!;
     const line = box.querySelector('line')!;
@@ -2541,12 +3065,147 @@ export class App {
     });
   }
 
+  // =========================================================================
+  // House Ultimates: seeing what happened
+
+  /**
+   * Everyone sees a cast, with its numbers, the moment it lands: the House, the Ultimate, its cast prompt, who it struck
+   * and what it did. Like a rival's played card, it stays until acknowledged (and follows the replay's Skip).
+   */
+  private showUltimate(v: GameState, e: GameEvent, evs: GameEvent[]): Promise<void> {
+    const H = HOUSES[e.house], u = ultOf(e.house), p = v.players[e.seat], T = this.g.territories;
+    const seized = evs.filter((x) => x.k === 'seized' && x.cast === e.cast);
+    const cut: [number, number][] = [];
+    for (let i = 0; i < (e.cut?.length ?? 0); i += 2) cut.push([e.cut[i], e.cut[i + 1]]);
+    cut.sort((a, b) => b[1] - a[1]);
+    const targets: number[] = e.targets ?? [e.target];
+    const on = targets.map((m) => `${sig(v.players[m].house)} <b>${esc(v.players[m].name)}</b>`).join(' ');
+    const more = (n: number) => (n > 5 ? `<tr><td colspan="2">…and ${n - 5} more</td></tr>` : '');
+    let rows = '', tot = '';
+    let lit: number[] = targets.flatMap((m) => territoriesOf(v, m));
+    switch (H.id) {
+      case 'mars':
+        rows = seized.map((x) => `<tr><td><b>${esc(T[x.t].name)}</b> ${x.dead + x.joined}</td><td>${x.dead} die · ${x.joined} join ${H.name}</td></tr>`).join('');
+        tot = `<b>${e.removed}</b> destroyed · <b>${e.gained}</b> join ${H.name} · <b>${seized.length}</b> territor${seized.length === 1 ? 'y' : 'ies'} seized`;
+        lit = seized.map((x) => x.t);
+        break;
+      case 'jupiter':
+        rows = cut.slice(0, 5).map(([t, n]) => `<tr><td><b>${esc(T[t].name)}</b> ${n + ULT.stormCut}</td><td>cut to ${ULT.stormCut} (−${n})</td></tr>`).join('') + more(cut.length);
+        tot = `<b>${e.removed}</b> armies cut in ${esc(QUADRANTS[e.picks?.[0]]?.name ?? 'one quadrant')} · ${esc(v.players[e.target].name)}'s next Draft capped at ${ULT.stormCut}`;
+        lit = cut.map(([t]) => t);
+        break;
+      case 'pluto':
+        rows = cut.slice(0, 5).map(([t, n]) => `<tr><td><b>${esc(T[t].name)}</b></td><td>−${n} now</td></tr>`).join('') + more(cut.length);
+        tot = `<b>${e.removed}</b> rot away from ${e.hits} stack${e.hits === 1 ? '' : 's'} · ${e.alliance ? '20% more at their next turn · next 2 Drafts −30%, −20%' : '20% and 10% more at their next turns · next 3 Drafts −30%, −20%, −10%'}`;
+        lit = cut.map(([t]) => t);
+        break;
+      case 'minerva': tot = e.alliance ? 'On their next turn: Draft <b>−60%</b>, and no cards, attacks or Fortify' : `Their next turn is <b>skipped</b> · ${esc(p.name)} reads their hand until their own next turn`; break;
+      case 'ceres': tot = `Their next Draft <b>${e.alliance ? '−30%' : '−50%'}</b>, the one after <b>${e.alliance ? '−15%' : '−25%'}</b> · ${esc(p.name)} gains what is taken, up to ${ULT.titheCap}`; break;
+      case 'apollo': tot = `Until ${esc(p.name)}'s next turn: their highest defense die is <b>−1</b> against ${esc(p.name)} and allies`; break;
+      case 'diana': tot = `Until ${esc(p.name)}'s next turn: <b>no honor guard</b>, no ambushes, and the hunters strike 2 spaces away · next turn they can't Fortify or move their Standard`; break;
+    }
+    const std = v.standards[v.players[e.target]?.house ?? 0];
+    const anchor = lit[0] ?? (std && !std.captured ? std.at : null);
+    const box = el(`<div class="showcase" style="--hc:${H.color}">
+      <svg class="lead"><line x1="0" y1="0" x2="0" y2="0"/></svg>
+      <div class="sc-body sc-ult" role="dialog" aria-label="House Ultimate">
+        <div class="k">⚡ HOUSE ULTIMATE</div>
+        <div class="who">${sig(p.house)} <span><b>${esc(p.name)}</b> · House ${H.name}${p.ai ? ' <span class="ai-tag">AI</span>' : ''}</span></div>
+        <h4>${esc(u.name)}</h4>
+        <div class="q">“${esc(u.prompt)}”</div>
+        <div class="who on">on ${on}${e.alliance ? ' <span class="tagx">alliance</span>' : ''}</div>
+        ${rows ? `<table>${rows}</table>` : ''}
+        <div class="tot">${tot}</div>
+        <button class="btn primary" data-a="ack">Seen ▸</button>
+      </div>
+    </div>`);
+    return this.pinShowcase(box, anchor, lit);
+  }
+
+  /** Is a skipped turn this screen's to explain: my own, or (hot-seat) any human's at this device? */
+  private skippedHere(seat: number) {
+    const s = this.session;
+    if (!s) return false;
+    return seat === s.seat || (s.mode === 'local' && !s.view?.players[seat]?.ai && s.view?.players[seat]?.alive === true);
+  }
+  /** Blacked out: the one moment the game stops to explain itself, or a skipped turn looks like a bug. */
+  private showSkipped(v: GameState, e: GameEvent, evs: GameEvent[]): Promise<void> {
+    const tick = evs.find((x) => x.k === 'ultTick' && x.kind === 'blackout' && x.seat === e.seat) ?? v.log.filter((x) => x.k === 'ultTick' && x.kind === 'blackout' && x.seat === e.seat).at(-1);
+    const by = tick != null ? v.players[tick.by] : null;
+    const H = HOUSES[tick?.house ?? HOUSES.findIndex((h) => h.id === 'minerva')];
+    const who = v.players[e.seat];
+    const hotseat = this.session?.mode === 'local' && e.seat !== this.me;
+    const box = el(`<div class="skip-scr" role="dialog" aria-label="Your turn was skipped"><div class="in">
+      <div class="medal" style="--hc:${H.color}">${H.sigil}</div><div class="ttl">BLACKED OUT</div>
+      <p>${hotseat ? `<b>${esc(who.name)}</b>: ` : ''}<b>${by ? esc(by.name) : 'A rival'}</b> of House ${H.name} cut your lines. Your turn was skipped: no Draft, cards, attacks or Fortify.</p>
+      <div class="lost"><span class="pchip">Draft lost <b>${tick?.n ?? 0}</b></span>${by ? `<span class="pchip">Hand seen by ${esc(by.name)} until their next turn</span>` : ''}</div>
+      <p class="fine">“${esc(ULTIMATE.minerva.prompt)}”</p><button class="btn primary big" data-a="ack">Continue ▸</button></div></div>`);
+    document.body.appendChild(box);
+    sound.play('dread');
+    return new Promise((res) => {
+      const done = () => { window.removeEventListener('keydown', key); box.remove(); res(); };
+      const key = (k: KeyboardEvent) => { if (k.key === 'Enter') done(); };
+      window.addEventListener('keydown', key);
+      box.querySelector('[data-a=ack]')!.addEventListener('click', done);
+      (box.querySelector('[data-a=ack]') as HTMLElement).focus();
+    });
+  }
+
+  /** Silenced or Pinned on my own turn: a banner above the action bar says what is blocked, and by whom. */
+  private renderRestrict() {
+    const dock = document.querySelector('#hud .dock');
+    let box = document.getElementById('restrict');
+    const v = this.v, me = this.me;
+    const sil = me != null && this.myTurn() && v.ts.ultMuted ? restrictedBy(v, me, 'silenced') ?? { house: HOUSES.findIndex((h) => h.id === 'minerva'), n: 0 } : null;
+    const pin = me != null && this.myTurn() && v.ts.ultPinned ? restrictedBy(v, me, 'pinned') ?? { house: HOUSES.findIndex((h) => h.id === 'diana'), n: 0 } : null;
+    if (!dock || (!sil && !pin)) { box?.remove(); return; }
+    if (!box) { box = el('<div class="restrict" id="restrict"></div>'); dock.insertBefore(box, dock.firstChild); }
+    const line = (id: 'silenced' | 'pinned', house: number, text: string) => `<div class="rs"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[id].svg}</svg><b>${ICON[id].n} by House ${HOUSES[house].name}</b><span>${text}</span></div>`;
+    box.innerHTML = (sil ? line('silenced', sil.house, `Draft −60%${sil.n ? ` (${v.ts.reinforcements + Object.values(v.ts.placed).reduce((a, b) => a + b, 0) + sil.n} → ${v.ts.reinforcements + Object.values(v.ts.placed).reduce((a, b) => a + b, 0)})` : ''} · no cards, attacks or Fortify this turn`) : '')
+      + (pin ? line('pinned', pin.house, "No Fortify this turn, and your Standard can't move") : '');
+  }
+
+  /** Revealed: the hand the Minerva caster may read, opened from the eye on the target's banner. Read-only. */
+  private renderReveal() {
+    const seat = this.ui.reveal;
+    let box = document.getElementById('reveal');
+    const hand = seat != null ? this.session?.view?.me?.seen?.[seat] : undefined;
+    if (seat == null || !hand) { box?.remove(); this.ui.reveal = null; return; }
+    const p = this.v.players[seat];
+    if (!box) { box = el('<div class="reveal" id="reveal" role="dialog"></div>'); document.getElementById('hud')!.appendChild(box); }
+    box.setAttribute('aria-label', `${p.name}'s hand`);
+    box.innerHTML = `<div class="rh"><span>${sig(p.house)} ${esc(p.name)}'s hand · ${hand.length} card${hand.length === 1 ? '' : 's'}</span><span class="fine">Visible until your next turn</span><button class="btn sm ghost" data-a="reveal-close" title="Close">✕</button></div>
+      <div class="cards-row">${hand.length ? hand.map((c) => {
+        const k = CARD[c.id];
+        return `<span class="gcard pick seen" style="--hc:${HOUSES[k.house].color}" title="${esc(fmt(k.active.text, k.active.n))}"><div class="nm">${esc(k.name)}</div><div class="tt2">House ${HOUSES[k.house].name}${k.kind === 'proctor' ? ' · Proctor' : k.kind === 'relic' ? ' · Relic' : k.active.kind === 'counter' ? ' · REACTION' : ''}</div></span>`;
+      }).join('') : '<span class="fine">An empty hand.</span>'}</div>`;
+  }
+
+  /** The marks instant Ultimates leave on the map for a round: Seized banners and the Storm-struck quadrant. */
+  private syncMarks() {
+    const v = this.v, T = this.g.territories;
+    const seized: { t: number; color: string }[] = [], storm: number[] = [];
+    for (const e of v.ult?.effects ?? []) {
+      if (e.kind === 'seized') for (const t of e.terrs ?? []) seized.push({ t, color: HOUSES[v.players[e.caster!].house].color });
+      if (e.kind === 'storm') for (const t of T) if (t.quadrant === e.q) storm.push(t.id);
+    }
+    this.world.setMarks(seized, storm);
+  }
+
   /**
    * The Sorting: a wheel of the seven Houses spins once per player and lands on the House the server already
    * dealt them. Purely a show, once per war per device, and skippable.
    */
+  /** Did `seat` pick its House before the war (rather than draw it on the Sorting wheel)? */
+  private pickedHouse(v: GameState, seat: number) {
+    return v.log.some((e) => e.k === 'sorted' && e.seat === seat && e.picked);
+  }
+
   private showWheel(v: GameState) {
     const s = this.session!;
+    // The wheel spins once for every House drawn at random. A player who picked their House is already on the list.
+    const drawn = v.players.filter((p) => !this.pickedHouse(v, p.seat));
+    const pickedN = v.players.length - drawn.length;
     this.wheelOpen = true;
     document.body.classList.add('sorting');
     const g = geo(v);
@@ -2565,7 +3224,9 @@ export class App {
     const box = el(`<div class="wheel-wrap"><div class="wheel-panel">
       <div class="logo-sub">THE SORTING</div>
       <h2>Which House will claim you?</h2>
-      <p class="prose">The Proctors spin the wheel. Seven Houses, ${v.players.length} Golds. The Houses nobody draws become neutral garrisons.</p>
+      <p class="prose">${pickedN
+        ? `${pickedN} Gold${pickedN === 1 ? ' has' : 's have'} picked a House. The Proctors spin the wheel for the other${drawn.length === 1 ? '' : ` ${drawn.length}`}. The Houses nobody takes become neutral garrisons.`
+        : `The Proctors spin the wheel. Seven Houses, ${v.players.length} Golds. The Houses nobody draws become neutral garrisons.`}</p>
       <div class="wheel-body">
         <div class="wheel-box">
           <div class="pointer">▼</div>
@@ -2598,7 +3259,7 @@ export class App {
       row.classList.remove('spinning');
       row.classList.add('got');
       row.style.setProperty('--c', HOUSES[p.house].color);
-      row.querySelector('.wl-house')!.innerHTML = `${sig(p.house)} House ${HOUSES[p.house].name} <span class="fine">${esc(HOUSES[p.house].epithet)}</span>`;
+      row.querySelector('.wl-house')!.innerHTML = `${sig(p.house)} House ${HOUSES[p.house].name} <span class="fine">${esc(HOUSES[p.house].epithet)}${this.pickedHouse(v, p.seat) ? ' · picked' : ''}</span>`;
       const w = box.querySelector(`.wedge[data-h="${p.house}"]`)!;
       w.classList.add('taken');
       w.querySelector('.w-who')!.textContent = p.name.slice(0, 10);
@@ -2609,16 +3270,17 @@ export class App {
       const nb = box.querySelector<HTMLElement>('.wl-neutral')!;
       nb.classList.remove('hidden');
       nb.innerHTML = free.length ? `Neutral garrisons: ${free.map((h) => `${sig(h, 'sig sm')} ${HOUSES[h].name}`).join(' ')}` : 'Every House has a master.';
-      box.querySelector('.wheel-btns')!.innerHTML = '<button class="btn primary big" data-a="wdone">To the Passage ▸</button>';
+      box.querySelector('.wheel-btns')!.innerHTML = `<button class="btn primary big" data-a="wdone">${v.opts?.pick ? 'Choose your Primus' : 'To the Passage'} ▸</button>`;
     };
+    for (const p of v.players) if (this.pickedHouse(v, p.seat)) reveal(p);
     box.addEventListener('click', async (e) => {
       const a = (e.target as HTMLElement).closest('[data-a]')?.getAttribute('data-a');
       if (a === 'wskip') { skip = true; hush(); finish(); return; }
       if (a === 'wdone') { close(); return; }
       if (a !== 'wstart') return;
       box.querySelector('.wheel-btns')!.innerHTML = '<button class="btn ghost" data-a="wskip">Skip</button>';
-      for (let i = 0; i < v.players.length && !skip; i++) {
-        const p = v.players[i];
+      for (let i = 0; i < drawn.length && !skip; i++) {
+        const p = drawn[i];
         box.querySelectorAll('.wl').forEach((x) => x.classList.remove('spinning'));
         box.querySelector(`.wl[data-seat="${p.seat}"]`)!.classList.add('spinning');
         const dur = i === 0 ? 4200 : 3000;
@@ -2778,10 +3440,11 @@ export class App {
     const att = esc(v.players[f.seat].name), def = f.def >= 0 ? esc(v.players[f.def].name) : 'the garrison';
     const m: number[] = f.m ?? [0, 0, 0, 0, 0, 0];
     const mods = [
-      m[0] ? `+${m[0]} to ${att}'s highest die (cards, Passives)` : '',
+      m[0] ? `+${m[0]} to ${att}'s highest die (cards, Passives${f.radiant ? ', Radiant' : ''})` : '',
       m[1] ? `+${m[1]} to ${att}'s lowest compared die (⛰ high ground)` : '',
       m[2] ? `+${m[2]} to every one of ${att}'s dice (fury)` : '',
-      m[3] ? `+${m[3]} to ${def}'s highest die (Keep Passives)` : '',
+      m[3] ? `${m[3] > 0 ? '+' : ''}${m[3]} to ${def}'s highest die (${[m[3] > (f.glared ? -1 : 0) || T[f.to]?.isKeep ? 'Keep Walls and Passives' : '', f.glared ? 'Glared −1' : ''].filter(Boolean).join(', ')})` : f.glared ? `${def}'s highest die: Keep Walls +1, Glared −1` : '',
+      f.hunted ? `${def} was Hunted: no honor guard, and no ambush` : '',
       m[4] ? `+${m[4]} to ${def}'s lowest die (🌲 forest cover)` : '',
       m[5] ? `+${m[5]} to every one of ${def}'s dice (ambush)` : '',
     ].filter(Boolean);
@@ -2793,7 +3456,7 @@ export class App {
       atkHigh: m[0], atkLow: m[1], atkAll: m[2], defHigh: m[3], defLow: m[4], defAll: m[5],
     }) : null;
     const last = Array.isArray(f.rolls) && f.rolls.length ? f.rolls[f.rolls.length - 1] : null;
-    const dice = (raw: number[], mod: number[]) => raw.map((r, i) => (mod[i] !== r ? `${r}<sup>+${mod[i] - r}</sup>` : `${r}`)).join(' ');
+    const dice = (raw: number[], mod: number[]) => raw.map((r, i) => (mod[i] !== r ? `${r}<sup>${mod[i] - r > 0 ? '+' : ''}${mod[i] - r}</sup>` : `${r}`)).join(' ');
     return `<table class="blow">
       <tr><th>${std ? '⚑ The charge' : '⚔ The attack'}</th><td>${att} from <b>${esc(T[f.from].name)}</b>: ${att0}</td></tr>
       <tr><th>🛡 The defense</th><td>${def} at <b>${esc(T[f.to].name)}</b>: ${def0}</td></tr>

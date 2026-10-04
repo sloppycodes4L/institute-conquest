@@ -45,6 +45,8 @@ export interface HighlightOpts {
   warn?: number[];
   /** Include Olympus as a target. */
   olympus?: boolean;
+  /** Territories already picked (an Ultimate's picks): lit steady, like a selection. */
+  picked?: number[];
 }
 
 interface Decor { mesh: THREE.InstancedMesh; terr: number[]; base: THREE.Color }
@@ -102,6 +104,9 @@ export class World {
   private sea: THREE.MeshStandardMaterial | null = null;
   private focusSeat: number | null = null;
   private lastState: GameState | null = null;
+  /** What an Ultimate left on the map for a round: banners on seized territories, hatching over a storm-struck quadrant. */
+  private marks = new THREE.Group();
+  private marksKey = '';
 
   constructor(private container: HTMLElement, geo: Geo) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -157,6 +162,7 @@ export class World {
     this.clearFan();
     for (const d of this.decals) this.scene.remove(d.mesh);
     this.decals = [];
+    this.setMarks([], []);
     this.highlight = { sel: null, targets: new Set(), kind: 'attack', opts: {} };
 
     const k = geo.R_OUT / 25;
@@ -1018,6 +1024,66 @@ export class World {
     this.applyHighlights();
   }
 
+  /**
+   * The marks an instant Ultimate leaves for a round, so a player who looked away still sees what happened and where:
+   * a small banner in the caster's colour on each territory Where's Sevro? seized, and pale hatching over every
+   * territory of the quadrant Stormfall struck.
+   */
+  setMarks(seized: { t: number; color: string }[], storm: number[]) {
+    const key = `${seized.map((x) => `${x.t}:${x.color}`).join(',')}|${storm.join(',')}`;
+    if (key === this.marksKey) return;
+    this.marksKey = key;
+    this.marks.traverse((o) => {
+      const m = o as THREE.Mesh;
+      m.geometry?.dispose?.();
+      const mat = m.material as THREE.Material | undefined;
+      (mat as THREE.MeshBasicMaterial | undefined)?.map?.dispose?.();
+      mat?.dispose?.();
+    });
+    this.marks.clear();
+    if (!this.marks.parent) this.scene.add(this.marks);
+    if (!this.geo) return;
+    const pole = new THREE.MeshStandardMaterial({ color: '#f1e6d6', roughness: 0.6 });
+    for (const { t, color } of seized) {
+      if (!(t >= 0 && t < this.geo.nt)) continue;
+      const g = new THREE.Group();
+      const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.3, 6), pole);
+      staff.position.y = 1.15;
+      // A swallow-tailed pennant, like the flag on the design sheet's Seized icon.
+      const shape = new THREE.Shape();
+      shape.moveTo(0, 0); shape.lineTo(1.25, 0); shape.lineTo(0.95, 0.4); shape.lineTo(1.25, 0.8); shape.lineTo(0, 0.8); shape.closePath();
+      const cloth = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+      cloth.position.set(0.05, 1.45, 0);
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(cloth.geometry), new THREE.LineBasicMaterial({ color: '#ffffff' }));
+      edge.position.copy(cloth.position);
+      g.add(staff, cloth, edge);
+      const [x, y] = this.geo.centroid[t];
+      g.position.copy(w2v(x - 0.95, y + 0.75, this.topH[t]));
+      this.marks.add(g);
+    }
+    const struck = new Set(storm);
+    const hexes = this.geo.hexes.filter((h) => struck.has(h.t));
+    if (hexes.length) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g2 = c.getContext('2d')!;
+      g2.fillStyle = 'rgba(232,228,216,0.16)';
+      g2.fillRect(0, 0, 64, 64);
+      g2.strokeStyle = 'rgba(232,228,216,0.62)';
+      g2.lineWidth = 5;
+      for (let i = -64; i < 128; i += 16) { g2.beginPath(); g2.moveTo(i, 64); g2.lineTo(i + 64, 0); g2.stroke(); }
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const mesh = new THREE.InstancedMesh(new THREE.CircleGeometry(0.985, 6, Math.PI / 6), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }), hexes.length);
+      const o = new THREE.Object3D();
+      o.rotation.x = -Math.PI / 2;
+      hexes.forEach((h, i) => { o.position.set(h.x, this.hexHeight(h) + 0.07, -h.y); o.updateMatrix(); mesh.setMatrixAt(i, o.matrix); });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.renderOrder = 2;
+      this.marks.add(mesh);
+    }
+  }
+
   /** "My Lands" view: everything `seat` doesn't hold turns flat and dull; null turns it off. */
   setFocus(seat: number | null) {
     this.focusSeat = seat;
@@ -1094,11 +1160,12 @@ export class World {
     const kcol = { attack: '#ff3b1f', fortify: '#3bd16f', place: '#f3d27a', target: '#ff9b1f', std: '#f3d27a', assault: '#f3d27a' }[kind];
     const warn = new Set(opts.warn ?? []);
     const sources = new Set(opts.sources ?? []);
+    const picked = new Set(opts.picked ?? []);
     const mineCol = this.focusSeat != null && this.lastState ? this.colorOf(this.lastState, this.focusSeat) : null;
     for (let t = 0; t < this.geo.nt; t++) {
       const m = this.mats[t];
       m.userData.pulse = 0;
-      if (t === sel) { m.emissive.set('#f3d27a'); m.emissiveIntensity = 0.55; }
+      if (t === sel || picked.has(t)) { m.emissive.set('#f3d27a'); m.emissiveIntensity = picked.has(t) ? 0.7 : 0.55; }
       else if (targets.has(t)) { m.emissive.set(warn.has(t) ? '#ffb020' : kcol); m.emissiveIntensity = 0.4; m.userData.pulse = 1; }
       else if (sources.has(t)) { m.emissive.set('#f3d27a'); m.emissiveIntensity = 0.16; m.userData.pulse = 0.5; }
       else if (t === this.hover) { m.emissive.set('#ffffff'); m.emissiveIntensity = 0.12; }

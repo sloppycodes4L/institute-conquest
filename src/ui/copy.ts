@@ -1,9 +1,10 @@
 // All the words. Original fan copy in the voice of the Institute: brutal, profane,
 // and full of the setting's own slurs (Pixie, slag, lowColor, gorydamn, bloodydamn...).
 
-import { HOUSES, geoFor } from '../engine/data.ts';
+import { HOUSES, QUADRANTS, geoFor } from '../engine/data.ts';
 import { CARD, EMOTES } from '../engine/cards.ts';
 import { geo, type GameEvent, type GameState } from '../engine/engine.ts';
+import { ULTIMATE } from './ultimates.ts';
 
 // Territory names come from the current game's valley (it grows with the player count).
 let T = geoFor(4).territories;
@@ -45,7 +46,7 @@ export function passageLine(general: string, killed: string, seed: number) {
 
 const genName = (s: GameState, seat: number) => {
   const g = s.players[seat]?.general;
-  return g && g !== '?' ? CARD[g]?.name ?? 'their General' : 'their General';
+  return g && g !== '?' ? CARD[g]?.name ?? 'their Primus' : 'their Primus';
 };
 
 /** The betrayer's General, explaining themselves. Sometimes badly. */
@@ -80,6 +81,29 @@ export function allianceLine(s: GameState, e: GameEvent): string {
   ], e.quip ?? e.id);
 }
 
+/** Who an Ultimate struck, by name: one House, or "the alliance of A and B". */
+export function ultTargetNames(s: GameState, e: GameEvent, plain = false): string {
+  const name = (x: number) => (plain ? esc(s.players[x].name) : who(s, x));
+  const ts: number[] = e.targets ?? [e.target];
+  if (ts.length < 2) return name(ts[0] ?? e.target);
+  return `the alliance of ${ts.slice(0, -1).map(name).join(', ')} and ${name(ts[ts.length - 1])}`;
+}
+/** The War Log line of a cast: who, what, on whom, and the numbers. */
+function ultimateLine(s: GameState, e: GameEvent): string {
+  const hid = HOUSES[e.house].id, u = ULTIMATE[hid], me = who(s, e.seat);
+  let tail = '.';
+  switch (hid) {
+    case 'mars': tail = `: ${e.removed} destroyed, ${e.gained} join ${house(e.house)}.`; break;
+    case 'jupiter': tail = `: ${e.removed} armies cut in ${QUADRANTS[e.picks?.[0]]?.name ?? 'one quadrant'}. ${who(s, e.target)}'s next Draft is capped at 5.`; break;
+    case 'pluto': tail = `: ${e.removed} rot away at once, and their stacks and Drafts keep rotting for ${e.alliance ? 'a turn' : '2 turns'} more.`; break;
+    case 'minerva': tail = e.alliance ? '. On their next turn: Draft −60%, and no cards, attacks or Fortify.' : `. Their next turn is skipped, and ${me} reads their hand.`; break;
+    case 'ceres': tail = `. Their next Draft is cut ${e.alliance ? '30%, the one after 15%' : '50%, the one after 25%'}, and ${me} collects it.`; break;
+    case 'apollo': tail = `. Until ${me}'s next turn, their highest defense die is −1 against ${me} and allies.`; break;
+    case 'diana': tail = `. Until ${me}'s next turn: no honor guard, no ambushes, and the hunters strike 2 spaces away.`; break;
+  }
+  return `<b>⚡ ${me} casts ${esc(u.name)}</b> on ${ultTargetNames(s, e)}${tail}`;
+}
+
 export function describe(s: GameState, e: GameEvent): string {
   T = geo(s).territories;
   const sd = e.id * 7919;
@@ -94,10 +118,10 @@ export function describe(s: GameState, e: GameEvent): string {
     case 'inviteDeclined': return `📜 ${who(s, e.to)} burns ${who(s, e.from)}'s letter.`;
     case 'inviteVoid': return `📜 ${who(s, e.from)} and ${who(s, e.to)} are each sworn to other alliances. The offer is void.`;
     case 'inviteExpired': return `📜 ${who(s, e.from)}'s offer to ${who(s, e.to)} goes stale.`;
-    case 'allianceFormed': return `${e.pub ? '🤝' : '🤫'} ${e.pub ? 'ALLIANCE' : 'SECRET PACT'}: ${houses(e.members)}. ${allianceLine(s, e)} Their Generals' Passives are now shared.`;
+    case 'allianceFormed': return `${e.pub ? '🤝' : '🤫'} ${e.pub ? 'ALLIANCE' : 'SECRET PACT'}: ${houses(e.members)}. ${allianceLine(s, e)} Their Primuses' Passives are now shared.`;
     case 'allianceRevealed': return `🤝 ${who(s, e.seat)} reveals it to the valley: ${houses(e.members)} have been allies all along.`;
     case 'allianceEnds': return e.leaver != null
-      ? `🚪 ${who(s, e.leaver)} walks out of the alliance of ${houses(e.members)}${e.dissolved ? ', and it falls apart' : ''}. No one will swear to them for a round.`
+      ? `🚪 ${who(s, e.leaver)} walks out of the alliance of ${houses(e.members)}${e.dissolved ? ', and it falls apart' : ''}.${s.ult ? '' : ' No one will swear to them for a round.'}`
       : `The alliance of ${houses(e.members)} falls apart. Too many funerals.`;
     case 'inviteCancelled': return `📜 ${who(s, e.from)} snatches back their letter to ${who(s, e.to)}.`;
     case 'rallyOpened': return `📯 ${who(s, e.seat)}, the strongest House in the valley, calls a <b>RALLY AGAINST OLYMPUS</b>: the first ${e.slots - 1} to answer join their public alliance.`;
@@ -131,12 +155,32 @@ export function describe(s: GameState, e: GameEvent): string {
     case 'siegeCollapsed': return `🏛 With the alliance broken, the siege of Olympus collapses.`;
     case 'olympusFalls': return `♛ OLYMPUS FALLS to ${houses(e.members)}. ${who(s, e.seat)} struck the last blow. The Proctors kneel.`;
     case 'sorted':
-      return `${who(s, e.seat)} is sorted into ${house(e.house)}, ${HOUSES[e.house].epithet}.`;
+      return e.picked ? `${who(s, e.seat)} takes ${house(e.house)}, ${HOUSES[e.house].epithet}.` : `${who(s, e.seat)} is sorted into ${house(e.house)}, ${HOUSES[e.house].epithet}.`;
     case 'chosen':
-      return `${who(s, e.seat)} walks out of the Passage with blood on their hands.`;
+      // From .008 a Primus is chosen and nobody dies. Older wars walked out of the Passage.
+      return s.opts?.pick ? `${who(s, e.seat)} has chosen a Primus.` : `${who(s, e.seat)} walks out of the Passage with blood on their hands.`;
     case 'passage':
-      return `${who(s, e.seat)}: ${passageLine(e.general, e.killed, sd)}`;
+      return e.killed ? `${who(s, e.seat)}: ${passageLine(e.general, e.killed, sd)}` : `${who(s, e.seat)}: ${card(e.general)} leads ${house(s.players[e.seat].house)} as its Primus.`;
+    case 'ultimate': return ultimateLine(s, e);
+    case 'seized': return `⚑ ${terr(e.t)} is seized from ${who(s, e.from)}: ${e.dead} die, ${e.joined} join ${who(s, e.seat)}.`;
+    case 'ultTick': {
+      const h = HOUSES[e.house], w = who(s, e.seat);
+      switch (e.kind) {
+        case 'blackout': return `${h.sigil} ${w} is <b>Blacked Out</b> by ${house(e.house)}: the turn is skipped${e.n ? `, and a Draft of ${e.n} with it` : ''}.`;
+        case 'silenced': return `${h.sigil} ${w} is <b>Silenced</b> by ${house(e.house)}: Draft −${e.n}, and no cards, attacks or Fortify this turn.`;
+        case 'pinned': return `${h.sigil} ${w} is <b>Pinned</b> by ${house(e.house)}: no Fortify this turn, and the Standard can't move.`;
+        case 'storm': return `${h.sigil} <b>Storm-bound</b>: ${w}'s Draft is capped at 5${e.n ? ` (${e.n} lost)` : ''}.`;
+        case 'tithe': return e.n ? `${h.sigil} <b>The Tithe</b> takes ${e.n} from ${w}'s Draft.` : '';
+        case 'harvest': return e.n ? `${h.sigil} <b>Harvest</b>: ${w} gains the ${e.n} the Tithe took.` : '';
+        case 'rot': return e.n ? `${h.sigil} <b>Rot</b>: ${e.n} of ${w}'s soldiers decay in ${e.stacks} stack${e.stacks === 1 ? '' : 's'}.` : '';
+        case 'rotDraft': return e.n ? `${h.sigil} <b>Rot</b> takes ${e.n} from ${w}'s Draft.` : '';
+      }
+      return '';
+    }
+    case 'lockout': return `⛓ ${who(s, e.seat)} left an alliance: no new alliance for ${e.turns} of their turns.`;
     case 'turn': {
+      // A Blacked Out turn: the Blackout line right after it says so.
+      if (e.skipped) return '';
       const extra = e.extras?.length ? ` (${e.extras.join(', ')})` : '';
       return pick([
         `${who(s, e.seat)} wakes up hungry. <b>${e.reinf}</b> fresh bodies to throw at the valley${extra}.`,
@@ -174,7 +218,7 @@ export function describe(s: GameState, e: GameEvent): string {
         `${who(s, e.def)} bloodies ${who(s, e.seat)}'s nose at ${terr(e.to)}: ${e.aLost} attackers down, ${e.dLost} defenders.`,
       ], sd);
     }
-    case 'conquer': return e.bonus ? `${who(s, e.seat)}'s General drops ${e.bonus} extra on ${terr(e.to)}.` : '';
+    case 'conquer': return e.bonus ? `${who(s, e.seat)}'s Primus drops ${e.bonus} extra on ${terr(e.to)}.` : '';
     case 'stdRaised': return e.pending
       ? `⚑ ${who(s, e.seat)} RAISES THE STANDARD with ${e.commit} soldiers against ${terr(e.to)}. ${who(s, e.def)} is reaching for something...`
       : pick([
@@ -239,6 +283,7 @@ export function headline(s: GameState, e: GameEvent): { title: string; sub: stri
       ? { title: `HOUSE ${HOUSES[s.players[e.victim].house].name.toUpperCase()} KNEELS`, sub: `${s.players[e.victim].name} is dominated by ${s.players[e.captor].name}`, color: hc(e.captor) }
       : { title: `HOUSE ${HOUSES[s.players[e.victim].house].name.toUpperCase()} FALLS`, sub: `${s.players[e.victim].name} is out`, color: '#888' };
     case 'stdCaptured': return e.victim == null && e.captor >= 0 ? { title: `${HOUSES[e.house].name.toUpperCase()}'S STANDARD TAKEN`, sub: `${s.players[e.captor].name} now owns House ${HOUSES[e.house].name}`, color: hc(e.captor) } : null;
+    case 'ultimate': return { title: `⚡ ${ULTIMATE[HOUSES[e.house].id].name.toUpperCase()}`, sub: `${s.players[e.seat].name} of House ${HOUSES[e.house].name} strikes ${ultTargetNames(s, e, true)}`, color: hc(e.seat), long: true };
     case 'win': return e.seat != null ? { title: 'ARCHPRIMUS', sub: `${s.players[e.seat].name} of House ${HOUSES[s.players[e.seat].house].name} rules the Institute`, color: hc(e.seat) } : null;
   }
   return null;
@@ -251,9 +296,9 @@ export const RULES_HTML = `
 <p>Every House gets a castle, a Standard, and a slice of the valley full of children with swords. Make one House out of many.
 Up to <b>7 players</b>, one per House. The valley grows with the number of players.</p>
 <h3>Setting up a war</h3>
-<p>Whoever creates the war picks the <b>map size</b> and <b>starting troops</b> (both default to the recommended settings), and can switch
-<b>Alliances</b> and the <b>Siege on Olympus</b> off, and can set a <b>turn timer</b> (60, 90 or 120 seconds). When time runs out, your unplaced armies
-go to your front and the turn passes. Then <b>the Sorting</b>: hit <b>Start Selection</b> and the wheel deals each Gold a House.</p>
+<p>Whoever creates the war picks the <b>map size</b> and <b>starting troops</b> (both default to the recommended settings), can switch
+<b>Alliances</b>, the <b>Siege on Olympus</b> and <b>House Ultimates</b> off, and can set a <b>turn timer</b> (60, 90 or 120 seconds). When time runs out, your unplaced armies
+go to your front and the turn passes. House Ultimates need 3 or more Houses: with 2 they are off.</p>
 <h3>Controls</h3>
 <p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
 <b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. Click a House in the roster to light up its land.
@@ -263,9 +308,13 @@ go to your front and the turn passes. Then <b>the Sorting</b>: hit <b>Start Sele
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
 A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.
 Or, with allies, <b>take House Olympus</b> (below) and share the win.</p>
-<h3>The Passage</h3>
-<p>You're dealt two Characters. Keep one as your <b>General</b> (your Primus); the other dies. A General's <b>Passive</b> is always on.
-If the card's House (its suit) matches your House, the Passive gets <b>+1</b>. Your General is always shown bottom-left; every rival Primus is in the roster.</p>
+<h3>Choose your House and Primus</h3>
+<p><b>Your House.</b> Before the war, pick a House from the list by your name, or leave it on <b>Random</b>. First come, first served: no two players share a House.
+The host can set anyone's House, AIs included; a House the host set is locked until the host sets it back to Random.
+Then <b>the Sorting</b>: hit <b>Start Selection</b> and the wheel spins once for every House left to chance.</p>
+<p><b>Your Primus.</b> Every player then chooses a <b>Primus</b> from the Characters of their own House (5 to choose from, 7 for Mars). Your Primus is your General:
+their <b>Passive</b> is always on, at the value printed on the card. Nobody dies for it: the Characters you pass over go into the deck.
+Your Primus is always shown in the <b>Your Primus</b> panel; every rival Primus is in the roster.</p>
 <h3>The valley</h3>
 <p>You start holding the heart of your House slice: your Keep and the land around it. The rest of your slice, and every House nobody plays,
 is held by <b>neutral garrisons</b>, thickest on the fronts facing another player. The valley's slices keep their land from war to war, but the Houses are dealt onto them at random: players get slices as far apart as possible,
@@ -278,27 +327,29 @@ a port's sea lane (the dashed line across the water) makes it border the port on
 <b>🌲 Forests:</b> cover. A House defending a forest adds <b>+1</b> to its <b>lowest defense die</b>.
 Terrain <b>never counts when the defender is neutral</b>: the wilds know their own ground. Water and marsh are just scenery. Hover any territory to see its terrain.</p>
 <h3>Your turn: Draft, Attack, Fortify</h3>
-<p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + region bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your General.
+<p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + region bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your Primus.
 Click a territory to add armies; use <b>−</b>/<b>+</b> to adjust it, or <b>Undo</b> to take back everything you placed this Draft (Shift-click also removes).
 Play cards now: trade any <b>3 for 10 armies</b>, or play one for its <b>Active</b>. Cards of a House you own get a bonus.
-A Proctor card only works if you own its House; otherwise discard it for 2 cards (locked until next turn). Holding 5+ cards? Trade before you attack.</p>
+A Proctor card only works if you own its House; otherwise discard it for 2 cards (locked until next turn). Holding 5+ cards? Trade before you attack.
+From round 4, a House in the bottom half can spend 3 cards on its <b>House Ultimate</b> instead (below).</p>
 <p><b>Cards.</b> Cards you can play right now <b>glow</b>. Hover a card (or hit its <b>🔍</b>) to see every territory it would hit. Click it to <b>preview</b> the outcome on the map
 (changed territories and armies; anything random shown as a range), then <b>Commit</b> or go <b>Back</b>.
 When anyone else plays a card, it's pinned on the map beside what it hit until you <b>Acknowledge</b> it.</p>
 <p><b>Attack.</b> Pick one of your territories and every target it can hit lights up (or just click an enemy territory, and your strongest neighbour attacks it). Attack as often as you like.
 If an attack isn't allowed, the reason pops up over the map.
 Every target shows your <b>odds to take it</b> if you blitz. Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
-<b>Keeps have no walls.</b> A House's Keep holds with its armies, its honor guard (if its Standard is there) and its Passives: the General's (and allies'), plus any Primus.
+<b>Keeps have Walls:</b> whoever defends a Keep (a House or a neutral garrison) adds <b>+1 to its highest defense die</b>. A House's Keep also holds with its armies, its honor guard (if its Standard is there) and its Passives: its Primus's (and allies'), plus the Primus of any Keep it conquered.
 Conquer at least one territory to earn a card.</p>
 <p><b>Neutrals.</b> A neutral garrison (not a Keep) rolls only <b>1 defense die</b>, and if you attack with <b>twice its number or more</b> (armies that can march, one stays behind) it <b>yields</b>:
-no dice, no losses, the land is yours. The odds show <b>Overwhelm</b> when it will. A <b>neutral Keep</b> is different: exactly <b>10</b> soldiers, no walls, no modifiers, 2 dice, and it never yields (15 armies take it about 83% of the time).</p>
+no dice, no losses, the land is yours. The odds show <b>Overwhelm</b> when it will. A <b>neutral Keep</b> is different: exactly <b>10</b> soldiers behind its Walls (+1 to their highest defense die), 2 dice, and it never yields (20 armies take it about 83% of the time).</p>
 <p><b>Fortify.</b> One army move through your connected land, any distance, plus one Standard move.</p>
 <p><b>Watching.</b> Other players' moves (and the AI's) are replayed one at a time with their dice. Speed them up (2×, 4×) or <b>Skip</b> from the bar at the bottom.</p>
 <h3>Alliances</h3>
 <p>Once one House has attacked another, Houses can send each other <b>quiet invitations</b> (the 🤝 button). An alliance is either <b>Public</b> (announced to everyone) or <b>Secret</b> (only its members know).
-Alliances change nothing except this: <b>allies share their Generals' Passives</b>. If an ally attacks an ally, the whole alliance is cancelled on the spot.
+Alliances change nothing except this: <b>allies share their Primuses' Passives</b>. If an ally attacks an ally, the whole alliance is cancelled on the spot.
 <b>One alliance per House</b>: an offer can reach anyone (so secret pacts stay secret), but you can't accept one while you're sworn elsewhere. Members can still invite unsworn Houses in.
-You can <b>take back</b> an offer you sent, and <b>walk out</b> of your alliance (everyone hears; you can't join another for a full round).</p>
+You can <b>take back</b> an offer you sent, and <b>walk out</b> of your alliance (everyone hears; you can't join another for a full round).
+With House Ultimates on, leaving costs more: walk out, attack an ally, or leave to answer a Rally, and you are <b>Locked out</b> of every alliance for <b>2 of your own turns</b> (the broken-chain icon on your banner counts them down).</p>
 <p><b>📯 Rally Against Olympus.</b> The strongest House (the most armies, no ties) may call a public Rally: the first Houses to answer join its public alliance, up to half the living Houses (the rallier counts).
 Answering walks you out of your old alliance, and your old allies hear it as a betrayal. One Rally at a time; it closes when full, when the rallier calls it off, or when the rallier's next turn begins.</p>
 <h3>The Siege on Olympus</h3>
@@ -309,7 +360,7 @@ Each ally gets 3 turns. Every assault is that House against <b>its own Proctor</
 Break it and the whole alliance wins. Fail and the Proctors laugh, and the alliance shatters.
 It usually takes three Houses, or two very large ones, so mass your armies at the Foot before you vote.</p>
 <h3>The Standard: high risk, high reward</h3>
-<p>Once per turn, from the territory holding your Standard, you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your General's Active fires for free.
+<p>Once per turn, from the territory holding your Standard, you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your Primus's Active fires for free.
 There is <b>no retreat</b>. Win, and the territory is yours <b>and every defender you killed joins you as a slave</b>. Lose, and your Standard is captured: <b>your whole House goes to the defender</b>.</p>
 <p>A defending Standard has an honor guard of <b>5 phantom defenders</b>, shown on its army count as a gold <b>+5</b> (restored each turn); it rolls the normal 2 defense dice. 10 armies against a lone soldier and the guard win about 80% of the time. Nobody may strike a player's Standard in the first round.
 A <b>REACTION</b> card can ambush a Standard's charge too (below).</p>
@@ -318,12 +369,34 @@ A <b>REACTION</b> card can ambush a Standard's charge too (below).</p>
 <b>Play</b> one: <b>+n phantom defenders</b> (they die last) and <b>+1 to every defense die</b> for that battle. Or <b>Skip</b> and let it through (you won't be asked again in the same battle),
 or <b>Skip until my turn</b>: no more prompts until your next turn begins (cancel it any time from the notice up top). Online you have 25 seconds to decide; the attacker's turn clock waits.
 Neutral garrisons never ambush. When anyone springs one, the whole table sees it: the card, its rule, and how the battle went.</p>
+<h3>House Ultimates</h3>
+<p>Every House has one <b>Ultimate</b>, a comeback move for whoever is losing. They open in <b>round 4</b>, and only the <b>bottom half</b> may cast.
+The standing is each party's <b>Win %</b>: 40% its share of the territories, 40% its share of the armies, 20% its share of battles won against other Houses. A party is a House alone, or an alliance (secret ones too) with its members' Win % added.
+At the start of your turn, the bottom half of the parties (rounded down) may cast.</p>
+<p><b>Casting.</b> In your Draft, press the <b>⚡</b> button: pick a target, pick the cards, read the preview, then <b>Commit</b>. It costs <b>3 unlocked cards, at least 1 from your own House</b>,
+gives no +10 armies, and counts as your forced trade at 5 cards. Then it <b>recharges for 3 of your own turns</b>. The button always says why you can't cast.
+Target one living rival, or a whole <b>public alliance</b>: every member is hit, each a little less. Never an ally. A secret ally of your target is a separate House.</p>
+<p><b>Limits.</b> An Ultimate never takes a territory below 1 army, never touches the territory a Standard stands on, and never knocks a House out: only a captured Standard does.
+Lasting effects tick at the start of the <b>target's</b> turn; Solar Flare and The Wild Hunt end at the start of the <b>caster's</b> next turn.</p>
+<table class="ult-tbl">
+<tr><th>House · Ultimate</th><th>Against one House</th><th>Against a public alliance</th></tr>
+<tr><td><b>Mars</b><br>Where's Sevro?</td><td>Seize 3 territories of the target or of the neutrals, in quadrants where you hold land. On each, half the armies die (rounded down) and the rest join you with the land. Never a Keep, never under a Standard.</td><td>The 3 picks may come from any member.</td></tr>
+<tr><td><b>Jupiter</b><br>Stormfall</td><td>Pick a quadrant: every stack the target holds there above 5 is cut to 5. Their next Draft is capped at 5 (trades still add).</td><td>Every member's stacks in that quadrant are cut. Only the House you targeted has its Draft capped.</td></tr>
+<tr><td><b>Pluto</b><br>Rot</td><td>Their stacks of 5 or more lose 30% now, 20% at their next turn and 10% the turn after. Their next three Drafts are cut 30%, 20%, 10%.</td><td>The first two steps only, for each member.</td></tr>
+<tr><td><b>Minerva</b><br>Blackout</td><td>Their next turn is skipped. You read their hand until your next turn.</td><td>Each member's next turn: Draft −60%, and no cards, attacks or Fortify. No hand is shown.</td></tr>
+<tr><td><b>Ceres</b><br>The Tithe</td><td>Their next Draft −50%, the one after −25%. You gain what is taken on your own next two Drafts, up to 100 in all.</td><td>Each member −30%, then −15%. You collect it all (same cap).</td></tr>
+<tr><td><b>Apollo</b><br>Solar Flare</td><td>Until your next turn their highest defense die is −1 against you and your allies. This turn your highest attack die is +1 against them.</td><td>The same for every member.</td></tr>
+<tr><td><b>Diana</b><br>The Wild Hunt</td><td>Until your next turn, against you and your allies: their Standard has no honor guard and they spring no REACTION cards, and your party attacks 2 spaces away. On their next turn they can't Fortify or move their Standard.</td><td>The same for every member.</td></tr>
+</table>
+<p><b>Status icons.</b> Everything that lasts shows as an icon on a banner, with the turns it has left; click one to read it. Gold rings help their House: <b>Ultimate ready</b> (it glows on yours when you hold the cards), <b>Recharging</b>, <b>Long Strike</b>, <b>Radiant</b>, <b>Harvest</b>.
+Red rings hurt it: <b>Glared</b>, <b>Rot</b>, <b>Storm-bound</b>, <b>Tithed</b>, <b>Hunted</b>, <b>Revealed</b>. Blue rings restrict it: <b>Blacked Out</b>, <b>Silenced</b>, <b>Pinned</b>, <b>Locked out</b>.
+On the map, a pennant marks each territory <b>Seized</b> and hatching covers a <b>Storm-struck</b> quadrant, until the caster's next turn.</p>
 <h3>Neutral Houses</h3>
-<p>Houses nobody plays hold their land as neutral garrisons. Take a neutral Keep to seize its Standard: you <b>own that House</b> (its Proctor, its card bonuses) and its remaining garrisons switch to you.</p>
+<p>Houses nobody plays hold their land as neutral garrisons. Take a neutral Keep to seize its Standard: you <b>own that House</b> (its Proctor, its card bonuses). The rest of its land stays neutral until you take it.</p>
 <h3>Primus of a conquered Keep</h3>
 <p>When you conquer a Keep that isn't your home Keep (a rival's or a neutral House's), you may swear in <b>one Character card</b> from your hand whose suit is <b>that Keep's House</b>
 as its <b>Primus</b> (the game asks on the spot; you can skip, and swear one in during any later Draft while the Keep has no Primus). The card leaves your hand.
-Its <b>Passive</b> works for you on top of your General's (no House-match bonus, and it isn't shared with allies). Lose the Keep and the Primus is <b>slain</b>: the card is discarded.
+Its <b>Passive</b> works for you on top of your own Primus's (it isn't shared with allies). Lose the Keep and the Primus is <b>slain</b>: the card is discarded.
 A crown ♛ on the Keep's army count and in the roster shows every Primus.</p>
 <h3>The Proctors' Book</h3>
 <p>The <b>📖</b> button (or <b>B</b>) opens the Proctors' running odds on every House: territories, armies and <b>battles won</b> (only against other Houses: taking their land, breaking their blitz, winning a Standard charge),

@@ -378,8 +378,10 @@ export class Guide {
       <div class="seg">${LEVELS.map((k) => `<button data-g="level" data-v="${k}" class="${lv === k ? 'on' : ''}" aria-pressed="${lv === k}">${LEVEL_NAME[k]}</button>`).join('')}</div>
       <div class="lvl-note">${LEVEL_NOTE[lv]}</div>
       <div class="ls">${GROUPS.map((g, i) => {
-        const done = g.ids.every((id) => seen.includes(id));
-        return `<div><span class="s ${done ? '' : 'no'}">${done ? '✓' : '○'}</span><span>${g.name}</span>${done ? `<button data-g="replay" data-i="${i}">Replay</button>` : '<span class="g-fine">not yet</span>'}</div>`;
+        // ✓ every lesson of the group seen, ◐ some of them. A group replays as soon as one of its lessons has been seen:
+        // some (short of cards, Locked out) only come up in wars that go a certain way.
+        const done = g.ids.every((id) => seen.includes(id)), some = g.ids.some((id) => seen.includes(id));
+        return `<div><span class="s ${done ? '' : 'no'}">${done ? '✓' : some ? '◐' : '○'}</span><span>${g.name}</span>${some ? `<button data-g="replay" data-i="${i}">Replay</button>` : '<span class="g-fine">not yet</span>'}</div>`;
       }).join('')}</div>
       <div class="ft"><span>Press <span class="g-kbd">T</span> to open</span>${this.resetAsk
         ? '<span class="g-ask">Reset every lesson? <button class="g-skip" data-g="reset-yes">Reset</button> <button class="g-skip" data-g="reset-no">Cancel</button></span>'

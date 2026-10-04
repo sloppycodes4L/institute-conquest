@@ -75,6 +75,21 @@ export interface GuideCtx {
   regionTaken: { name: string; bonus: number } | null;
   /** The turn timer in seconds (0: none). */
   timerSecs: number;
+  // ---- House Ultimates (.008) ----
+  /** House Ultimates are on in this war and round 4 has begun. */
+  ultOpen: boolean;
+  /** The Ultimate button on my Draft: Ready, or allowed to cast but short of cards. Null for every other state. */
+  ultBtn: 'ready' | 'cards' | null;
+  /** My House's Ultimate: its name, what it does in one line, and my House's name. */
+  ult: { name: string; line: string; house: string } | null;
+  /** The cast flow is open. */
+  castOpen: boolean;
+  /** The Ultimate whose effect is on my banner now (its name), or null. */
+  ultHit: string | null;
+  /** A rival's banner carries a status icon. */
+  rivalIcon: boolean;
+  /** I am Locked out of alliances. */
+  lockedOut: boolean;
 }
 
 export interface Breakdown {
@@ -192,7 +207,7 @@ export const TURN_LESSONS = ['turn-shape', 'place', 'end-draft', 'pick-source', 
 export const GROUPS: { name: string; ids: string[] }[] = [
   { name: 'Turn basics', ids: ['turn-shape', 'place', 'end-draft', 'pick-source', 'roll', 'march-in', 'attack-loop', 'fortify'] },
   { name: 'Dice & odds', ids: ['odds', 'dice'] },
-  { name: 'Your General', ids: ['passage'] },
+  { name: 'Your Primus', ids: ['choose-primus'] },
   { name: 'Cards', ids: ['cards', 'must-trade', 'card-preview'] },
   { name: 'The Standard', ids: ['standard', 'standard-move'] },
   { name: 'Primus', ids: ['primus'] },
@@ -200,6 +215,7 @@ export const GROUPS: { name: string; ids: string[] }[] = [
   { name: 'Ambushes', ids: ['ambush-defend', 'ambush-hit'] },
   { name: 'Alliances', ids: ['alliances', 'invite', 'rally'] },
   { name: 'Siege on Olympus', ids: ['siege-vote'] },
+  { name: 'House Ultimates', ids: ['ult-open', 'ult-ready', 'ult-short', 'ult-target', 'ult-hit', 'ult-status', 'lockout'] },
 ];
 
 function whyFold(c: GuideCtx, n: number) {
@@ -208,7 +224,7 @@ function whyFold(c: GuideCtx, n: number) {
   const rows = [`<tr><td>${b.territories} territories ÷ 3 (at least 3)</td><td>${b.base}</td></tr>`];
   for (const r of b.regions) rows.push(`<tr><td>You hold the ${esc(r.name)} region</td><td>+${r.bonus}</td></tr>`);
   if (b.keeps) rows.push(`<tr><td>You hold ${b.keeps === 1 ? 'your Keep' : `${b.keeps} Keeps`}</td><td>+${b.keepBonus}</td></tr>`);
-  if (b.general) rows.push(`<tr><td>Your General</td><td>+${b.general}</td></tr>`);
+  if (b.general) rows.push(`<tr><td>Your Primus</td><td>+${b.general}</td></tr>`);
   if (n > b.total) rows.push(`<tr><td>Cards and other bonuses</td><td>+${n - b.total}</td></tr>`);
   return `<details class="g-why"><summary>Why ${n}?</summary><table>${rows.join('')}<tr class="tot"><td>This turn</td><td>${n}</td></tr></table></details>`;
 }
@@ -216,12 +232,12 @@ function whyFold(c: GuideCtx, n: number) {
 const LESSONS: Lesson[] = [
   // ---- before turn 1 ----
   {
-    id: 'passage', kind: 'read',
+    id: 'choose-primus', kind: 'read',
     when: (c) => c.passageOpen,
     alive: (c) => c.passageOpen,
     card: () => ({
-      id: 'passage', kind: 'read', step: 'Before the war', title: 'Choose your General', width: 380, spot: ['#modal-root .cards-row'],
-      body: '<span>Keep one Character: their <b>Passive</b> works for you all war. The other dies here.</span><span>★ A card from your own House gets +1.</span>',
+      id: 'choose-primus', kind: 'read', step: 'Before the war', title: 'Choose your Primus', width: 380, spot: ['#modal-root .cards-row'],
+      body: '<span>Pick any Character of your House.</span><span>Their <b>Passive</b> works for you all war.</span>',
     }),
   },
   // ---- turn 1, full guide ----
@@ -398,7 +414,7 @@ const LESSONS: Lesson[] = [
     card: () => ({
       id: 'standard', kind: 'read', step: 'New: the Standard', title: 'Raise the Standard', width: 380,
       spot: ['#actionbar [data-a=std]', '#actionbar label:has(> input[data-a=commit])'],
-      body: "<span>Once per turn: +3 phantom soldiers and your General's war cry, with no retreat.</span><span><b>Win</b> and the defenders join you. <b>Lose</b> and your whole House goes to them.</span>",
+      body: "<span>Once per turn: +3 phantom soldiers and your Primus's war cry, with no retreat.</span><span><b>Win</b> and the defenders join you. <b>Lose</b> and your whole House goes to them.</span>",
     }),
   },
   {
@@ -412,7 +428,7 @@ const LESSONS: Lesson[] = [
     alive: (c) => c.primusAsk,
     card: () => ({
       id: 'primus', kind: 'read', step: 'New: Primus', title: 'Swear in a Primus', width: 380, spot: ['#modal-root .cards-row'],
-      body: "<span>A Character from this Keep's House guards it, and its Passive stacks with your General's.</span><span>Lose the Keep and the Primus dies with it.</span>",
+      body: "<span>A Character from this Keep's House guards it, and its Passive stacks with your own Primus's.</span><span>Lose the Keep and the Primus dies with it.</span>",
     }),
   },
   {
@@ -423,7 +439,7 @@ const LESSONS: Lesson[] = [
   {
     id: 'neutral-keep', kind: 'tip',
     when: (c) => inAttack(c) && c.sel != null && c.neutralKeepTarget,
-    tip: () => ({ html: 'Neutral Keeps hold 10, roll 2 dice, and never yield. Bring about 15.', pinned: false }),
+    tip: () => ({ html: 'Neutral Keeps hold 10 behind Walls (+1 on their highest die) and never yield. Bring about 20.', pinned: false }),
   },
   {
     id: 'ambush-defend', kind: 'tip',
@@ -439,7 +455,7 @@ const LESSONS: Lesson[] = [
   {
     id: 'alliances', kind: 'tip',
     when: (c) => c.alliancesOpen,
-    tip: () => ({ html: "Alliances are open. Press <b>🤝</b> to send a quiet invitation. Allies share their Generals' Passives.", pinned: false, pulse: ['#btnDiplo'] }),
+    tip: () => ({ html: "Alliances are open. Press <b>🤝</b> to send a quiet invitation. Allies share their Primuses' Passives.", pinned: false, pulse: ['#btnDiplo'] }),
   },
   {
     id: 'invite', kind: 'tip',
@@ -475,6 +491,51 @@ const LESSONS: Lesson[] = [
     id: 'region', kind: 'tip',
     when: (c) => c.myTurn && c.regionTaken != null,
     tip: (c) => ({ html: `You hold all of <b>${esc(c!.regionTaken?.name ?? '')}</b>: +${c!.regionTaken?.bonus ?? 0} armies every Draft. Gold outlines on the map mark each region.`, pinned: false }),
+  },
+  // ---- House Ultimates (.008) ----
+  {
+    id: 'ult-open', kind: 'tip',
+    when: (c) => c.ultOpen,
+    tip: () => ({ html: 'House Ultimates are open. Houses in the <b>bottom half</b> can spend 3 cards to strike the leader.', pinned: false, pulse: ['#ultBtn'] }),
+  },
+  {
+    id: 'ult-ready', kind: 'read',
+    when: (c) => c.myTurn && c.phase === 'draft' && c.ultBtn === 'ready' && c.ult != null && !c.castOpen,
+    alive: (c) => c.myTurn && c.phase === 'draft' && c.ultBtn === 'ready' && !c.castOpen,
+    card: (c) => ({
+      id: 'ult-ready', kind: 'read', step: 'New: House Ultimates', title: 'Your Ultimate is ready', width: 400, spot: ['#ultBtn'],
+      body: `<span>You're in the bottom half, so you may cast <b>${esc(c.ult?.name ?? 'your Ultimate')}</b>: ${esc(c.ult?.line ?? '')}.</span><span>It costs <b>3 cards</b> (one from House ${esc(c.ult?.house ?? '')}) instead of a trade, then recharges for 3 turns.</span>`,
+    }),
+  },
+  {
+    id: 'ult-short', kind: 'tip',
+    when: (c) => c.myTurn && c.phase === 'draft' && c.ultBtn === 'cards' && c.ult != null,
+    tip: (c) => ({ html: `You may cast your Ultimate, but it needs <b>3 cards, one from House ${esc(c?.ult?.house ?? '')}</b>. Keep one in hand.`, pinned: false }),
+  },
+  {
+    id: 'ult-target', kind: 'tip',
+    when: (c) => c.castOpen,
+    pinnedWhile: (c) => c.castOpen,
+    tip: () => ({ html: 'Pick one House, or a whole public alliance for a weaker hit on every member. Nothing happens until you <b>Commit</b>.', pinned: true }),
+  },
+  {
+    id: 'ult-hit', kind: 'read',
+    when: (c) => c.ultHit != null,
+    alive: (c) => c.ultHit != null,
+    card: (c) => ({
+      id: 'ult-hit', kind: 'read', step: 'New: House Ultimates', title: `${esc(c.ultHit ?? 'An Ultimate')} hit you`, width: 380, spot: ['#general .icons'],
+      body: '<span>The icons on your banner show what is on you and for how many of your turns.</span><span><b>Hover one</b> to read it.</span>',
+    }),
+  },
+  {
+    id: 'ult-status', kind: 'tip',
+    when: (c) => c.rivalIcon,
+    tip: () => ({ html: 'Icons on a banner are lasting effects. The number is the turns left.', pinned: false }),
+  },
+  {
+    id: 'lockout', kind: 'tip',
+    when: (c) => c.lockedOut,
+    tip: () => ({ html: "You left an alliance, so you can't join another for 2 of your turns.", pinned: false }),
   },
   // ---- tips about the guide itself ----
   {

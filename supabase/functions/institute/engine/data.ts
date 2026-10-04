@@ -76,7 +76,7 @@ export const TERRAIN_OF: Record<Biome, Terrain> = {
 };
 export const TERRAIN_INFO: Record<Terrain, { icon: string; name: string; text: string }> = {
   open: { icon: '', name: 'Open ground', text: 'No special effect.' },
-  keep: { icon: '♜', name: 'Keep', text: 'No walls: a Keep holds with its garrison, its honor guard and its Passives. A neutral Keep holds 10.' },
+  keep: { icon: '♜', name: 'Keep', text: 'Walls: whoever defends a Keep adds +1 to its highest defense die, on top of its garrison, honor guard and Passives. A neutral Keep holds 10.' },
   mountain: { icon: '⛰', name: 'Mountains', text: 'High ground: +1 to your lowest compared attack die when attacking from here (not against neutrals).' },
   forest: { icon: '🌲', name: 'Forest', text: 'Cover: +1 to the lowest defense die when a House defends here (neutrals get no cover).' },
   water: { icon: '🌊', name: 'Water', text: 'No special effect.' },

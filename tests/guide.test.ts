@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
-  TURN_LESSONS, closeRecap, closeTip, dismiss, freshRun, pickStep, queueTip, replay, setLevel,
+  GROUPS, LESSON_IDS, TURN_LESSONS, closeRecap, closeTip, dismiss, freshRun, pickStep, queueTip, replay, setLevel,
   type GuideCtx, type GuideState, type GuideView, type Level,
 } from '../src/ui/lessons.ts';
 
@@ -12,6 +13,7 @@ const base: GuideCtx = {
   fortifies: 0, moved: null, interior: null, mustTrade: false, breakdown: null, passageOpen: false,
   hand: 0, confirm: false, canRaiseStd: false, canMoveStd: false, primusAsk: false, reactionMine: false, ambushHit: false, alliancesOpen: false,
   invitesIn: 0, rallyOpen: false, voteOwed: false, terrainTarget: false, neutralKeepTarget: false, regionTaken: null, timerSecs: 0,
+  ultOpen: false, ultBtn: null, ult: null, castOpen: false, ultHit: null, rivalIcon: false, lockedOut: false,
 };
 const ctx = (o: Partial<GuideCtx> = {}): GuideCtx => ({ ...base, ...o });
 const state = (level: Level | null = 'full', seen: string[] = [], hintsLeft = 0): GuideState => ({ mem: { level, seen, hintsLeft }, run: freshRun() });
@@ -39,10 +41,13 @@ describe('Proctor\'s Guide: pickStep', () => {
     expect(s.see(draft())).toEqual({ card: null, hint: null, tip: null, blocking: false });
   });
 
-  it('runs the Passage lesson, then turn 1 in order, then the recap', () => {
+  it('runs the Choose your Primus lesson, then turn 1 in order, then the recap', () => {
     const s = new Sim(state('full'));
     let v = s.see(ctx({ phase: 'passage', passageOpen: true, turnKey: '0:0' }));
-    expect(s.id).toBe('passage');
+    expect(s.id).toBe('choose-primus');
+    expect(v.card!.title).toBe('Choose your Primus');
+    expect(v.card!.body).toContain('Pick any Character of your House.');
+    expect(v.card!.spot).toEqual(['#modal-root .cards-row']);
     expect(v.blocking).toBe(true);
     s.got();
     expect(s.see(ctx({ phase: 'passage', passageOpen: false, turnKey: '0:0' })).card).toBeNull();
@@ -347,6 +352,10 @@ describe('Proctor\'s Guide: just-in-time lessons', () => {
     ['book', { round: 3 }, "The Proctors' Book"],
     ['timer', { timerSecs: 90, timed: true }, '<b>90s</b> turn clock'],
     ['region', { regionTaken: { name: 'Mars Heart', bonus: 2 } }, 'You hold all of <b>Mars Heart</b>: +2 armies'],
+    ['ult-open', { myTurn: false, ultOpen: true }, 'Houses in the <b>bottom half</b> can spend 3 cards to strike the leader'],
+    ['ult-short', { ultBtn: 'cards', ult: { name: 'Stormfall', line: 'a storm', house: 'Jupiter' } }, 'it needs <b>3 cards, one from House Jupiter</b>'],
+    ['ult-status', { myTurn: false, rivalIcon: true }, 'The number is the turns left'],
+    ['lockout', { myTurn: false, lockedOut: true }, "you can't join another for 2 of your turns"],
   ];
 
   for (const [id, o, phrase] of TIPS) {
@@ -387,6 +396,92 @@ describe('Proctor\'s Guide: just-in-time lessons', () => {
       expect(s.st.run.tips).toEqual([]);
       expect(s.see(later(on)).tip).toBeNull();
     }
+  });
+
+  const MARS = { name: "Where's Sevro?", line: 'seize 3 territories, and half their armies join you', house: 'Mars' };
+
+  it('ult-open pulses the Ultimate button', () => {
+    expect(new Sim(hinted()).see(later({ ultOpen: true })).tip!.pulse).toEqual(['#ultBtn']);
+  });
+
+  it('ult-ready: a Read on the Ultimate button that names the Ultimate, what it does and its cost, once', () => {
+    const s = new Sim(state('hints', [...TURN_LESSONS, 'ult-open'], 2));
+    const on = { ultOpen: true, ultBtn: 'ready' as const, ult: MARS, reinforcements: 7, placed: 0 };
+    const v = s.see(later(on));
+    expect(s.id).toBe('ult-ready');
+    expect(v.card!.step).toBe('New: House Ultimates');
+    expect(v.card!.title).toBe('Your Ultimate is ready');
+    expect(v.card!.spot).toEqual(['#ultBtn']);
+    expect(v.card!.body).toContain("you may cast <b>Where&#39;s Sevro?</b>: seize 3 territories, and half their armies join you.");
+    expect(v.card!.body).toContain('It costs <b>3 cards</b> (one from House Mars) instead of a trade, then recharges for 3 turns.');
+    expect(v.blocking).toBe(true);
+    s.got();
+    expect(s.see(later(on)).card).toBeNull();
+    expect(s.st.mem.seen).toContain('ult-ready');
+    // Not for a House that is short of cards, in the top half, or looking at someone else's turn.
+    for (const off of [{ ultBtn: 'cards' as const }, { ultBtn: null }, { myTurn: false }, { phase: 'attack' }]) {
+      expect(new Sim(state('hints', [...TURN_LESSONS, 'ult-open', 'ult-short'], 2)).see(later({ ...on, ...off })).card).toBeNull();
+    }
+  });
+
+  it('ult-ready never blocks a timed war, and opening the cast flow puts it away', () => {
+    const on = { ultOpen: true, ultBtn: 'ready' as const, ult: MARS, reinforcements: 7, placed: 0 };
+    const t = new Sim(state('hints', [...TURN_LESSONS, 'ult-open'], 2));
+    let v = t.see(later({ ...on, timed: true, timerSecs: 90 }));
+    expect(t.id).toBe('ult-ready');
+    expect(v.blocking).toBe(false);
+    // The player acts through it (places an army): it is gone.
+    v = t.see(later({ ...on, timed: true, timerSecs: 90, reinforcements: 6, placed: 1 }));
+    expect(v.card).toBeNull();
+    const s = new Sim(state('hints', [...TURN_LESSONS, 'ult-open'], 2));
+    s.see(later(on));
+    v = s.see(later({ ...on, castOpen: true }));
+    expect(v.card).toBeNull();
+    expect(s.st.mem.seen).toContain('ult-ready');
+    // The cast flow has its own pinned Tip, which leaves with the flow.
+    expect(v.tip!.id).toBe('ult-target');
+    expect(v.tip!.pinned).toBe(true);
+    expect(v.tip!.html).toContain('Nothing happens until you <b>Commit</b>');
+    expect(s.see(later({ ...on, castOpen: true })).tip!.id).toBe('ult-target');
+    expect(s.see(later(on)).tip).toBeNull();
+  });
+
+  it('ult-hit: a Read on my own icons that names the Ultimate, dropped when the effect ends', () => {
+    const s = new Sim(state('hints', [...TURN_LESSONS, 'ult-open', 'ult-status'], 2));
+    const v = s.see(later({ myTurn: false, ultOpen: true, ultHit: 'Stormfall', rivalIcon: true }));
+    expect(s.id).toBe('ult-hit');
+    expect(v.card!.title).toBe('Stormfall hit you');
+    expect(v.card!.spot).toEqual(['#general .icons']);
+    expect(v.card!.body).toContain('for how many of your turns');
+    expect(v.blocking).toBe(true);
+    s.see(later({ myTurn: false, ultOpen: true }));
+    expect(s.id).toBeNull();
+    expect(s.st.mem.seen).toContain('ult-hit');
+    // It waits for the announcement (a silent moment) to close.
+    const w = new Sim(state('hints', [...TURN_LESSONS, 'ult-open', 'ult-status'], 2));
+    expect(w.see(later({ myTurn: false, silent: true, ultHit: 'Rot' })).card).toBeNull();
+    expect(w.see(later({ myTurn: false, ultHit: 'Rot' })).card!.title).toBe('Rot hit you');
+  });
+
+  it('the 🎓 menu groups: Your Primus, and House Ultimates with its seven lessons; every id is a lesson', () => {
+    expect(GROUPS.find((g) => g.name === 'Your Primus')!.ids).toEqual(['choose-primus']);
+    expect(GROUPS.find((g) => g.name === 'House Ultimates')!.ids).toEqual(['ult-open', 'ult-ready', 'ult-short', 'ult-target', 'ult-hit', 'ult-status', 'lockout']);
+    expect(GROUPS.some((g) => g.name === 'Your General')).toBe(false);
+    for (const g of GROUPS) for (const id of g.ids) expect(LESSON_IDS).toContain(id);
+    expect(LESSON_IDS).not.toContain('passage');
+    // Replayed from the menu, an Ultimate lesson fires again at its next trigger, even with the guide Off.
+    const s = new Sim(state('off', [...TURN_LESSONS, ...GROUPS.flatMap((g) => g.ids)]));
+    const on = { ultOpen: true, ultBtn: 'ready' as const, ult: MARS, reinforcements: 7, placed: 0 };
+    expect(s.see(later(on)).card).toBeNull();
+    s.st = replay(s.st, GROUPS.find((g) => g.name === 'House Ultimates')!.ids);
+    const v = s.see(later(on));
+    expect(s.id).toBe('ult-ready');
+    expect(v.tip!.id).toBe('ult-open');
+  });
+
+  it('no lesson still speaks of a General or the Passage', () => {
+    const src = readFileSync(new URL('../src/ui/lessons.ts', import.meta.url), 'utf8');
+    expect(src.match(/\bGenerals?\b|\bPassage\b/g)).toBeNull();
   });
 
   it('cards: a Read on the hand, once', () => {

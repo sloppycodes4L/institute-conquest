@@ -1,7 +1,7 @@
 // Battle odds: the exact chance that a blitz takes the target, using the engine's dice rules and modifiers.
 
 import {
-  BALANCE, attackMods, defenseMods, defenderDiceCap, isNeutralKeep, isWildGarrison, modifyDice, overwhelms, passive, standardAt, terrainMods,
+  BALANCE, battleMods, defenseMods, defenderDiceCap, geo, guardAgainst, isNeutralKeep, isWildGarrison, modifyDice, overwhelms, passive, terrainMods,
   type GameState, type Mods,
 } from '../engine/engine.ts';
 
@@ -66,10 +66,12 @@ export function winChance(f: Fight): number {
   return r;
 }
 
-/** The fight as the engine would run `seat`'s blitz from `from` on `to` right now. */
+/**
+ * The fight as the engine would run `seat`'s blitz from `from` on `to` right now: the Walls, and any Ultimate in force
+ * between the two (Glared, Radiant, and no honor guard for a Hunted House).
+ */
 export function attackFight(s: GameState, seat: number, from: number, to: number): Fight {
-  const h = standardAt(s, to);
-  const guard = h >= 0 ? s.standards[h].guard : 0;
+  const guard = guardAgainst(s, seat, to);
   const same = s.ts.battle?.key === `${from}>${to}`;
   const atkBuff = same ? s.ts.battle!.atk : s.ts.buffs.atk > 0;
   const breakLine = same ? s.ts.battle!.breakLine : s.ts.buffs.breakLine > 0;
@@ -77,8 +79,7 @@ export function attackFight(s: GameState, seat: number, from: number, to: number
     att: s.armies[from] - 1,
     def: s.armies[to] + guard,
     defCap: breakLine ? 1 : defenderDiceCap(s, to),
-    ...attackMods(s, seat, from, to, atkBuff),
-    ...defenseMods(s, to),
+    ...battleMods(s, seat, from, to, atkBuff),
     overwhelm: overwhelms(s, from, to),
   };
 }
@@ -106,13 +107,19 @@ export function assaultFight(s: GameState, from: number): Fight {
   };
 }
 
-/** A short note on how the defender fights: "Overwhelm", "1 die" (a lone neutral garrison), or "Keep 10". */
+/**
+ * A short note on how the defender fights: "Overwhelm", "1 die" (a lone neutral garrison), "neutral Keep" or "Keep"
+ * (both behind Walls: see keepWalls).
+ */
 export function defenseNote(s: GameState, from: number, to: number): string {
   if (overwhelms(s, from, to)) return 'Overwhelm';
   if (isWildGarrison(s, to)) return '1 die';
   if (isNeutralKeep(s, to)) return 'neutral Keep';
+  if (geo(s).territories[to]?.isKeep) return 'Keep';
   return '';
 }
+/** What a Keep's defender adds to its highest defense die: the Walls, plus a House's defKeep Passives. 0 off a Keep. */
+export const keepWalls = (s: GameState, to: number) => (geo(s).territories[to]?.isKeep ? defenseMods(s, to).defHigh : 0);
 
 export const pct = (p: number) => (p > 0.995 && p < 1 ? '>99%' : p < 0.005 && p > 0 ? '<1%' : `${Math.round(p * 100)}%`);
 export const oddsClass = (p: number) => (p >= 0.65 ? 'good' : p >= 0.35 ? 'even' : 'bad');

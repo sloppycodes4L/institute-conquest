@@ -1,0 +1,871 @@
+<title>House Ultimates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=Cinzel:wght@500;700;900&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0707;
+    --panel: #140c0b;
+    --panel-2: #1b100d;
+    --line: #4d2518;
+    --line-hi: #8a3a1e;
+    --gold: #e6bb5c;
+    --gold-dim: #9c7a36;
+    --blood: #b3161b;
+    --blood-hi: #e0262c;
+    --ink: #f1e6d6;
+    --ink-dim: #b8a48c;
+    --ink-mute: #8a7664;
+    --ok: #4fc37a;
+    --warn: #e0a23a;
+    --band: rgba(230, 187, 92, 0.10);
+    --display: 'Cinzel', 'Trajan Pro', Georgia, serif;
+    --ui: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+    --prose: 'Crimson Pro', Georgia, serif;
+
+    --apollo: #e8b21e;
+    --diana: #2fa36b;
+    --minerva: #3f86e0;
+    --mars: #e0312f;
+    --pluto: #a27ad8;
+    --jupiter: #e8e4d8;
+    --ceres: #e0782a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image: radial-gradient(ellipse 80% 40% at 50% 0%, rgba(179, 22, 27, 0.16), transparent 70%);
+    background-repeat: no-repeat;
+    color: var(--ink);
+    font-family: var(--ui);
+    font-size: 17px;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 40px 20px 72px; display: grid; gap: 56px; }
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+  p { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 4px; }
+
+  .eyebrow { font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--blood-hi); font-weight: 600; }
+  .label { font-size: 12.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-mute); font-weight: 600; }
+
+  /* ---------- header ---------- */
+  header { display: grid; gap: 14px; }
+  h1 {
+    font-weight: 900; font-size: clamp(42px, 8vw, 76px); line-height: 0.95; letter-spacing: 0.02em;
+    background: linear-gradient(#ffe7a8, #d49a32 58%, #8a5418); -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede { font-family: var(--prose); font-size: 21px; color: var(--ink-dim); max-width: 64ch; }
+  .sigils { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .sigils a {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    padding: 6px 12px 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
+    font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 14px; color: var(--ink-dim);
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .sigils a:hover { border-color: var(--h); color: var(--ink); }
+  .sigils .s { color: var(--h); font-size: 18px; width: 22px; text-align: center; }
+
+  /* ---------- section heads ---------- */
+  .sec-head { display: grid; gap: 6px; margin-bottom: 20px; }
+  h2 { font-size: clamp(24px, 4vw, 32px); color: var(--gold); letter-spacing: 0.04em; }
+  .sec-head p { color: var(--ink-dim); max-width: 70ch; }
+
+  /* ---------- rules ---------- */
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .rule { background: var(--panel); padding: 16px 18px; display: grid; gap: 6px; align-content: start; }
+  .rule .v { font-size: 19px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+  .rule .n { font-size: 15px; color: var(--ink-dim); }
+  .effects { margin-top: 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px 28px; }
+  .effects li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; color: var(--ink-dim); }
+  .effects li::before { content: '◆'; color: var(--blood-hi); font-size: 11px; padding-top: 5px; }
+  .effects b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- chart ---------- */
+  .chart-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 22px 18px; display: grid; gap: 18px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 15px; color: var(--ink-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { width: 22px; height: 10px; border-radius: 2px; display: inline-block; }
+  .sw.early { background: var(--gold-dim); opacity: 0.55; }
+  .sw.late { background: var(--gold); }
+  .sw.band { background: var(--band); outline: 1px dashed var(--gold-dim); }
+  .sw.trade { width: 2px; height: 14px; background: var(--blood-hi); }
+  .chart { display: grid; grid-template-columns: 132px 1fr 92px; gap: 0 14px; align-items: center; font-variant-numeric: tabular-nums; }
+  .chart .who { font-weight: 600; letter-spacing: 0.04em; display: flex; gap: 8px; align-items: center; padding: 9px 0; }
+  .chart .who .s { color: var(--h); width: 18px; text-align: center; }
+  .track { position: relative; height: 34px; }
+  .track .bands { position: absolute; inset: 0; }
+  .track .b { position: absolute; top: 0; bottom: 0; background: var(--band); border-left: 1px dashed rgba(156, 122, 54, 0.6); border-right: 1px dashed rgba(156, 122, 54, 0.6); }
+  .track .tradeline { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--blood-hi); opacity: 0.85; }
+  .bar { position: absolute; left: 0; height: 11px; border-radius: 0 3px 3px 0; }
+  .bar.early { top: 5px; background: var(--gold-dim); opacity: 0.6; }
+  .bar.late { top: 18px; background: var(--gold); }
+  .bar.special { top: 5px; height: 24px; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--h) 35%, transparent) 0 6px, color-mix(in srgb, var(--h) 12%, transparent) 6px 12px); border: 1px solid var(--h); border-radius: 3px; width: 100%; }
+  .bar.special span { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13.5px; color: var(--ink); white-space: nowrap; letter-spacing: 0.04em; }
+  .chart .nums { text-align: right; font-size: 15px; color: var(--ink-dim); }
+  .chart .nums b { color: var(--ink); font-weight: 600; }
+  .axis { grid-column: 2; position: relative; height: 20px; font-size: 12.5px; color: var(--ink-mute); }
+  .axis span { position: absolute; transform: translateX(-50%); top: 2px; }
+  .axis span:first-child { transform: none; }
+  .chart-scroll { overflow-x: auto; }
+  .chart-scroll .chart { min-width: 560px; }
+  .bench { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .bench div { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; }
+  .bench .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bench .n { font-size: 14.5px; color: var(--ink-dim); }
+
+  /* ---------- house cards ---------- */
+  .group-label { display: flex; align-items: center; gap: 14px; margin: 34px 0 14px; }
+  .group-label:first-of-type { margin-top: 0; }
+  .group-label::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  .group-label .label { color: var(--gold-dim); }
+  .houses { display: grid; gap: 18px; }
+  .house { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: grid; gap: 22px; scroll-margin-top: 20px; }
+  .house-head { display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: center; }
+  .medal {
+    width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center;
+    border: 2px solid var(--h); color: var(--h); font-size: 32px; line-height: 1;
+    background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--h) 22%, transparent), transparent 70%);
+  }
+  .house-head .titles { display: grid; gap: 2px; }
+  .house-head .hname { font-size: 14px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 600; color: var(--h); }
+  .house-head h3 { font-size: clamp(26px, 4vw, 34px); color: var(--ink); letter-spacing: 0.03em; font-weight: 700; }
+  .chip { font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line-hi); color: var(--ink-dim); white-space: nowrap; }
+
+  .house-body { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 22px 32px; }
+  .col { display: grid; gap: 18px; align-content: start; }
+  .blk { display: grid; gap: 6px; }
+  .blk p, .blk li { color: var(--ink-dim); }
+  .blk p b, .blk li b { color: var(--ink); font-weight: 600; }
+  .mode { display: grid; gap: 10px; }
+  .mode div { border-left: 2px solid var(--line-hi); padding: 2px 0 2px 12px; display: grid; gap: 2px; }
+  .mode .k { font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold-dim); font-weight: 600; }
+  .mode p { color: var(--ink); }
+  .power { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .power div { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; }
+  .power .v { font-size: 26px; font-weight: 700; color: var(--gold); font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .power .n { font-size: 14px; color: var(--ink-dim); }
+  .power.wide { grid-template-columns: 1fr; }
+  .quote { font-family: var(--prose); font-style: italic; font-size: 18px; color: var(--ink); }
+  .quote cite { font-style: normal; font-family: var(--ui); font-size: 14px; color: var(--ink-mute); letter-spacing: 0.06em; display: block; margin-top: 2px; }
+
+  .tune { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .tune .blk ul { display: grid; gap: 6px; }
+  .tune li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; }
+  .tune .up li::before { content: '▲'; color: var(--blood-hi); font-size: 11px; padding-top: 5px; }
+  .tune .down li::before { content: '▼'; color: var(--minerva); font-size: 11px; padding-top: 5px; }
+  .flag { display: flex; gap: 10px; align-items: flex-start; background: rgba(224, 162, 58, 0.08); border: 1px solid rgba(224, 162, 58, 0.35); border-radius: 8px; padding: 10px 12px; color: var(--ink-dim); font-size: 15.5px; }
+  .concern { display: grid; gap: 14px; }
+  .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .mini { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 10px; align-content: start; }
+  .mini p { color: var(--ink-dim); font-size: 15.5px; }
+  .mini table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 15.5px; }
+  .mini th { text-align: left; font-size: 12.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mute); font-weight: 600; padding: 0 8px 6px 0; border-bottom: 1px solid var(--line); }
+  .mini td { padding: 7px 8px 7px 0; border-bottom: 1px solid rgba(77, 37, 24, 0.5); color: var(--ink-dim); vertical-align: top; }
+  .mini td b { color: var(--ink); }
+  .mini th:not(:first-child), .mini td:not(:first-child) { white-space: nowrap; }
+  .mini tr.pick td { color: var(--ink); }
+  .tag { display: inline-block; font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line-hi); color: var(--ink-mute); margin-left: 4px; white-space: nowrap; }
+  .pick .tag { border-color: var(--ok); color: var(--ok); }
+  .foot { color: var(--ink-mute); font-size: 14px; }
+  .flag::before { content: '!'; flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--warn); color: #1a0d05; font-weight: 700; display: grid; place-items: center; font-size: 14px; margin-top: 1px; }
+  .flag b { color: var(--ink); }
+
+  /* ---------- open questions ---------- */
+  .qs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .q { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; gap: 6px; align-content: start; }
+  .q h4 { margin: 0; font-size: 18px; font-weight: 600; color: var(--ink); }
+  .q p { color: var(--ink-dim); font-size: 16px; }
+  footer { color: var(--ink-mute); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+
+  /* ---------- v5 / sim ---------- */
+  .v5 { display: inline-block; font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--gold); color: var(--gold); margin-left: 6px; vertical-align: 2px; white-space: nowrap; }
+  .rule.changed { background: linear-gradient(var(--band), var(--band)), var(--panel); }
+  .mode div.add { border-left-color: var(--gold); }
+  .simline { font-size: 15px; color: var(--ink-dim); border-top: 1px dashed var(--line); padding-top: 12px; }
+  .simline b { color: var(--ink); font-weight: 600; }
+  .simline .k { font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold-dim); font-weight: 600; margin-right: 6px; }
+  .sim { display: grid; gap: 18px; }
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .tbl { width: 100%; min-width: 680px; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 16px; }
+  .tbl caption { text-align: left; padding: 14px 16px 4px; font-size: 12.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-mute); font-weight: 600; }
+  .tbl th { text-align: right; font-size: 12.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute); font-weight: 600; padding: 10px 16px 8px; border-bottom: 1px solid var(--line); vertical-align: bottom; }
+  .tbl td { text-align: right; padding: 9px 16px; border-bottom: 1px solid rgba(77, 37, 24, 0.5); color: var(--ink-dim); }
+  .tbl th:first-child, .tbl td:first-child { text-align: left; }
+  .tbl td:first-child { color: var(--ink); font-weight: 600; }
+  .tbl td:first-child small { display: block; font-weight: 400; color: var(--ink-mute); font-size: 13.5px; }
+  .tbl tr:last-child td { border-bottom: 0; }
+  .tbl tr.base td { color: var(--ink-mute); }
+  .tbl tr.prop td { background: var(--band); color: var(--ink); }
+  .tbl .good { color: var(--ok); }
+  .tbl .bad { color: var(--warn); }
+  .tbl .thin { color: var(--ink-mute); font-size: 13.5px; }
+  .finds { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 28px; }
+  .finds li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; color: var(--ink-dim); }
+  .finds li::before { content: '◆'; color: var(--gold); font-size: 11px; padding-top: 5px; }
+  .finds b { color: var(--ink); font-weight: 600; }
+  /* ---------- status effects ---------- */
+  :root { --buff: #e6bb5c; --debuff: #e0262c; --ctrl: #3f86e0; --tile: #8a7664; }
+  .st-groups { display: grid; gap: 22px; }
+  .st-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+  .st { display: grid; grid-template-columns: 46px 1fr; gap: 12px; align-items: start; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .st b { color: var(--ink); font-weight: 600; font-size: 17px; letter-spacing: 0.02em; }
+  .st p { color: var(--ink-dim); font-size: 15px; }
+  .st .src { font-size: 12.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mute); font-weight: 600; }
+  .ico { position: relative; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--ring); color: var(--ring); background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--ring) 20%, transparent), transparent 72%); }
+  .ico svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ico.buff { --ring: var(--buff); } .ico.debuff { --ring: var(--debuff); } .ico.ctrl { --ring: var(--ctrl); } .ico.tile { --ring: var(--tile); border-style: dashed; }
+  .ico .t { position: absolute; right: -5px; bottom: -4px; min-width: 19px; height: 19px; padding: 0 4px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 12px; font-weight: 700; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+  .ico .h { position: absolute; left: -3px; top: -3px; width: 12px; height: 12px; border-radius: 50%; background: var(--h); border: 2px solid var(--panel); }
+  .banner-demo { background: var(--panel); border: 1px solid var(--line-hi); border-radius: 12px; padding: 16px 18px; display: grid; gap: 12px; }
+  .banner-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+  .banner-row .who { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 18px; margin-right: 6px; }
+  .banner-row .who .s { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--h); color: var(--h); display: grid; place-items: center; font-size: 18px; }
+  .banner-row .ico { width: 38px; height: 38px; }
+  .banner-row .ico svg { width: 20px; height: 20px; }
+  .st-key { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14.5px; color: var(--ink-dim); }
+  .st-key span { display: inline-flex; align-items: center; gap: 8px; }
+  .st-key i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ring); display: inline-block; }
+  .st-key i.tile { border-style: dashed; }
+
+  details.hist { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  details.hist > summary { cursor: pointer; padding: 14px 18px; font-weight: 600; color: var(--ink-dim); letter-spacing: 0.04em; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+  details.hist > summary::-webkit-details-marker { display: none; }
+  details.hist > summary::after { content: '+'; color: var(--gold); font-size: 20px; line-height: 1; }
+  details.hist[open] > summary::after { content: '−'; }
+  details.hist > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 12px; }
+  details.hist .sim { padding: 0 18px 18px; }
+  .q.decide { border-color: var(--line-hi); }
+  .q .rec { font-size: 15px; color: var(--ink); border-left: 2px solid var(--gold); padding-left: 10px; }
+
+  @media (max-width: 760px) {
+    .wrap { padding: 28px 16px 56px; gap: 44px; }
+    .house { padding: 18px; }
+    .house-head { grid-template-columns: auto 1fr; }
+    .house-head .chip { grid-column: 1 / -1; justify-self: start; }
+    .medal { width: 52px; height: 52px; font-size: 26px; }
+    .house-body, .tune, .mini-grid { grid-template-columns: 1fr; }
+    .mini th:not(:first-child), .mini td:not(:first-child) { white-space: normal; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Institute Conquest · Design sheet · v5, locked for .008</div>
+    <h1>House Ultimates</h1>
+    <p class="lede">A comeback move for players who are falling behind. Spend three cards to unleash your House's signature power on the leading player or alliance. Every number on this sheet is benchmarked against match 5METH, where The Quiet One snowballed to 54 reinforcements a turn while its allies sat on 6 and 23. v5 below is your balance notes (v3 and v4), replayed on the same 1,000 simulated games as v4. Everything that changed from v4 is marked <span class="v5">v5</span>.</p>
+    <nav class="sigils" aria-label="Jump to a House">
+      <a href="#mars" style="--h: var(--mars)"><span class="s">♂</span>Mars</a>
+      <a href="#jupiter" style="--h: var(--jupiter)"><span class="s">♃</span>Jupiter</a>
+      <a href="#pluto" style="--h: var(--pluto)"><span class="s">♇</span>Pluto</a>
+      <a href="#minerva" style="--h: var(--minerva)"><span class="s">⌘</span>Minerva</a>
+      <a href="#ceres" style="--h: var(--ceres)"><span class="s">⚳</span>Ceres</a>
+      <a href="#apollo" style="--h: var(--apollo)"><span class="s">☉</span>Apollo</a>
+      <a href="#diana" style="--h: var(--diana)"><span class="s">☾</span>Diana</a>
+    </nav>
+  </header>
+
+  <section aria-labelledby="sim">
+    <div class="sec-head">
+      <h2 id="sim">What v5 would have changed</h2>
+      <p>Your v5 rules (balance notes v3 and v4), replayed on the same 500 seeds as the v4 run (100 games each at 3 to 7 players), next to the same games with Ultimates off. "With deserter bar" adds one rule on top of yours: leaving an alliance also blocks your Ultimates for 3 rounds. <b>Version .008 ships v5 as written, without the deserter bar</b> (see Decisions at the end).</p>
+    </div>
+    <div class="sim">
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <caption>Game level · 500 games per row</caption>
+          <thead><tr><th>Version</th><th>Turns vs control</th><th>Siege reached</th><th>Alliance wins Olympus</th><th>Round-4 leader among winners</th><th>Round-4 leader wins alone</th><th>Runaway games</th><th>Houses taken per game</th><th>Walk-outs per game</th><th>Ultimates per game</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>Control<small>Ultimates off</small></td><td>57.8 turns</td><td>94%</td><td>87%</td><td>57%</td><td>4%</td><td>33%</td><td>2.4</td><td>0</td><td>0</td></tr>
+            <tr><td>v4</td><td class="bad">+8.0</td><td class="bad">69%</td><td class="bad">56%</td><td>42%</td><td>11%</td><td class="bad">61%</td><td>3.2</td><td class="bad">1.0</td><td>2.4</td></tr>
+            <tr class="prop"><td>v5 as written<small>2-turn alliance lockout · ships in .008</small></td><td class="bad">+11.2</td><td class="bad">61%</td><td class="bad">46%</td><td>39%</td><td>13%</td><td class="bad">68%</td><td>3.3</td><td class="bad">1.4</td><td>3.4</td></tr>
+            <tr><td>v5 with deserter bar<small>lockout + no Ultimates for 3 rounds after leaving · not adopted</small></td><td class="good">+3.7</td><td class="good">94%</td><td class="good">87%</td><td>56%</td><td>2%</td><td class="good">33%</td><td>2.4</td><td class="good">0</td><td>1.7</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <caption>Does the target fall behind? · change in the target's Win % two rounds after a cast</caption>
+          <thead><tr><th>House</th><th>v4</th><th>v5 as written</th><th>v5 with deserter bar</th><th>Casts per seat-game</th><th>Average value per cast</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>No cast<small>a leader's normal drift</small></td><td>+2.2</td><td>+2.2</td><td>+2.2</td><td>–</td><td>–</td></tr>
+            <tr><td>Minerva · Blackout</td><td class="good">−3.7</td><td class="good">−3.1</td><td class="good">−5.2</td><td>1.11 · 0.55</td><td>28 · 23</td></tr>
+            <tr><td>Mars · Where's Sevro?</td><td>+3.1</td><td class="good">−4.2</td><td class="good">−2.4</td><td>0.69 · 0.38</td><td>42 · 33</td></tr>
+            <tr><td>Jupiter · Stormfall</td><td class="bad">+7.3</td><td class="good">−1.1</td><td>+0.6</td><td>0.89 · 0.43</td><td>48 · 38</td></tr>
+            <tr><td>Pluto · Rot</td><td class="bad">+6.6</td><td>+0.5</td><td>+0.4</td><td>0.85 · 0.39</td><td>42 · 37</td></tr>
+            <tr><td>Ceres · The Tithe</td><td>+2.1</td><td>+1.1</td><td>+1.6</td><td>1.06 · 0.56</td><td>36 · 30</td></tr>
+            <tr><td>Apollo · Solar Flare</td><td>−7.3 <span class="thin">(32)</span></td><td>−4.2 <span class="thin">(12)</span></td><td>−10.1 <span class="thin">(10)</span></td><td>0.03 · 0.03</td><td>dice</td></tr>
+            <tr><td>Diana · The Wild Hunt</td><td>−17.1 <span class="thin">(19)</span></td><td>−22.5 <span class="thin">(42)</span></td><td>−16.4 <span class="thin">(27)</span></td><td>0.12 · 0.08</td><td>a House</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="foot">The last two columns show v5 as written · with deserter bar. Value is armies destroyed, denied or moved per cast (a Mars seizure counts both the destroyed and the seized half). Grey numbers in brackets are cast counts. A runaway game is one where the leader's income ran 40+ a turn ahead of 2nd place at some point. Same-seed games split apart quickly once anything changes (only 27% end with the same winners even with the deserter bar), so compare rates, not individual games.</p>
+      <ul class="finds">
+        <li><span><b>As written, walk-outs still come back.</b> Bots walk out to cast 1.4 times a game. Games run 11 turns longer (16 at 7 players), and Siege drops to 61%.</span></li>
+        <li><span><b>With the deserter bar, the game keeps its shape.</b> +3.7 turns, and Siege 94%, Olympus 87%, runaway games 33% and Houses taken 2.4 a game all match control.</span></li>
+        <li><span><b>Every common Ultimate now holds a leader back.</b> With the bar, each one leaves its target below a leader's normal +2.2 drift: Minerva −5.2, Mars −2.4, Pluto +0.4, Jupiter +0.6, Ceres +1.6. In v4, three of the five let the leader keep growing.</span></li>
+        <li><span><b>Notes v4 traded Mars power for Jupiter power.</b> The quadrant rule cut Mars's casts by a third and halved its pull (−4.8 → −2.4). The Draft cap turned Jupiter from the weakest (+6.3) into a real brake (+0.6).</span></li>
+        <li><span><b>Leaders stop running away, but still win.</b> The round-4 leader wins alone in only 2% of games (4% with Ultimates off), yet is among the winners in 56% (57%). Ultimates push leaders into sharing the win rather than losing it.</span></li>
+      </ul>
+      <details class="hist">
+        <summary>Earlier results: notes v3 replay, walk-out fixes and the Aftershock</summary>
+        <div class="sim">
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <caption>Notes v3 replay · game level</caption>
+          <thead><tr><th>Version</th><th>Turns vs control</th><th>Siege reached</th><th>Alliance wins Olympus</th><th>Round-4 leader among winners</th><th>Round-4 leader wins alone</th><th>Runaway games</th><th>Houses taken per game</th><th>Walk-outs per game</th><th>Ultimates per game</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>Control<small>Ultimates off</small></td><td>57.8 turns</td><td>94%</td><td>87%</td><td>57%</td><td>4%</td><td>33%</td><td>2.4</td><td>0</td><td>0</td></tr>
+            <tr><td>v4</td><td class="bad">+8.0</td><td class="bad">69%</td><td class="bad">56%</td><td>42%</td><td>11%</td><td class="bad">61%</td><td>3.2</td><td class="bad">1.0</td><td>2.4</td></tr>
+            <tr><td>v5 as written<small>2-turn alliance lockout</small></td><td class="bad">+11.9</td><td class="bad">59%</td><td class="bad">42%</td><td>35%</td><td>11%</td><td class="bad">73%</td><td>3.4</td><td class="bad">1.5</td><td>3.5</td></tr>
+            <tr class="prop"><td>v5 with deserter bar<small>lockout + no Ultimates for 3 rounds after leaving</small></td><td class="good">+3.9</td><td class="good">94%</td><td class="good">86%</td><td>55%</td><td>3%</td><td class="good">35%</td><td>2.4</td><td class="good">0</td><td>1.8</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <caption>Notes v3 replay · target Win % two rounds after a cast</caption>
+          <thead><tr><th>House</th><th>v4</th><th>v5 as written</th><th>v5 with deserter bar</th><th>Casts per seat-game</th><th>Average value per cast</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>No cast<small>a leader's normal drift</small></td><td>+2.2</td><td>+2.2</td><td>+2.2</td><td>–</td><td>–</td></tr>
+            <tr><td>Mars · Where's Sevro?</td><td>+3.1</td><td class="good">−6.9</td><td class="good">−4.8</td><td>1.14 · 0.56</td><td>46 · 36</td></tr>
+            <tr><td>Minerva · Blackout</td><td class="good">−3.7</td><td class="good">−3.8</td><td class="good">−4.5</td><td>1.13 · 0.56</td><td>27 · 23</td></tr>
+            <tr><td>Pluto · Rot</td><td class="bad">+6.6</td><td>+1.5</td><td>+1.2</td><td>0.82 · 0.41</td><td>42 · 39</td></tr>
+            <tr><td>Ceres · The Tithe</td><td>+2.1</td><td>+0.9</td><td>+1.6</td><td>1.13 · 0.60</td><td>36 · 30</td></tr>
+            <tr><td>Jupiter · Stormfall</td><td class="bad">+7.3</td><td class="bad">+4.1</td><td class="bad">+6.3</td><td>0.51 · 0.24</td><td>54 · 37</td></tr>
+            <tr><td>Apollo · Solar Flare</td><td>−7.3 <span class="thin">(32)</span></td><td>−14.9 <span class="thin">(16)</span></td><td>−32.1 <span class="thin">(11)</span></td><td>0.04 · 0.03</td><td>dice</td></tr>
+            <tr><td>Diana · The Wild Hunt</td><td>−17.1 <span class="thin">(19)</span></td><td>−22.8 <span class="thin">(53)</span></td><td>−18.3 <span class="thin">(24)</span></td><td>0.15 · 0.07</td><td>a House</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="foot">The last two columns show v5 as written · with deserter bar. Value is armies destroyed, denied or moved per cast (a Mars seizure counts both the destroyed and the seized half). Grey numbers in brackets are cast counts. A runaway game is one where the leader's income ran 40+ a turn ahead of 2nd place at some point. Same-seed games split apart quickly once anything changes (only 26% end with the same winners even with the deserter bar), so compare rates, not individual games.</p>
+              </div>
+
+    <div class="sim">
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <caption>Game level · 500 games per row</caption>
+          <thead><tr><th>Version</th><th>Turns vs control</th><th>Rounds</th><th>Siege reached</th><th>Alliance wins Olympus</th><th>Round-4 leader among winners</th><th>Ultimates per game</th><th>Walk-outs per game</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>Control<small>Ultimates off</small></td><td>57.8 turns</td><td>14.2</td><td>94%</td><td>87%</td><td>57%</td><td>0</td><td>0</td></tr>
+            <tr><td>v4<small>permanent alliance lock</small></td><td class="bad">+8.0</td><td>17.0</td><td class="bad">69%</td><td class="bad">56%</td><td>42%</td><td>2.39</td><td class="bad">0.99</td></tr>
+            <tr><td>Lock expires after 3 rounds<small>+ must be out since your previous turn</small></td><td class="bad">+7.9</td><td>16.9</td><td class="bad">72%</td><td class="bad">58%</td><td>43%</td><td>1.95</td><td class="bad">1.01</td></tr>
+            <tr><td>Deserter bar only<small>no Ultimates for 3 rounds after leaving · no lock</small></td><td class="good">+3.0</td><td>14.9</td><td class="good">96%</td><td class="good">87%</td><td>55%</td><td>1.21</td><td class="good">0</td></tr>
+            <tr class="prop"><td>v5 proposal<small>deserter bar + 25% Aftershock + Ceres cap + Apollo and Diana changes</small></td><td class="good">+3.5</td><td>15.1</td><td class="good">96%</td><td class="good">87%</td><td>54%</td><td>1.41</td><td class="good">0</td></tr>
+            <tr><td>v5 with 40% Aftershock</td><td class="good">+3.9</td><td>15.1</td><td class="good">96%</td><td class="good">87%</td><td>55%</td><td>1.63</td><td class="good">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <caption>Does the target fall behind? · change in the target's Win % two rounds after a cast</caption>
+          <thead><tr><th>House</th><th>v4</th><th>Deserter bar only</th><th>v5 · 25% Aftershock</th><th>40% Aftershock</th><th>Casts per seat-game, v5</th></tr></thead>
+          <tbody>
+            <tr class="base"><td>No cast<small>a leader's normal drift</small></td><td>+2.2</td><td>+2.2</td><td>+2.2</td><td>+2.2</td><td>–</td></tr>
+            <tr><td>Minerva · Blackout</td><td class="good">−3.7</td><td class="good">−4.7</td><td class="good">−4.6</td><td class="good">−4.7</td><td>0.52</td></tr>
+            <tr><td>Ceres · The Tithe</td><td>+2.1</td><td>+1.9</td><td>+1.5</td><td>+1.3</td><td>0.59</td></tr>
+            <tr><td>Jupiter · Stormfall</td><td class="bad">+7.3</td><td class="bad">+5.3</td><td>+3.4</td><td>+2.4</td><td>0.33</td></tr>
+            <tr><td>Mars · Where's Sevro?</td><td>+3.1</td><td class="bad">+5.5</td><td class="bad">+4.3</td><td>+3.3</td><td>0.30</td></tr>
+            <tr><td>Pluto · Rot</td><td class="bad">+6.6</td><td class="bad">+10.9</td><td class="bad">+8.0</td><td class="bad">+6.3</td><td>0.19</td></tr>
+            <tr><td>Apollo · Solar Flare</td><td>−7.3 <span class="thin">(32)</span></td><td>−10.3 <span class="thin">(18)</span></td><td>−18.0 <span class="thin">(7)</span></td><td>−13.1 <span class="thin">(11)</span></td><td>0.02</td></tr>
+            <tr><td>Diana · The Wild Hunt</td><td>−17.1 <span class="thin">(19)</span></td><td>−3.6 <span class="thin">(6)</span></td><td>−3.9 <span class="thin">(6)</span></td><td>−14.7 <span class="thin">(7)</span></td><td>0.02</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="foot">Grey numbers in brackets are cast counts. Apollo and Diana are too rare in bot games for their rows to mean much, so their v5 changes are judged on dice odds instead (see their cards). The simulated v5 still gave Apollo's caster +1 attack; dropping it comes from the odds alone. Leaders who get targeted are usually the strongest ones, so they drift up a little faster than +2.2 even without a cast.</p>
+      <ul class="finds">
+        <li><span><b>Walk-outs caused the long games, not the lock.</b> Letting the lock expire didn't help, because bots could walk out and cast again a round later. Barring deserters from Ultimates for 3 rounds stopped walk-outs and brought Siege and Olympus back to control levels.</span></li>
+        <li><span><b>Without walk-outs, Ultimates barely change who wins.</b> The round-4 leader is among the winners in 55% of games, against 57% with Ultimates off. Most of v4's drop to 42% came from broken alliances (solo wins rose from 4% to 11%), not from the Ultimates themselves.</span></li>
+        <li><span><b>The Aftershock gives damage Ultimates something that lasts.</b> Jupiter's target goes from +5.3 to +3.4 at 25% and +2.4 at 40%, close to a normal leader's drift. Mars gets close at 40%, and Pluto stays above it either way.</span></li>
+        <li><span><b>The Ceres cap only trims outliers.</b> The caster's biggest gain drops from 64 to 30, and the average barely moves (13.4 to 13.1).</span></li>
+        <li><span><b>The leader-vs-2nd income gap didn't change</b> in any version (about 8.5 at round 8 and 19–21 at round 12).</span></li>
+      </ul>
+    </div>
+      </details>
+    </div>
+  </section>
+
+  <section aria-labelledby="how">
+    <div class="sec-head">
+      <h2 id="how">How Ultimates work</h2>
+      <p>These rules were agreed in v4, except where a card is marked <span class="v5">v5</span>. They control who can cast an Ultimate and when.</p>
+    </div>
+    <div class="rules">
+      <div class="rule"><span class="label">Setting</span><span class="v">House Ultimates on/off</span><span class="n">On by default for 3+ players, off for 2-player games.</span></div>
+      <div class="rule"><span class="label">Unlocks</span><span class="v">Round 4</span><span class="n">After 3 full rounds, counted by a real round counter (not total turns).</span></div>
+      <div class="rule"><span class="label">Who can cast</span><span class="v">Bottom half of parties</span><span class="n">Ranked by Win %. An alliance counts as one party with its members' scores added. Checked at the start of your turn.</span></div>
+      <div class="rule"><span class="label">Win %</span><span class="v">40% territory · 40% armies · 20% PvP wins</span><span class="n">Each factor is your share of all living players' total. A defensive win counts once per territory per enemy turn.</span></div>
+      <div class="rule"><span class="label">Cost</span><span class="v">Any 3 cards, 1+ from your birth House</span><span class="n">Replaces your trade (no +10 armies) and counts as your forced trade at 5 cards.</span></div>
+      <div class="rule"><span class="label">Cooldown</span><span class="v">3 of your own turns</span><span class="n">Per player. Allies don't share a cooldown.</span></div>
+      <div class="rule"><span class="label">Targets</span><span class="v">One player, or a whole alliance</span><span class="n">An alliance target hits every member, with each House's alliance version (about 60% strength each).</span></div>
+      <div class="rule changed"><span class="label">Alliance lockout <span class="v5">v5</span></span><span class="v">Leave an alliance, locked out of all alliances for 2 turns</span><span class="n">Walk out, answer a Rally or attack an ally, and you can't form or join any alliance for 2 of your turns. After that you can ally with anyone again. Replaces v4's permanent lock.</span></div>
+    </div>
+    <ul class="effects">
+      <li><span><b>No direct knockouts.</b> Damage never takes a territory below 1 army, and a House only falls when its Standard is taken.</span></li>
+      <li><span><b>Standards are safe from Ultimates.</b> Where's Sevro?, Stormfall and Rot can't touch the territory holding a Standard, and Where's Sevro? can't seize a Keep. Only Diana goes after the Standard itself.</span></li>
+      <li><span><b>Effects over time tick at the start of the target's turn</b> (Rot also ticks once on cast), and show as a counter on their banner so everyone can plan around them.</span></li>
+      <li><span><b>Casting happens in your Draft,</b> in place of a trade. You still play the rest of your turn.</span></li>
+    </ul>
+  </section>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-ls" viewBox="0 0 24 24"><circle cx="5" cy="18" r="1.6"/><path d="M5 18C7 8 14 5 19 6"/><path d="M15 3.5 19.5 6 17 10"/></symbol>
+    <symbol id="i-radiant" viewBox="0 0 24 24"><circle cx="12" cy="14" r="4"/><path d="M12 4v3M3 14h2M19 14h2M5.6 7.6l1.4 1.4M18.4 7.6 17 9M12 21v-1"/></symbol>
+    <symbol id="i-glared" viewBox="0 0 24 24"><path d="M12 21s-6-2.5-6-8V7l6-2 6 2v6c0 5.5-6 8-6 8z"/><path d="M9 12.5h6"/></symbol>
+    <symbol id="i-rot" viewBox="0 0 24 24"><path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11z"/><path d="M10 12.5l4 4M14 12.5l-4 4"/></symbol>
+    <symbol id="i-blackout" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="i-silenced" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><path d="M7 12h10"/></symbol>
+    <symbol id="i-revealed" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+    <symbol id="i-wheat" viewBox="0 0 24 24"><path d="M11 21V8"/><path d="M11 8c-3 0-4-3-4-5 2 0 4 1 4 5zM11 8c3 0 4-3 4-5-2 0-4 1-4 5zM11 13c-3 0-4-2.5-4-4 2 0 4 1 4 4zM11 13c3 0 4-2.5 4-4-2 0-4 1-4 4z"/></symbol>
+    <symbol id="i-tithed" viewBox="0 0 24 24"><use href="#i-wheat"/><path d="M16 19h6"/></symbol>
+    <symbol id="i-harvest" viewBox="0 0 24 24"><use href="#i-wheat"/><path d="M19 16v6M16 19h6"/></symbol>
+    <symbol id="i-hunted" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></symbol>
+    <symbol id="i-pinned" viewBox="0 0 24 24"><path d="M9 3h6l-1 6 3 3H7l3-3-1-6zM12 15v6"/></symbol>
+    <symbol id="i-locked" viewBox="0 0 24 24"><path d="M9.5 14.5l-2.5 2.5a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0"/><path d="M14.5 9.5 17 7a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0"/><path d="M8 3.5l1 2M3.5 8l2 1M16 20.5l-1-2M20.5 16l-2-1"/></symbol>
+    <symbol id="i-ready" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.5 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></symbol>
+    <symbol id="i-recharge" viewBox="0 0 24 24"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9"/></symbol>
+    <symbol id="i-seized" viewBox="0 0 24 24"><path d="M5 21V4M5 4h12l-2.5 4 2.5 4H5"/></symbol>
+    <symbol id="i-storm" viewBox="0 0 24 24"><path d="M13 2 5 13h6l-1 9 8-12h-6z"/></symbol>
+  </svg>
+
+  <section aria-labelledby="status">
+    <div class="sec-head">
+      <h2 id="status">Status effects <span class="v5">v5</span></h2>
+      <p>Every lasting effect gets an icon on the player's banner, so anyone can see what's stacked on whom. The ring says what kind of effect it is, the dot says which House caused it, and the number is how many of the bearer's turns it has left. An icon with no number ends at the start of the caster's next turn.</p>
+    </div>
+    <div class="st-groups">
+      <div class="banner-demo" aria-label="Example banners with stacked effects">
+        <span class="label">Example · the leader after four Ultimates in one round</span>
+        <div class="banner-row">
+          <span class="who"><span class="s" style="--h: var(--mars)">♂</span>Seat 1 · leader</span>
+          <span class="ico debuff" style="--h: var(--ceres)" title="Tithed"><i class="h"></i><svg><use href="#i-tithed"/></svg><span class="t">1</span></span>
+          <span class="ico debuff" style="--h: var(--pluto)" title="Rot"><i class="h"></i><svg><use href="#i-rot"/></svg><span class="t">2</span></span>
+          <span class="ico debuff" style="--h: var(--jupiter)" title="Storm-bound"><i class="h"></i><svg><use href="#i-storm"/></svg><span class="t">1</span></span>
+          <span class="ico debuff" style="--h: var(--apollo)" title="Glared"><i class="h"></i><svg><use href="#i-glared"/></svg></span>
+          <span class="ico debuff" style="--h: var(--diana)" title="Hunted"><i class="h"></i><svg><use href="#i-hunted"/></svg></span>
+          <span class="ico ctrl" style="--h: var(--diana)" title="Pinned"><i class="h"></i><svg><use href="#i-pinned"/></svg><span class="t">1</span></span>
+        </div>
+        <div class="banner-row">
+          <span class="who"><span class="s" style="--h: var(--diana)">☾</span>Seat 4 · caster</span>
+          <span class="ico buff" style="--h: var(--diana)" title="Long Strike"><i class="h"></i><svg><use href="#i-ls"/></svg></span>
+          <span class="ico buff" style="--h: var(--diana)" title="Recharging"><i class="h"></i><svg><use href="#i-recharge"/></svg><span class="t">3</span></span>
+          <span class="ico ctrl" style="--h: var(--mars)" title="Locked out"><i class="h"></i><svg><use href="#i-locked"/></svg><span class="t">2</span></span>
+        </div>
+        <div class="st-key">
+          <span><i style="--ring: var(--buff)"></i>Buff</span>
+          <span><i style="--ring: var(--debuff)"></i>Debuff</span>
+          <span><i style="--ring: var(--ctrl)"></i>Restriction</span>
+          <span><i class="tile" style="--ring: var(--tile)"></i>Map marker (one round)</span>
+        </div>
+      </div>
+
+      <div class="group-label"><span class="label">Buffs</span></div>
+      <div class="st-grid">
+        <div class="st"><span class="ico buff" style="--h: var(--diana)"><i class="h"></i><svg><use href="#i-ls"/></svg></span><div><b>Long Strike</b><p>Attack territories 2 spaces away.</p><span class="src">Wild Hunt · caster's party · and Long Strike cards</span></div></div>
+        <div class="st"><span class="ico buff" style="--h: var(--apollo)"><i class="h"></i><svg><use href="#i-radiant"/></svg></span><div><b>Radiant</b><p>+1 on your highest attack die against Glared targets.</p><span class="src">Solar Flare · caster · casting turn</span></div></div>
+        <div class="st"><span class="ico buff" style="--h: var(--ceres)"><i class="h"></i><svg><use href="#i-harvest"/></svg><span class="t">2</span></span><div><b>Harvest</b><p>Your next two Drafts gain what the Tithe took, up to 100 in total.</p><span class="src">The Tithe · caster</span></div></div>
+        <div class="st"><span class="ico buff" style="--h: var(--gold)"><i class="h"></i><svg><use href="#i-ready"/></svg></span><div><b>Ultimate ready</b><p>You're eligible and hold the cards. Cast in your Draft.</p><span class="src">Bottom half of parties · round 4+</span></div></div>
+        <div class="st"><span class="ico buff" style="--h: var(--gold)"><i class="h"></i><svg><use href="#i-recharge"/></svg><span class="t">3</span></span><div><b>Recharging</b><p>Your Ultimate is on cooldown for this many of your turns.</p><span class="src">After any cast</span></div></div>
+      </div>
+
+      <div class="group-label"><span class="label">Debuffs</span></div>
+      <div class="st-grid">
+        <div class="st"><span class="ico debuff" style="--h: var(--apollo)"><i class="h"></i><svg><use href="#i-glared"/></svg></span><div><b>Glared</b><p>Your highest defense die is −1 against the caster's party.</p><span class="src">Solar Flare</span></div></div>
+        <div class="st"><span class="ico debuff" style="--h: var(--pluto)"><i class="h"></i><svg><use href="#i-rot"/></svg><span class="t">3</span></span><div><b>Rot</b><p>Stacks of 5+ decay 30%, 20%, 10%, and your next Drafts are cut by the same amounts.</p><span class="src">Rot</span></div></div>
+        <div class="st"><span class="ico debuff" style="--h: var(--jupiter)"><i class="h"></i><svg><use href="#i-storm"/></svg><span class="t">1</span></span><div><b>Storm-bound</b><p>Your next Draft is capped at 5. Trades still add on top.</p><span class="src">Stormfall</span></div></div>
+        <div class="st"><span class="ico debuff" style="--h: var(--ceres)"><i class="h"></i><svg><use href="#i-tithed"/></svg><span class="t">2</span></span><div><b>Tithed</b><p>Your next Draft is cut 50%, the one after 25%.</p><span class="src">The Tithe</span></div></div>
+        <div class="st"><span class="ico debuff" style="--h: var(--diana)"><i class="h"></i><svg><use href="#i-hunted"/></svg></span><div><b>Hunted</b><p>Your Standard has no honor guard and you can't spring reaction cards against the hunters.</p><span class="src">The Wild Hunt</span></div></div>
+        <div class="st"><span class="ico debuff" style="--h: var(--minerva)"><i class="h"></i><svg><use href="#i-revealed"/></svg></span><div><b>Revealed</b><p>The Minerva caster can see your whole hand.</p><span class="src">Blackout · one player</span></div></div>
+      </div>
+
+      <div class="group-label"><span class="label">Restrictions</span></div>
+      <div class="st-grid">
+        <div class="st"><span class="ico ctrl" style="--h: var(--minerva)"><i class="h"></i><svg><use href="#i-blackout"/></svg><span class="t">1</span></span><div><b>Blacked Out</b><p>Your next turn is skipped: no Draft, cards, attacks or Fortify.</p><span class="src">Blackout · one player</span></div></div>
+        <div class="st"><span class="ico ctrl" style="--h: var(--minerva)"><i class="h"></i><svg><use href="#i-silenced"/></svg><span class="t">1</span></span><div><b>Silenced</b><p>Next turn: Draft −60%, and no cards, attacks or Fortify.</p><span class="src">Blackout · alliance</span></div></div>
+        <div class="st"><span class="ico ctrl" style="--h: var(--diana)"><i class="h"></i><svg><use href="#i-pinned"/></svg><span class="t">1</span></span><div><b>Pinned</b><p>Your Standard can't move and you can't Fortify next turn.</p><span class="src">The Wild Hunt</span></div></div>
+        <div class="st"><span class="ico ctrl" style="--h: var(--ink-mute)"><i class="h"></i><svg><use href="#i-locked"/></svg><span class="t">2</span></span><div><b>Locked out</b><p>You can't form or join any alliance for 2 of your turns.</p><span class="src">Walking out, answering a Rally or attacking an ally</span></div></div>
+      </div>
+
+      <div class="group-label"><span class="label">Map markers · instant Ultimates</span></div>
+      <div class="st-grid">
+        <div class="st"><span class="ico tile" style="--h: var(--mars)"><i class="h"></i><svg><use href="#i-seized"/></svg></span><div><b>Seized</b><p>Marks the 3 territories Where's Sevro? took, until Mars's next turn.</p><span class="src">Where's Sevro?</span></div></div>
+        <div class="st"><span class="ico tile" style="--h: var(--jupiter)"><i class="h"></i><svg><use href="#i-storm"/></svg></span><div><b>Storm-struck</b><p>Shades the quadrant Stormfall hit, until Jupiter's next turn.</p><span class="src">Stormfall</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="power">
+    <div class="sec-head">
+      <h2 id="power">Power in play</h2>
+      <p>Armies each Ultimate actually cost its target per cast in the v5 sim with the deserter bar: the average cast, and a big one (the top 10%). A normal trade is worth +10. A Mars seizure counts both the destroyed and the seized half.</p>
+    </div>
+    <div class="chart-card">
+      <div class="legend">
+        <span><i class="sw early"></i>Average cast</span>
+        <span><i class="sw late"></i>Top 10% of casts</span>
+        <span><i class="sw band"></i>Design target (15–25 early, 45–60 late)</span>
+        <span><i class="sw trade"></i>One trade (+10)</span>
+      </div>
+      <div class="chart-scroll">
+        <div class="chart" id="chart" role="img" aria-label="Army value per cast of each House Ultimate in the v5 sim"></div>
+      </div>
+      <div class="bench">
+        <div><span class="label">Most value per cast</span><span class="v">Jupiter 38 · Pluto 37 · Mars 33</span><span class="n">Mars's 33 is half destroyed and half moved onto Mars, so it hurts the target least but swings the board most.</span></div>
+        <div><span class="label">Biggest single casts</span><span class="v">Jupiter 234 · Mars 165 · Pluto 137</span><span class="n">From the deserter-bar run. As written, Jupiter reached 190 and Mars 185.</span></div>
+        <div><span class="label">Baseline</span><span class="v">Trade = +10 armies</span><span class="n">Every Ultimate gives this up. The average cast is worth 2–4 trades.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="seven">
+    <div class="sec-head">
+      <h2 id="seven">The seven Ultimates</h2>
+      <p>Grouped by role. Each one is built from mechanics the engine already has: direct kills, the Olympus-style countdown, reinforcement changes, dice modifiers and Standard guards.</p>
+    </div>
+
+    <div class="group-label"><span class="label">Strikes</span></div>
+    <div class="houses">
+
+      <article class="house" id="mars" style="--h: var(--mars)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">♂</div>
+          <div class="titles"><span class="hname">House Mars · the Wolves</span><h3>Where's Sevro?</h3></div>
+          <span class="chip">Seize territory</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">Cast <span class="v5">v5</span></span><p>Choose 3 territories held by a rival or by no one, <b>in any quadrant where Mars holds at least one territory</b>. You don't need to border them. On each, <b>half the armies are destroyed</b> (rounded down) and <b>the rest join Mars</b>: the territory becomes yours with those armies.</p></div>
+                <div><span class="k">Limits</span><p>Never a Keep, never the territory holding a Standard, and never in a quadrant where Mars has no land. Against an alliance, the 3 picks can come from any of its members.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Power vs one player (swing)</span>
+              <div class="power"><div><span class="v">≈37</span><span class="n">Round 4 · stacks of ~15, 12, 10: 18 destroyed, 19 join Mars, 3 territories</span></div><div><span class="v">≈132</span><span class="n">Round 11 · stacks of 62, 40, 30: 66 destroyed, 66 join Mars, 3 territories</span></div></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>Rip the leader's best stacks out from under them and turn them into a Mars army deep in enemy land. It's the only Ultimate that takes territory, so it lowers the leader's territory share and income, not just their army count.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>No snipes across the map: Mars strikes where it already fights. To reach a new quadrant, blitz in first, or ride an ally's Wild Hunt (Long Strike lets the party jump a territory). Inside Mars's quadrants, only Keeps and Standard tiles are safe, so leaders pull their big stacks onto them. Seized armies land behind enemy lines and open a second front.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>Mars is the war House, and its Howlers never come through the front door. Sevro's Wolfcloaks hide where no one would look and come out swinging inside the enemy's best ground.</p>
+              <p class="quote">“They were in the dead horses…”<cite>Cast prompt</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>Allow 4 territories instead of 3.</li><li>Seized territories keep all their armies (none destroyed).</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>A quarter joins Mars instead of half.</li><li>Seize only 2 territories.</li><li>Cap what joins Mars at 20 per territory.</li></ul></div>
+        </div>
+        <div class="flag"><span><b>The biggest swing on the sheet.</b> Every army on a seized stack counts twice: once off the target, once onto Mars. Seat 2's 122-army Olympus stack in 5METH would have become a 61-army Mars stack in one pick.</span></div>
+        <p class="simline"><span class="k">Sim</span>The quadrant rule cut casts by about a third (0.69 per seat-game as written, 0.38 with the deserter bar) and roughly halved the pull on the leader: the target is <b>−4.2</b> Win % two rounds later as written and <b>−2.4</b> with the bar (−6.9 and −4.8 before the rule). It still holds leaders back better than every other House except Minerva. A cast swings 33–42 armies on average, up to 185.</p>
+      </article>
+
+      <article class="house" id="jupiter" style="--h: var(--jupiter)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">♃</div>
+          <div class="titles"><span class="hname">House Jupiter · the Storm-Born</span><h3>Stormfall</h3></div>
+          <span class="chip">Quadrant strike</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">Cast <span class="v5">v5</span></span><p>Choose one of the 4 quadrants. Every territory the target holds there with more than 5 armies is <b>cut to 5</b>. The Standard's territory is immune.</p></div>
+                <div><span class="k">vs an alliance</span><p>If the target is in an alliance, every member's territories in that quadrant are cut to 5 as well.</p></div>
+                <div class="add"><span class="k">Storm-bound <span class="v5">v5</span></span><p>The targeted player's <b>next Draft is capped at 5</b> reinforcements. Trades they make that turn still add on top. Other alliance members keep their Draft.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Power vs one target (sim)</span>
+              <div class="power"><div><span class="v">38–48</span><span class="n">Average value per cast: about half off stacks, half off the Draft (with deserter bar · as written)</span></div><div><span class="v">234</span><span class="n">Biggest single cast</span></div></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>Flatten a whole front at once. Every stack in the quadrant drops to a garrison, so anyone nearby can break through, and a doom-stack staged for an invasion is gone.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>Leaders can't mass armies in one region, which is where they usually mass them: their home quadrant or the Foot of Olympus. Spreading armies across quadrants, or keeping the big stack under the Standard, becomes the counterplay.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>The Storm-Born strike everywhere at once. Thunderjaw's Thunderclap breaks one defensive line; Stormfall breaks all of them.</p>
+              <p class="quote">“I am the storm, you damp little shit.”<cite>Thunderjaw, Primus of Jupiter</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>Cap every alliance member's Draft at 5, not just the target's.</li><li>The target can't Fortify into the quadrant next turn ("grounded by the storm").</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>Cut to 10 instead of 5.</li><li>Cap the Draft at 10 instead of 5.</li></ul></div>
+        </div>
+        <p class="simline"><span class="k">Sim</span>The Draft cap fixed it. Bots now cast Stormfall about twice as often (0.89 per seat-game as written, 0.43 with the deserter bar), and the target no longer outgrows it: <b>−1.1</b> Win % two rounds later as written and <b>+0.6</b> with the bar, against +4.1 and +6.3 without the cap. About 19–23 armies a cast now come off the Draft, and 19–25 off stacks.</p>
+      </article>
+    </div>
+
+    <div class="group-label"><span class="label">Damage over time</span></div>
+    <div class="houses">
+      <article class="house" id="pluto" style="--h: var(--pluto)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">♇</div>
+          <div class="titles"><span class="hname">House Pluto · the Jackals</span><h3>Rot</h3></div>
+          <span class="chip">Over 3 turns</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">vs one player <span class="v5">v5</span></span><p>Three ticks on every territory with <b>5+ armies</b> (rounded down): <b>30%</b> the moment it's cast, <b>20%</b> at the start of the target's next turn, <b>10%</b> at the start of the turn after. A stack that drops under 5 stops rotting.</p></div>
+                <div><span class="k">Draft rot <span class="v5">v5</span></span><p>The target's next three Drafts are cut by the same amounts: <b>30%</b>, then <b>20%</b>, then <b>10%</b>.</p></div>
+                <div><span class="k">vs an alliance</span><p>Each member takes the first two ticks only: stacks and Drafts −30%, then −20%.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Power vs one player</span>
+              <div class="power"><div><span class="v">≈24</span><span class="n">Round 4 · ~15 off stacks, plus 9 off Drafts (5 + 3 + 1)</span></div><div><span class="v">≈115</span><span class="n">Round 11 · ~84 off stacks, plus 31 off Drafts (16 + 10 + 5)</span></div></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>Make hoarding expensive. Every turn the target waits, their big stacks shrink, so they're forced to spend armies now.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>The counter to turtling and to staging for a Siege. Cast it on an alliance that's massing at the Foot of Olympus. The target's best answer is to attack straight away, which pulls them out of position.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>The Jackals win slowly, through poison, patience and betrayal. Rot is the House's whole personality as a status effect.</p>
+              <p class="quote">“The dead keep excellent secrets.”<cite>Proctor Pluto</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>Lower the threshold to 3+.</li><li>Each tick, the rot spreads to one neighbouring territory of the target.</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>Against an alliance, take only the first tick (30%).</li><li>Draft rot only on the first two Drafts.</li><li>Ends early if the target dominates a House ("fed the Jackal").</li></ul></div>
+        </div>
+        <div class="concern">
+          <div class="mini-grid">
+            <div class="mini">
+              <span class="label">What one stack loses over the 3 ticks (5+ threshold)</span>
+              <table>
+                <thead><tr><th>Stack</th><th>Ticks</th><th>Lost</th></tr></thead>
+                <tbody>
+                  <tr><td>4</td><td>immune (under 5)</td><td>0 · <b>0%</b></td></tr>
+                  <tr><td>6</td><td>6 → 5 → 4 (stops under 5)</td><td>2 · <b>33%</b></td></tr>
+                  <tr><td>10</td><td>10 → 7 → 6 → 6</td><td>4 · <b>40%</b></td></tr>
+                  <tr><td>20</td><td>20 → 14 → 12 → 11</td><td>9 · <b>45%</b></td></tr>
+                  <tr><td>40</td><td>40 → 28 → 23 → 21</td><td>19 · <b>48%</b></td></tr>
+                  <tr><td>62</td><td>62 → 44 → 36 → 33</td><td>29 · <b>47%</b></td></tr>
+                </tbody>
+              </table>
+              <p>Garrisons of 1 to 4 are untouched, mid-size stacks lose a third, and big stacks lose almost half. Rounding down keeps the late ticks small on small stacks.</p>
+            </div>
+            <div class="mini">
+              <span class="label">Where it lands</span>
+              <table>
+                <thead><tr><th>Case</th><th>Value</th></tr></thead>
+                <tbody>
+                  <tr><td>Round 4, one player</td><td>≈24</td></tr>
+                  <tr><td>Round 11, one player</td><td>≈115</td></tr>
+                  <tr><td>Round 11, each alliance member</td><td>≈99</td></tr>
+                </tbody>
+              </table>
+              <p>In range early. Late it's about twice the late range, because the Draft rot scales with the leader's income as well as their stacks.</p>
+            </div>
+          </div>
+          <div class="flag"><span><b>The alliance version is nearly full strength.</b> The first two ticks carry about 90% of the damage, so each alliance member takes ≈99 of the ≈115 a single target would. Every other House's alliance version is closer to 60%. If that's too much, take only the first tick against alliances.</span></div>
+          <p class="foot">Modeled on assumed stack spreads: ~24 territories and ~90 armies in round 4; 70 territories and ~330 armies, including one 62-army stack, in round 11.</p>
+        </div>
+        <p class="simline"><span class="k">Sim</span>Cast twice as often as in v4 (0.85 per seat-game as written, 0.39 with the deserter bar), at 37–42 armies a cast. The target is now <b>+0.4 to +0.5</b> Win % two rounds later, down from +6.6 in v4 and well under a leader's normal +2.2.</p>
+      </article>
+    </div>
+
+    <div class="group-label"><span class="label">Economy and tempo</span></div>
+    <div class="houses">
+      <article class="house" id="minerva" style="--h: var(--minerva)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">⌘</div>
+          <div class="titles"><span class="hname">House Minerva · the Owls</span><h3>Blackout</h3></div>
+          <span class="chip">Stun</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">vs one player</span><p>The target is completely stunned on their next turn: no Draft (no reinforcements, trades or card plays), no attacks and no Fortify. The caster sees the target's entire hand.</p></div>
+                <div><span class="k">vs an alliance</span><p>On their next turn, each member's Draft is cut by 60%, and they can't use cards, attack or Fortify. No hand reveal against an alliance.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Power vs one player</span>
+              <div class="power"><div><span class="v">≈17</span><span class="n">Round 4 · a whole turn: Draft, attacks and Fortify</span></div><div><span class="v">≈54</span><span class="n">Round 11 · The Quiet One's full turn-61 Draft, plus its whole turn</span></div></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>Take away one entire turn from the leader, and give the caster a full read of their cards.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>A timing weapon. Cast it the turn before the leader's big Draft: when they'll be forced to trade at 5 cards, or just before they can call a Siege. On turn 61 of 5METH it would have cost The Quiet One 54 armies and pushed the Siege back a round.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>The Owls are spies and strategists. Quill runs the spy network and Mustang out-thinks whole armies. Blackout cuts the enemy's supply lines and leaves them blind.</p>
+              <p class="quote">“Wisdom is just cruelty with patience.”<cite>Proctor Minerva</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>The caster sees the target's hand for the rest of the game.</li><li>The stun lasts 2 turns against a single player.</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>Allow attacks, keep the rest of the stun.</li><li>Allow trades during the skipped Draft.</li><li>Against an alliance, members keep their full Draft.</li></ul></div>
+        </div>
+        <div class="flag"><span><b>Now a full skipped turn.</b> Against a whole alliance it freezes every member for a round, which is the strongest alliance version on the sheet. Armies are never removed, though, so it still can't knock anyone out on its own.</span></div>
+        <p class="simline"><span class="k">Sim</span>Unchanged in v5. The target is <b>−3.1</b> Win % two rounds later as written and <b>−5.2</b> with the deserter bar. It's still the strongest at pulling a leader down.</p>
+      </article>
+
+      <article class="house" id="ceres" style="--h: var(--ceres)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">⚳</div>
+          <div class="titles"><span class="hname">House Ceres · the Bread-Bakers</span><h3>The Tithe</h3></div>
+          <span class="chip">Steal income · 2 turns</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">vs one player</span><p>The target's next Draft is cut by <b>50%</b>, and the one after by <b>25%</b>. The caster gains the same amounts on their own next two Drafts.</p></div>
+                <div><span class="k">vs an alliance</span><p>Each member's next Draft is cut by 30%, then 15%. The caster collects the totals.</p></div>
+                <div class="add"><span class="k">Gain cap <span class="v5">v5</span></span><p>The caster gains at most <b>100 in total</b> across the two Drafts. The target's cut has no cap.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Power vs one player (swing)</span>
+              <div class="power"><div><span class="v">≈24</span><span class="n">Round 4 · 12 lost, 12 gained</span></div><div><span class="v">≈80</span><span class="n">Round 11 · 40 lost (27 + 13), 40 gained (under the cap)</span></div></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>The only Ultimate that makes the caster stronger. It narrows the reinforcement gap from both sides at once, over two turns.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>Reverses the snowball: the bigger the leader's income, the bigger the theft. In 5METH, seat 3 earned 6 a turn. A Tithe on the 54-a-turn leader would have given it turns of 33 and 19.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>Ceres feeds the valley, and the Tithe decides who eats. It's the harvest taken back from whoever grew fat on it.</p>
+              <p class="quote">“Bread first. Then we talk. Then I stab you.”<cite>Barley, Ceres Envoy</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>Keep the second turn at 50%.</li><li>Add a third turn at 15%.</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>The caster gains only half of what's taken.</li><li>Cap the gain at 15 per Draft.</li></ul></div>
+        </div>
+        <div class="flag"><span><b>The cap is a safety net.</b> No cast in 4,500 earlier sim games gained more than 64, so a 100 cap rarely if ever triggers. It only stops a freak late swing against a 150-a-turn leader.</span></div>
+        <p class="simline"><span class="k">Sim</span>The cap never triggered: the biggest swing was 136 (both halves together), and the caster gained 13–17 on average. The target is <b>+1.1 to +1.6</b> Win % two rounds later, just under a leader's normal drift.</p>
+      </article>
+    </div>
+
+    <div class="group-label"><span class="label">Setup for an attack</span></div>
+    <div class="houses">
+      <article class="house" id="apollo" style="--h: var(--apollo)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">☉</div>
+          <div class="titles"><span class="hname">House Apollo · the Sun</span><h3>Solar Flare</h3></div>
+          <span class="chip">Defense debuff</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">vs one player <span class="v5">v5</span></span><p>Until the start of the caster's next turn, the target is Glared: their <b>highest</b> defense die is −1 (<s>both dice</s> in v4), but only against attacks by the caster and the caster's allies. The caster is Radiant on the casting turn: +1 on their highest attack die.</p></div>
+                <div><span class="k">vs an alliance <span class="v5">v5</span></span><p>The same, applied to every member: highest defense die −1 against the caster's party, and +1 attack for the caster that turn.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Blitz win odds for the caster</span>
+              <div class="mini">
+                <table>
+                  <thead><tr><th>Attack</th><th>No Flare</th><th>v4</th><th>v5 caster</th><th>v5 ally</th></tr></thead>
+                  <tbody>
+                    <tr><td>6 vs 6</td><td>38%</td><td>94%</td><td><b>83%</b></td><td>68%</td></tr>
+                    <tr><td>10 vs 10</td><td>53%</td><td>99%</td><td><b>93%</b></td><td>80%</td></tr>
+                    <tr><td>20 vs 15</td><td>79%</td><td>100%</td><td><b>100%</b></td><td>99%</td></tr>
+                  </tbody>
+                </table>
+                <p>Armies lost taking 10 vs 10: 6.8 with no Flare, 2.0 in v4, 3.4 for a v5 caster, 4.8 for an ally.</p>
+              </div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>Open a window, lasting until the caster's next turn, where the leader is cheaper to attack for the caster's party only, with the caster striking first and hardest.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>A coordinated strike. Outsiders get nothing from it, so it rewards the alliance that casts it and gives a reason to ally with an Apollo player. It's worth about 20 armies early and 45 late, counted as armies saved if the party takes 40 or 80 off the target. A solo caster gets the whole benefit alone.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>The Sun rigs the game and calls it glory. The sun is in the defender's eyes, and every die comes up a little short.</p>
+              <p class="quote">“Fair? Oh, sweet child.”<cite>Proctor Apollo</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>Both defense dice −1 again (v4).</li><li>Any attacker gets the bonus, not just the caster's party.</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>Drop the caster's +1 attack: 80% instead of 93% for an even 10 vs 10.</li><li>Keeps are immune.</li></ul></div>
+        </div>
+        <p class="simline"><span class="k">Sim</span>Still rare in bot games (10–12 casts per 500 games), because bots only cast it with a strong attack lined up. Those casts led to 6–7 Houses being taken. Too few casts to judge, so the dice odds above are the guide.</p>
+      </article>
+
+      <article class="house" id="diana" style="--h: var(--diana)">
+        <div class="house-head">
+          <div class="medal" aria-hidden="true">☾</div>
+          <div class="titles"><span class="hname">House Diana · the Huntresses</span><h3>The Wild Hunt</h3></div>
+          <span class="chip">Go for the Standard</span>
+        </div>
+        <div class="house-body">
+          <div class="col">
+            <div class="blk"><span class="label">Rules</span>
+              <div class="mode">
+                <div><span class="k">vs one player</span><p>Until the start of the caster's next turn, against attacks by the caster and the caster's allies only: the target's Standard loses its honor guard (5 phantoms → 0) and the target can't spring reaction cards. The Standard can't move, and the target can't Fortify on their next turn.</p></div>
+                <div><span class="k">vs an alliance</span><p>The same for every member: Standard guards drop to 0 and reaction cards don't work against the caster's party, and no member can move their Standard or Fortify on their next turn.</p></div>
+                <div class="add"><span class="k">Long Strike <span class="v5">v5</span></span><p>Until the start of the caster's next turn, the caster <b>and every ally</b> can attack territories 2 spaces away, as many times as they like. It isn't limited to the hunted target.</p></div>
+              </div>
+            </div>
+            <div class="blk"><span class="label">Standard attack odds (12 committed vs 10 defenders)</span>
+              <div class="power"><div><span class="v">61→88%</span><span class="n">Honor guard removed</span></div><div><span class="v">42 of 42</span><span class="n">v5 sim casts that took a whole House</span></div></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="blk"><span class="label">Desired outcome</span><p>Give the caster a real shot at the leader's Standard. Winning hands over the leader's entire House: all of its territories and cards.</p></div>
+            <div class="blk"><span class="label">Intended meta</span><p>The assassination threat. Leaders have to keep a real army on their Standard instead of the 2 defenders Sloppy found on territory 38. With no Fortify, the target can't rush armies back to cover it. It's the riskiest Ultimate: a failed Standard attack still costs the caster their own House.</p></div>
+            <div class="blk"><span class="label">House theme</span><p>The Huntresses run their quarry down, and the hunt always ends at the heart. Here Diana doesn't ambush. It goes after the one piece that matters.</p>
+              <p class="quote">“Run, little deer.”<cite>Proctor Diana</cite></p></div>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="blk up"><span class="label">Make it stronger</span><ul><li>Also kill 3 real armies on the Standard's territory.</li><li>Any attacker can join the hunt, not just the caster's party.</li></ul></div>
+          <div class="blk down"><span class="label">Make it weaker</span><ul><li>Reaction cards still work against the hunters. Now that reactions fire on any rival attack, this is the first thing to give back.</li><li>Long Strike for the caster only, not their allies.</li></ul></div>
+        </div>
+        <div class="flag"><span><b>Reach was Diana's bottleneck.</b> In v4, bots had no stack next to the leader's Standard on at least 3 of every 4 turns they could have cast. Long Strike fixes that, and matches Diana's cards, which already carry Long Strike. A win still takes a whole House, so more casts means more eliminations.</span></div>
+        <p class="simline"><span class="k">Sim</span>Long Strike made the Hunt castable: <b>42 casts</b> per 500 games as written and 27 with the deserter bar, up from 19 in v4. All 42 as-written casts took a House, and 26 of the 27 with the bar did. Houses falling before round 8 didn't rise overall: 43% of games, against 48% with Ultimates off. A later replay of the reaction-card rule (1,500 games each: blocked, allowed, and blocked only against the caster) found no measurable difference: about <b>97% of Hunts took a House</b> in all three.</p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="open">
+    <div class="sec-head">
+      <h2 id="open">Decisions for .008</h2>
+      <p>Settled on 2 October 2026. The rules on this sheet, as written, go into the engine in version .008. The build spec is <code>docs/patch-008.md</code> in the game folder.</p>
+    </div>
+    <div class="qs">
+      <div class="q decide"><h4>1 · No deserter bar</h4><p>The 2-turn alliance lockout ships alone. The sim's longer games (+11.2 turns, Siege at 61%) came from bots walking out of alliances to cast.</p><p class="rec">The shipped AI never leaves an alliance to become eligible. Whether human players do is the thing to watch in playtests.</p></div>
+      <div class="q decide"><h4>2 · Jupiter's Draft cap</h4><p>Only the targeted player's next Draft drops to 5. Other alliance members lose their stacks in the quadrant and keep their Draft.</p></div>
+      <div class="q decide"><h4>3 · Diana's reaction cards</h4><p>They stay blocked against the hunters. In a 1,500-game replay per variant, the hunted House held a reaction card in 18% of Hunts. Where it played one (11 Hunts), the hunters still took the House in 10, and the eleventh Hunt also failed with reactions blocked.</p><p class="rec">What decides a Hunt is Long Strike and the missing honor guard, not the reaction card.</p></div>
+      <div class="q decide"><h4>4 · Cost and cooldown</h4><p>3 cards (1+ from your birth House) and 3 of your own turns, unchanged.</p></div>
+      <div class="q"><h4>Also in .008</h4><p>House Ultimates are a War Settings switch, on by default and off for 2 Houses. Keeps get Walls (+1 on the highest defense die), and a neutral Keep no longer hands over its House's land. Players pick their House and choose their Primus from it, which replaces the Passage.</p></div>
+      <div class="q"><h4>Still open after .008</h4><p>Ultimates rein leaders in but don't change who is among the winners (56% vs 57% for the round-4 leader). If you want real upsets, the next lever is cast frequency: a cheaper cost or a shorter cooldown.</p></div>
+    </div>
+  </section>
+
+  <footer>Benchmarks from match 5METH (7 players, 66 turns, 13 rounds). Standard odds come from the game's own odds calculator (<code>src/ui/odds.ts</code>); Solar Flare odds come from 200,000 simulated blitzes per cell with the engine's dice rules. Sim results come from bot-vs-bot games on a copy of the engine with the Ultimates added: 500 games per version, 3 to 7 players, on the same seeds as the control set and the original v4 run. Quotes are from the game's card text.</footer>
+</div>
+
+<script>
+  (function () {
+    var MAX = 80;
+    var rows = [
+      { h: 'Mars', s: '♂', c: 'var(--mars)', e: 33, l: 47, note: 'half seized' },
+      { h: 'Jupiter', s: '♃', c: 'var(--jupiter)', e: 38, l: 71, note: 'stacks + Draft' },
+      { h: 'Pluto', s: '♇', c: 'var(--pluto)', e: 37, l: 62, note: 'stacks + Drafts' },
+      { h: 'Minerva', s: '⌘', c: 'var(--minerva)', e: 23, l: 40, note: '+ a lost turn' },
+      { h: 'Ceres', s: '⚳', c: 'var(--ceres)', e: 30, l: 52, note: 'swing' },
+      { h: 'Apollo', s: '☉', c: 'var(--apollo)', special: 'Even 10 vs 10 fight: 53% → 93% for the caster' },
+      { h: 'Diana', s: '☾', c: 'var(--diana)', special: 'Every sim cast took a whole House' }
+    ];
+    var pct = function (v) { return (v / MAX * 100) + '%'; };
+    var bands = '<div class="bands"><div class="b" style="left:' + pct(15) + ';width:' + pct(10) + '"></div><div class="b" style="left:' + pct(45) + ';width:' + pct(15) + '"></div></div>' +
+      '<div class="tradeline" style="left:' + pct(10) + '"></div>';
+    var html = '';
+    rows.forEach(function (r) {
+      html += '<div class="who" style="--h:' + r.c + '"><span class="s">' + r.s + '</span>' + r.h + '</div>';
+      if (r.special) {
+        html += '<div class="track"><div class="bar special" style="--h:' + r.c + '"><span>' + r.special + '</span></div></div><div class="nums">special</div>';
+      } else {
+        html += '<div class="track">' + bands +
+          '<div class="bar early" style="width:' + pct(r.e) + '"></div>' +
+          '<div class="bar late" style="width:' + pct(r.l) + '"></div></div>' +
+          '<div class="nums">' + r.e + ' · <b>' + r.l + '</b>' + (r.note ? '<br><span style="font-size:12.5px;color:var(--ink-mute)">' + r.note + '</span>' : '') + '</div>';
+      }
+    });
+    html += '<div></div><div class="axis">' + [0, 10, 20, 30, 40, 50, 60, 70, 80].map(function (t) {
+      return '<span style="left:' + pct(t) + '">' + t + '</span>';
+    }).join('') + '</div><div></div>';
+    document.getElementById('chart').innerHTML = html;
+  })();
+</script>

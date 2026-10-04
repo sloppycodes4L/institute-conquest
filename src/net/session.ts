@@ -3,14 +3,15 @@
 
 import { RealtimeClient } from '@supabase/realtime-js';
 import { DEFAULT_SETTINGS, act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from '../engine/engine.ts';
-import { botAction } from '../engine/bot.ts';
+import { botAction, botFallback } from '../engine/bot.ts';
 
 export const SUPABASE_URL = 'https://hflggavblnedfgyjqbsr.supabase.co';
 // Publishable anon key: safe to ship in the client. The game tables are not readable with it.
 export const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmbGdnYXZibG5lZGZneWpxYnNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDQ1OTcsImV4cCI6MjEwNDMyMDU5N30.MWm1amKwcsMJc9VdpiNc_OajeXaYRdzJQZGBN2rB44Y';
 const FN = `${SUPABASE_URL}/functions/v1/institute`;
 
-export interface LobbySeat { seat: number; name: string; ai?: boolean }
+/** A seat before the war. `house`: the House it picked (missing or null: Random). `houseBy: 'host'`: the host set it, so it is locked for that player. */
+export interface LobbySeat { seat: number; name: string; ai?: boolean; house?: number | null; houseBy?: 'host' }
 export interface Session {
   mode: 'local' | 'online';
   /** The view for whoever is at this screen right now. */
@@ -65,7 +66,7 @@ export class LocalSession implements Session {
     this.lobby = seats;
     this.settings = settings;
     this.humans = seats.filter((x) => !x.ai).length;
-    this.s = createGame(seats.map((x) => x.name), secureRng, { ai: seats.map((x) => !!x.ai), settings });
+    this.s = createGame(seats.map((x) => x.name), secureRng, { ai: seats.map((x) => !!x.ai), settings, houses: seats.map((x) => x.house ?? null) });
     this.refresh();
     if (this.s.opts.timer) this.clock = window.setInterval(() => this.tickClock(), 500);
   }
@@ -136,10 +137,7 @@ export class LocalSession implements Session {
         const inv = s.invites.find((x) => x.to === acting);
         if (inv) act(s, acting, { type: 'answer', invite: inv.id, accept: false }, { rng: secureRng, now: Date.now() });
       }
-      if (!r.ok && duty < 0) {
-        const fb: Action = s.reaction ? { type: 'react', card: null } : s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' };
-        r = act(s, acting, fb, { rng: secureRng, now: Date.now() });
-      }
+      if (!r.ok && duty < 0) r = act(s, acting, botFallback(s, acting), { rng: secureRng, now: Date.now() });
       this.refresh();
     }, delay);
   }
@@ -329,6 +327,12 @@ export class OnlineSession implements Session {
 
   async hostOp(op: 'start' | 'addBot' | 'removeBot' | 'setOpts' | 'kick', settings?: WarSettings, seat?: number): Promise<string | null> {
     try { this.apply(await call({ op, game: this.creds.game, token: this.creds.token, settings, seat })); return null; }
+    catch (e) { this.checkGone(e); return (e as Error).message; }
+  }
+
+  /** Pick a House in the lobby (null: back to Random). A player sets their own seat; the host may set any seat. */
+  async setHouse(seat: number, house: number | null): Promise<string | null> {
+    try { this.apply(await call({ op: 'setHouse', game: this.creds.game, token: this.creds.token, seat, house })); return null; }
     catch (e) { this.checkGone(e); return (e as Error).message; }
   }
 

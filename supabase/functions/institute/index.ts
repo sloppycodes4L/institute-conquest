@@ -3,8 +3,8 @@
 // then the new version is broadcast on Realtime so clients refetch their private view.
 // The engine lives in ./engine, copied verbatim from src/engine by scripts/sync-fn.mjs.
 
-import { act, actingSeat, aiDuty, cleanSettings, createGame, drainLog, kickToAI, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from './engine/engine.ts';
-import { botAction } from './engine/bot.ts';
+import { act, actingSeat, aiDuty, cleanSettings, createGame, drainLog, kickToAI, pickHouse, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from './engine/engine.ts';
+import { botAction, botFallback } from './engine/bot.ts';
 import { MAX_PLAYERS } from './engine/data.ts';
 
 const URL_ = Deno.env.get('SUPABASE_URL')!;
@@ -16,7 +16,8 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-interface LobbySeat { seat: number; name: string; ai?: boolean }
+/** `house`: the House this seat picked (missing: Random). `houseBy: 'host'`: the host set it, and it is locked for that player. */
+interface LobbySeat { seat: number; name: string; ai?: boolean; house?: number | null; houseBy?: 'host' }
 interface GameRow { id: string; code: string; status: 'lobby' | 'playing' | 'over'; host_seat: number; lobby: LobbySeat[]; opts: Partial<WarSettings> | null; state: GameState | null; version: number }
 
 class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
@@ -108,8 +109,7 @@ function runBots(s: GameState) {
         if (!inv || !act(s, seat, { type: 'answer', invite: inv.id, accept: false }, { rng, now: Date.now() }).ok) return;
         continue;
       }
-      const fb: Action = s.reaction ? { type: 'react', card: null } : s.ts.mustMove ? { type: 'move', n: s.ts.mustMove.min } : s.phase === 'draft' ? { type: 'endDraft' } : { type: 'endTurn' };
-      if (!act(s, seat, fb, { rng, now: Date.now() }).ok) return;
+      if (!act(s, seat, botFallback(s, seat), { rng, now: Date.now() }).ok) return;
     }
   }
 }
@@ -210,6 +210,22 @@ async function handle(body: any) {
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
+    case 'setHouse': {
+      // A player picks their own House; the host may set any seat's (which locks it until the host sets it back to Random).
+      const g = await getGame(`id=eq.${gameId(body.game)}`);
+      const seat = await seatFor(g, body.token);
+      if (g.status !== 'lobby') bad('Too late, the war has started.');
+      const target = body.seat == null ? seat : Number(body.seat);
+      if (target !== seat && seat !== g.host_seat) bad('Only the host can set another seat\'s House.', 403);
+      const house = body.house == null ? null : Number(body.house);
+      const r = pickHouse(g.lobby, target, house, target !== seat);
+      if (!r.ok) bad(r.err);
+      else {
+        if (!(await saveGame(g, g.version, { lobby: r.lobby, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+        await broadcast(g.code, g.version + 1);
+      }
+      return payload(await getGame(`id=eq.${g.id}`), seat);
+    }
     case 'setOpts': {
       const g = await getGame(`id=eq.${gameId(body.game)}`);
       const seat = await seatFor(g, body.token);
@@ -226,7 +242,7 @@ async function handle(body: any) {
       if (g.status !== 'lobby') bad('Already started.');
       if (g.lobby.length < 2) bad('You need at least one rival. Add a human or an AI.');
       drainLog();
-      const s = createGame(g.lobby.map((l) => l.name), rng, { ai: g.lobby.map((l) => !!l.ai), settings: cleanSettings(g.opts ?? {}) });
+      const s = createGame(g.lobby.map((l) => l.name), rng, { ai: g.lobby.map((l) => !!l.ai), settings: cleanSettings(g.opts ?? {}), houses: g.lobby.map((l) => l.house ?? null) });
       runBots(s);
       const events = drainLog();
       if (!(await saveGame(g, g.version, { status: 'playing', state: s, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);

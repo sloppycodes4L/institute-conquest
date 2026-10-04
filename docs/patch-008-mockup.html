@@ -1,0 +1,808 @@
+<title>Patch .008 Screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Cinzel:wght@500;700;900&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+/* Layout: a rail of screens on the left, the game HUD at 1000x620 on a scaled stage, two notes under it.
+   Single dark look on purpose: these are the game's own tokens (src/style.css), as in the .007 mockup. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0707;
+  --panel: rgba(18, 11, 10, 0.86);
+  --panel-solid: #140c0b;
+  --line: #4d2518;
+  --line-hi: #8a3a1e;
+  --gold: #e6bb5c;
+  --gold-dim: #9c7a36;
+  --blood: #b3161b;
+  --blood-hi: #e0262c;
+  --ink: #f1e6d6;
+  --ink-dim: #b8a48c;
+  --ink-mute: #7d6b5a;
+  --ok: #4fc37a;
+  --read: #e6bb5c;
+  --buff: #e6bb5c; --debuff: #e0262c; --ctrl: #3f86e0;
+  --display: 'Cinzel', 'Trajan Pro', Georgia, serif;
+  --ui: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --prose: 'Crimson Pro', Georgia, serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--ui); font-size: 16px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: .86em; color: var(--gold); background: rgba(230,187,92,.08); padding: 0 4px; border-radius: 4px; }
+
+.page { max-width: 1260px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 72px; display: flex; flex-direction: column; gap: 48px; }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 40px; align-items: end; border-bottom: 1px solid var(--line); padding-bottom: 28px; }
+.eyebrow { font-weight: 700; letter-spacing: .28em; font-size: 13px; color: var(--blood-hi); text-transform: uppercase; }
+.hero h1 { font-family: var(--display); font-weight: 900; font-size: clamp(34px, 6vw, 60px); line-height: .95; margin: 8px 0 14px; letter-spacing: .02em; text-wrap: balance;
+  background: linear-gradient(#ffe7a8, #d49a32 60%, #8a5a1a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { font-family: var(--prose); font-size: 20px; line-height: 1.45; color: var(--ink-dim); max-width: 62ch; margin: 0; }
+.hero-meta { font-size: 14px; color: var(--ink-mute); letter-spacing: .06em; display: grid; gap: 4px; text-align: right; }
+.hero-meta b { color: var(--ink); font-weight: 600; }
+h2.sec { font-family: var(--display); font-size: 24px; letter-spacing: .06em; color: var(--gold); margin: 0 0 6px; text-wrap: balance; }
+.sec-lede { font-family: var(--prose); font-size: 18px; color: var(--ink-dim); margin: 0 0 22px; max-width: 70ch; line-height: 1.45; }
+
+.badge { display: inline-flex; align-items: center; gap: 5px; font-weight: 800; font-size: 11.5px; letter-spacing: .14em; border-radius: 5px; padding: 2px 7px; text-transform: uppercase; white-space: nowrap; }
+.badge.new { background: var(--gold); color: #1d1204; }
+.badge.chg { border: 1px solid var(--ink-dim); color: var(--ink-dim); }
+.badge.read { background: var(--read); color: #1d1204; }
+
+/* ---------- prototype ---------- */
+.proto { display: grid; grid-template-columns: 262px minmax(0, 1fr); gap: 20px; align-items: start; }
+.rail { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-solid); overflow: hidden; }
+.rail .grp { font-family: var(--display); font-size: 11.5px; letter-spacing: .2em; color: var(--gold-dim); padding: 12px 12px 6px; border-top: 1px solid var(--line); }
+.rail .grp:first-child { border-top: 0; }
+.rail button.it { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; text-align: left; background: none; border: 0; padding: 6px 12px; font-size: 15px; color: var(--ink-dim); border-left: 3px solid transparent; }
+.rail button.it:hover { background: rgba(255,255,255,.03); color: var(--ink); }
+.rail button.it.on { background: linear-gradient(90deg, rgba(179,22,27,.3), transparent); color: var(--ink); border-left-color: var(--blood-hi); }
+.rail .n { font-variant-numeric: tabular-nums; color: var(--ink-mute); font-size: 13px; }
+.rail .badge { font-size: 10px; padding: 1px 5px; }
+.rail .nav { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+.rail .nav .btn { flex: 1; }
+.rail .keys { font-size: 12.5px; color: var(--ink-mute); text-align: center; padding: 0 12px 12px; }
+.view { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.stage-wrap { position: relative; width: 100%; aspect-ratio: 1000 / 620; border: 1px solid var(--line-hi); border-radius: 12px; overflow: hidden; background: #060404; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+.stage { position: absolute; top: 0; left: 0; width: 1000px; height: 620px; transform-origin: 0 0; transform: scale(var(--s, 1)); overflow: hidden; font-size: 16px;
+  background: radial-gradient(ellipse at 48% 45%, #1d1410 0%, #0c0807 70%); }
+.view-cap { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.view-cap .t { font-family: var(--display); font-size: 21px; color: var(--ink); }
+.view-cap .t .n { color: var(--ink-mute); font-family: var(--ui); font-size: 16px; margin-right: 6px; }
+.view-cap .reset { background: none; border: 0; color: var(--ink-mute); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+.narrow-note { display: none; font-size: 14px; color: var(--ink-mute); margin: 0; }
+.notes { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
+.note { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: rgba(20,12,10,.6); }
+.note .k { font-size: 12px; letter-spacing: .2em; color: var(--gold-dim); font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
+.note p { font-family: var(--prose); font-size: 16.5px; line-height: 1.45; color: var(--ink-dim); margin: 0; }
+
+.princ { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
+.pr-row { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); }
+.pr-row .k { font-family: var(--display); color: var(--ink); font-size: 16px; line-height: 1.2; }
+.pr-row .k small { display: block; font-family: var(--ui); color: var(--ink-mute); font-size: 13px; letter-spacing: .08em; margin-top: 4px; }
+.pr-row p { margin: 0; font-family: var(--prose); font-size: 16.5px; line-height: 1.45; color: var(--ink-dim); }
+.pr-row p b { color: var(--ink); font-weight: 600; }
+
+/* ---------- game UI (scoped copy of src/style.css) ---------- */
+.btn { background: linear-gradient(#2a1510, #1a0d0a); border: 1px solid var(--line-hi); color: var(--ink); padding: 8px 14px; border-radius: 8px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; font-size: 15px; transition: border-color .15s; }
+.btn:hover:not(:disabled) { border-color: var(--gold); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.primary { background: linear-gradient(#c01d22, #7c0e12); border-color: #ff5a4a; }
+.btn.gold { background: linear-gradient(#e6bb5c, #9c7a36); color: #1a0d05; border-color: #ffe29a; }
+.btn.ghost { background: transparent; }
+.btn.sm { padding: 5px 9px; font-size: 13px; }
+.btn.big { padding: 11px 18px; font-size: 17px; }
+.fine { font-size: 13px; color: var(--ink-mute); }
+.you { font-size: 11px; background: var(--gold); color: #1a0d05; border-radius: 4px; padding: 0 4px; letter-spacing: .08em; font-weight: 700; }
+.ai-tag { font-size: 11px; border: 1px solid var(--ink-mute); color: var(--ink-mute); border-radius: 4px; padding: 0 4px; }
+.sig { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; font-family: serif; font-size: 13px; color: #fff; flex: none; text-shadow: 0 1px 2px #000; }
+.sig.pale { color: #1a0d05; text-shadow: none; }
+.seg { display: inline-flex; border: 1px solid var(--line-hi); border-radius: 8px; overflow: hidden; }
+.seg button { background: #1a0d0a; border: 0; padding: 6px 12px; font-weight: 700; color: var(--ink); }
+.seg button.on { background: var(--blood); }
+.seg button:disabled { opacity: .35; cursor: not-allowed; }
+
+.stage .topbar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px 6px 16px; white-space: nowrap; z-index: 2; }
+.stage .turn-who { font-family: var(--display); font-weight: 700; }
+.stage .phases { display: flex; gap: 2px; }
+.stage .phase { font-size: 13px; letter-spacing: .12em; padding: 4px 8px; border-radius: 6px; color: var(--ink-mute); text-transform: uppercase; }
+.stage .phase.on { background: var(--blood); color: #fff; }
+.stage .reinf { font-size: 14px; color: var(--gold); }
+.stage .reinf b { font-size: 20px; }
+.stage .reinf s { color: var(--ink-mute); }
+.stage .corner { position: absolute; top: 10px; left: 10px; display: flex; gap: 5px; z-index: 2; }
+.stage .icon-btn { width: 34px; height: 34px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; font-size: 15px; padding: 0; }
+.stage .side { position: absolute; top: 56px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; z-index: 1; }
+.stage .side.left { left: 10px; width: 204px; } .stage .side.right { right: 10px; width: 190px; max-height: 196px; overflow: hidden; }
+.stage .side h3 { font-family: var(--display); font-size: 11.5px; letter-spacing: .2em; color: var(--gold-dim); margin: 0; padding: 9px 11px 5px; background: var(--panel-solid); border-radius: 10px 10px 0 0; }
+.stage .player { padding: 6px 11px 7px; border-top: 1px solid rgba(77,37,24,.6); }
+.stage .player.cur { background: linear-gradient(90deg, rgba(179,22,27,.28), transparent); }
+.stage .pn { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.stage .meta { color: var(--ink-dim); font-size: 12.5px; margin-top: 2px; }
+.stage .log { font-family: var(--prose); font-size: 14px; line-height: 1.3; }
+.stage .log .ev { padding: 6px 11px; border-top: 1px solid rgba(77,37,24,.45); color: var(--ink-dim); }
+.stage .log .ev:first-of-type { color: var(--ink); background: rgba(230,187,92,.06); }
+.stage .dock { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); width: 960px; display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 2; }
+.stage .actionbar { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; max-width: 100%; }
+.stage .actionbar .hint { font-family: var(--prose); font-style: italic; color: var(--ink-dim); font-size: 16px; padding: 0 4px; }
+.stage .actionbar .hint b { font-style: normal; font-family: var(--ui); color: var(--ink); }
+.handrow { display: flex; gap: 6px; justify-content: center; }
+.hcard { --hc: #888; border: 2px solid var(--hc); border-radius: 9px; background: linear-gradient(170deg, #241512, #120a09 60%); padding: 4px 9px; font-size: 13px; display: grid; line-height: 1.15; text-align: left; }
+.hcard b { font-family: var(--display); font-size: 12.5px; }
+.hcard small { color: var(--ink-mute); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.hcard.dim { opacity: .4; }
+
+/* map */
+.stage svg.map { position: absolute; inset: 0; z-index: 0; }
+.hex polygon.land { stroke: #0b0707; stroke-width: 2.5; }
+.hex.glow { cursor: pointer; }
+.hex.glow polygon.land { stroke: #f3d27a; stroke-width: 3; animation: hexglow 1.6s ease-in-out infinite; }
+.hex.dim { opacity: .34; }
+.hex.picked polygon.land { stroke: #fff; stroke-width: 4; animation: none; }
+.hex.lit polygon.land { stroke: #ffd36b; stroke-width: 3.5; stroke-dasharray: 7 5; }
+@keyframes hexglow { 50% { stroke-opacity: .45; } }
+.hex .nm { font-family: var(--ui); font-size: 10.5px; fill: #d9c9b3; text-anchor: middle; paint-order: stroke; stroke: #0b0707; stroke-width: 3px; pointer-events: none; }
+.hex .army { font-family: var(--ui); font-weight: 800; font-size: 14px; fill: #fff; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.hex .terr { font-size: 11px; text-anchor: middle; pointer-events: none; }
+.hex .delta { font-family: var(--ui); font-weight: 800; font-size: 13px; fill: #ff8b80; text-anchor: middle; paint-order: stroke; stroke: #0b0707; stroke-width: 3px; }
+.hex .pickn { font-family: var(--ui); font-weight: 800; font-size: 12px; fill: #1a0d05; text-anchor: middle; dominant-baseline: central; }
+.qlabel { font-family: var(--display); font-size: 10px; letter-spacing: .24em; fill: #7d6b5a; }
+
+/* ---------- menus ---------- */
+.menu-scr { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(ellipse at center, rgba(40,14,10,.6), #090505 70%); }
+.card-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; text-align: center; position: relative; }
+.card-panel h2 { font-family: var(--display); color: var(--gold); margin: 0 0 10px; letter-spacing: .06em; font-size: 24px; }
+.steps { display: flex; gap: 6px; justify-content: center; margin-bottom: 10px; }
+.steps span { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-mute); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.steps span.on { color: #1a0d05; background: var(--gold); border-color: var(--gold); }
+.steps span.done { color: var(--ink-dim); }
+.settings { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.set-k { font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 14px; }
+.set-k .fine { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.set-note { font-family: var(--prose); font-style: italic; font-size: 15px; color: var(--ink-dim); }
+.set-old { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; color: var(--ink-mute); font-size: 14px; }
+.set-new { border: 1px solid var(--gold-dim); border-radius: 10px; padding: 9px 10px; background: rgba(230,187,92,.06); display: grid; gap: 5px; }
+.mock-ctl { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; border: 1px dashed var(--ink-mute); border-radius: 10px; padding: 5px 10px; font-size: 13px; color: var(--ink-mute); background: rgba(10,6,5,.8); white-space: nowrap; }
+.row { display: flex; gap: 8px; }
+.row > .btn { flex: 1; }
+.seat-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; background: #140b0a; text-align: left; position: relative; }
+.seat-row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat-row .field { background: #120a09; border: 1px solid var(--line-hi); border-radius: 8px; color: var(--ink); padding: 5px 9px; font-size: 15px; flex: 1; min-width: 0; }
+.code-big { font-family: var(--display); font-size: 34px; letter-spacing: .25em; color: var(--gold); margin: 0 0 8px; }
+.hpick { --hc: var(--ink-mute); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hc); border-radius: 999px; padding: 2px 10px 2px 4px; background: #1a0d0a; font-size: 14px; font-weight: 600; letter-spacing: .04em; white-space: nowrap; }
+.hpick.ro { border-style: dashed; cursor: default; padding-right: 10px; }
+.hpick .caret { color: var(--ink-mute); font-size: 11px; }
+.hpick .rnd { width: 20px; text-align: center; }
+.lockn { font-size: 12px; color: var(--ink-mute); white-space: nowrap; }
+.hpop { position: absolute; right: 8px; top: 34px; z-index: 6; width: 300px; background: var(--panel-solid); border: 1px solid var(--gold-dim); border-radius: 12px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; box-shadow: 0 16px 40px rgba(0,0,0,.7); }
+.hpop button { --hc: #888; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 6px; align-items: center; text-align: left; border: 1px solid var(--line); border-left: 4px solid var(--hc); border-radius: 7px; background: #1a0d0a; padding: 4px 7px; font-size: 14px; line-height: 1.1; }
+.hpop button:hover:not(:disabled) { border-color: var(--gold); border-left-color: var(--hc); }
+.hpop button.on { background: rgba(230,187,92,.14); border-color: var(--gold); border-left-color: var(--hc); }
+.hpop button:disabled { opacity: .4; cursor: not-allowed; }
+.hpop small { display: block; color: var(--ink-mute); font-size: 11.5px; }
+.hpop .wide { grid-column: 1 / -1; }
+
+/* ---------- modals ---------- */
+.modal { position: absolute; inset: 0; display: grid; place-items: center; z-index: 5; background: rgba(6,3,3,.6); }
+.modal .box { background: var(--panel-solid); border: 1px solid var(--line-hi); border-radius: 14px; padding: 16px 20px; text-align: center; }
+.modal h2 { font-family: var(--display); color: var(--gold); margin: 0 0 4px; font-size: 23px; letter-spacing: .05em; }
+.modal .prose { font-family: var(--prose); font-size: 16.5px; color: var(--ink-dim); margin: 0 0 10px; line-height: 1.35; }
+.cards-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 0 0 12px; }
+.gcard { --hc: #888; width: 160px; border-radius: 12px; background: linear-gradient(170deg, #241512, #120a09 60%); border: 2px solid var(--hc); box-shadow: 0 8px 22px rgba(0,0,0,.55); padding: 9px; display: flex; flex-direction: column; gap: 5px; position: relative; text-align: left; }
+.gcard:hover { border-color: #fff; }
+.gcard.on { box-shadow: 0 0 0 3px rgba(230,187,92,.6), 0 0 24px rgba(230,187,92,.45); border-color: var(--gold); }
+.gcard .nm { font-family: var(--display); font-weight: 700; font-size: 13.5px; line-height: 1.05; }
+.gcard .tt2 { font-size: 11.5px; color: var(--ink-mute); }
+.gcard .blk { font-size: 12.5px; line-height: 1.2; border-radius: 6px; padding: 4px 6px; background: rgba(255,255,255,.04); }
+.gcard .blk .k { font-size: 10px; letter-spacing: .14em; color: var(--gold-dim); display: block; }
+.gcard .blk.act { color: var(--ink-dim); } .gcard .blk.act .k { color: #ff7b6b; }
+.gcard .pickd { position: absolute; top: -9px; right: 8px; font-size: 10px; letter-spacing: .1em; background: var(--gold); color: #111; border-radius: 4px; padding: 1px 6px; font-weight: 800; }
+.gcard .req { position: absolute; top: -9px; left: 8px; font-size: 10px; letter-spacing: .1em; background: var(--hc); color: #fff; border-radius: 4px; padding: 1px 6px; font-weight: 800; }
+
+/* ---------- Ultimate button + cast flow ---------- */
+.ult { display: grid; text-align: left; padding: 4px 12px; border-radius: 9px; background: linear-gradient(#2a1510, #1a0d0a); border: 1px solid var(--line-hi); line-height: 1.15; }
+.ult b { font-size: 14.5px; letter-spacing: .05em; text-transform: uppercase; font-weight: 700; }
+.ult small { font-size: 12px; color: var(--ink-mute); letter-spacing: .03em; }
+.ult.off { opacity: .8; cursor: default; }
+.ult.ready { border: 2px solid var(--gold); background: linear-gradient(#3a2610, #1a0d0a); animation: ready 1.6s ease-in-out infinite; }
+.ult.ready small { color: var(--gold); font-weight: 700; letter-spacing: .12em; }
+@keyframes ready { 0%, 100% { box-shadow: 0 0 0 2px rgba(230,187,92,.2), 0 0 10px rgba(230,187,92,.25); } 50% { box-shadow: 0 0 0 5px rgba(230,187,92,.16), 0 0 22px rgba(230,187,92,.5); } }
+.anno { position: absolute; z-index: 4; border: 1px dashed var(--ink-mute); border-radius: 10px; background: rgba(10,6,5,.9); padding: 8px; display: grid; gap: 6px; }
+.anno .ak { font-size: 11px; letter-spacing: .18em; color: var(--ink-mute); text-transform: uppercase; }
+.cast { --hc: #d42a2a; width: 610px; text-align: left !important; border: 2px solid var(--hc) !important; display: grid; gap: 10px; }
+.cast-h { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.medal { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--hc); color: var(--hc); font-size: 22px; font-family: serif; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--hc) 24%, transparent), transparent 70%); }
+.cast-h .sub { font-size: 12px; letter-spacing: .18em; color: var(--ink-mute); text-transform: uppercase; }
+.cast-h h2 { margin: 0; font-size: 22px; }
+.cast .steps { margin: 0; justify-content: flex-start; }
+.cast .lbl { font-size: 12px; letter-spacing: .18em; color: var(--gold-dim); text-transform: uppercase; font-weight: 700; }
+.party { border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; background: #140b0a; display: grid; gap: 6px; }
+.party.me { border-style: dashed; }
+.party .ph { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.party .rank { font-family: var(--display); color: var(--gold-dim); }
+.party .who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-weight: 700; }
+.party .who .p1 { font-weight: 400; color: var(--ink-mute); font-size: 13px; }
+.party .pct { font-variant-numeric: tabular-nums; font-weight: 800; font-size: 19px; display: flex; align-items: center; gap: 8px; }
+.party .pbar { width: 90px; height: 6px; border-radius: 3px; background: #2b1712; overflow: hidden; }
+.party .pbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--blood-hi), #ff9c6b); }
+.tagx { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; border: 1px solid var(--ink-mute); color: var(--ink-mute); border-radius: 4px; padding: 0 5px; font-weight: 700; }
+.tagx.lead { border-color: var(--gold); color: var(--gold); }
+.opts { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 26px; }
+.opt { border: 1px solid var(--line-hi); border-radius: 8px; background: #1a0d0a; padding: 4px 10px 4px 8px; font-size: 14px; display: flex; gap: 7px; align-items: center; }
+.opt .rb { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--ink-mute); flex: none; }
+.opt.on { border-color: var(--gold); background: rgba(230,187,92,.12); }
+.opt.on .rb { border-color: var(--gold); background: radial-gradient(circle, var(--gold) 45%, transparent 50%); }
+.opt small { color: var(--ink-mute); }
+.cut { display: flex; align-items: center; gap: 10px; color: var(--gold); font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; }
+.cut::before, .cut::after { content: ''; flex: 1; border-top: 1px dashed var(--gold-dim); }
+.cast-f { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid rgba(138,58,30,.5); padding-top: 10px; }
+.cast-f .sum { font-family: var(--prose); font-size: 15.5px; color: var(--ink-dim); }
+.cast-f .sum b { font-family: var(--ui); color: var(--ink); }
+.cast-f .row > .btn { flex: none; white-space: nowrap; }
+.pchip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--gold-dim); border-radius: 7px; padding: 2px 8px; font-size: 14px; background: #1a0d0a; }
+.pchip b { color: var(--gold); }
+.pchip.empty { border-style: dashed; color: var(--ink-mute); }
+.qgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.qbtn { border: 1px solid var(--line-hi); border-radius: 9px; background: #1a0d0a; padding: 6px 10px; text-align: left; display: grid; line-height: 1.2; }
+.qbtn b { font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+.qbtn .cutn { font-size: 20px; font-weight: 800; color: #ff8b80; font-variant-numeric: tabular-nums; }
+.qbtn small { color: var(--ink-mute); font-size: 12.5px; }
+.qbtn.on { border-color: var(--gold); background: rgba(230,187,92,.12); }
+.qbtn:disabled { opacity: .4; cursor: not-allowed; }
+.qpanel { position: absolute; z-index: 4; right: 10px; top: 262px; width: 258px; background: var(--panel-solid); border: 2px solid #cfc9b8; border-radius: 12px; padding: 10px; display: grid; gap: 8px; }
+
+/* ---------- status icons ---------- */
+.icons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 6px; padding: 2px; border-radius: 8px; }
+.ico { position: relative; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--ring); color: var(--ring); padding: 0; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--ring) 22%, transparent), #120a09 72%); }
+.ico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ico.buff { --ring: var(--buff); } .ico.debuff { --ring: var(--debuff); } .ico.ctrl { --ring: var(--ctrl); }
+.ico .t { position: absolute; right: -6px; bottom: -5px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 10.5px; font-weight: 800; display: grid; place-items: center; }
+.ico .h { position: absolute; left: -4px; top: -4px; width: 9px; height: 9px; border-radius: 50%; background: var(--h); border: 2px solid #140c0b; }
+.ico.sel { box-shadow: 0 0 0 3px rgba(255,255,255,.25); }
+.tt { position: absolute; z-index: 9; width: 250px; background: #0c0706; border: 1px solid var(--line-hi); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; box-shadow: 0 12px 30px rgba(0,0,0,.7); }
+.tt b { font-size: 15px; } .tt p { margin: 0; font-family: var(--prose); font-size: 15px; color: var(--ink-dim); line-height: 1.3; }
+.tt .src { font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-mute); }
+
+/* ---------- announcement, skip, restrictions, reveal ---------- */
+.sc { --hc: #d42a2a; position: absolute; z-index: 7; left: 584px; top: 64px; width: 300px; background: var(--panel-solid); border: 2px solid var(--hc); border-radius: 16px; padding: 12px 14px; display: grid; gap: 7px; box-shadow: 0 20px 50px rgba(0,0,0,.7), 0 0 30px color-mix(in srgb, var(--hc) 35%, transparent); }
+.sc .k { font-size: 11px; letter-spacing: .22em; color: var(--gold); font-weight: 700; }
+.sc .who { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+.sc h4 { margin: 0; font-family: var(--display); font-weight: 900; font-size: 24px; color: var(--hc); letter-spacing: .03em; }
+.sc .q { font-family: var(--prose); font-style: italic; font-size: 16.5px; color: var(--ink); }
+.sc table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.sc td { padding: 3px 0; border-top: 1px solid rgba(77,37,24,.6); color: var(--ink-dim); }
+.sc td:last-child { text-align: right; }
+.sc td b { color: var(--ink); }
+.sc .tot { font-size: 14.5px; color: var(--ink); }
+.lead-l line { stroke: #d42a2a; stroke-width: 3; stroke-dasharray: 6 5; opacity: .85; }
+.skip-scr { position: absolute; inset: 0; z-index: 9; background: radial-gradient(circle, #0f1a30, #050303 72%); display: grid; place-items: center; text-align: center; }
+.skip-scr .in { width: 520px; display: grid; gap: 10px; justify-items: center; }
+.skip-scr .big { font-family: var(--display); font-weight: 900; font-size: 54px; letter-spacing: .08em; color: #6fa8ee; line-height: 1; }
+.skip-scr p { margin: 0; font-family: var(--prose); font-size: 19px; color: var(--ink-dim); line-height: 1.4; }
+.skip-scr p b { color: var(--ink); font-family: var(--ui); }
+.skip-scr .lost { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.restrict { display: flex; align-items: center; gap: 8px; border: 1px solid var(--ctrl); border-radius: 10px; background: rgba(15,26,48,.92); padding: 5px 12px; font-size: 15px; }
+.restrict b { letter-spacing: .06em; text-transform: uppercase; }
+.restrict span { color: var(--ink-dim); }
+.reveal { position: absolute; z-index: 8; left: 222px; top: 118px; width: 470px; background: var(--panel-solid); border: 2px solid #3f86e0; border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; box-shadow: 0 16px 40px rgba(0,0,0,.7); }
+.reveal .rh { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; }
+.reveal .cards-row { margin: 0; justify-content: flex-start; gap: 8px; }
+.reveal .gcard { width: 104px; padding: 7px; box-shadow: none; }
+
+/* ---------- guide layer (as built in .007) ---------- */
+.spot { position: absolute; border-radius: 12px; box-shadow: 0 0 0 3000px rgba(6,3,3,.74); outline: 2px solid var(--read); outline-offset: 3px; z-index: 6; pointer-events: none; }
+.blocker { position: absolute; inset: 0; z-index: 5; }
+.coach { position: absolute; z-index: 8; border-radius: 12px; background: linear-gradient(175deg, #23130f, #120a09 70%); padding: 13px 15px 12px; display: flex; flex-direction: column; gap: 9px; box-shadow: 0 16px 40px rgba(0,0,0,.6); border: 2px solid var(--read); }
+.coach .c-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.coach .c-step { font-size: 12px; color: var(--ink-mute); letter-spacing: .06em; }
+.coach h4 { margin: 0; font-family: var(--display); font-size: 19px; line-height: 1.1; color: var(--ink); }
+.coach .c-body { font-family: var(--prose); font-size: 16px; line-height: 1.35; color: var(--ink-dim); display: grid; gap: 8px; }
+.coach .c-body b { color: var(--ink); font-family: var(--ui); font-weight: 700; }
+.coach .c-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid rgba(138,58,30,.5); padding-top: 9px; }
+.wait { font-size: 13px; letter-spacing: .04em; color: var(--read); }
+
+@media (prefers-reduced-motion: reduce) { .ult.ready, .hex.glow polygon.land { animation: none !important; } }
+@media (max-width: 960px) {
+  .proto { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; order: 2; }
+  .princ, .notes, .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-meta { text-align: left; }
+}
+@media (max-width: 620px) { .narrow-note { display: block; } .pr-row { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-rot" viewBox="0 0 24 24"><path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11z"/><path d="M10 12.5l4 4M14 12.5l-4 4"/></symbol>
+  <symbol id="i-blackout" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><path d="M4 4l16 16"/></symbol>
+  <symbol id="i-silenced" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><path d="M7 12h10"/></symbol>
+  <symbol id="i-revealed" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="i-locked" viewBox="0 0 24 24"><path d="M9.5 14.5l-2.5 2.5a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0"/><path d="M14.5 9.5 17 7a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0"/><path d="M8 3.5l1 2M3.5 8l2 1M16 20.5l-1-2M20.5 16l-2-1"/></symbol>
+  <symbol id="i-ready" viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.5 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></symbol>
+  <symbol id="i-recharge" viewBox="0 0 24 24"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9"/></symbol>
+  <symbol id="i-storm" viewBox="0 0 24 24"><path d="M13 2 5 13h6l-1 9 8-12h-6z"/></symbol>
+</svg>
+
+<div class="page">
+  <header class="hero">
+    <div>
+      <div class="eyebrow">Institute Conquest · .008 mockup</div>
+      <h1>Patch .008 Screens</h1>
+      <p class="lede">Every new or changed screen in .008, drawn on the game's own HUD: the House Ultimates switch, picking a House, choosing a Primus, casting an Ultimate, and seeing what one did. Click through them, or play them where they glow. Nothing here touches the game code.</p>
+    </div>
+    <div class="hero-meta">
+      <span><b>20</b> mockup screens</span>
+      <span><b>4</b> existing screens changed</span>
+      <span><b>0</b> new sounds</span>
+    </div>
+  </header>
+
+  <section>
+    <h2 class="sec">Walk the screens</h2>
+    <p class="sec-lede">The war shown is one 4-House game: you are Reaper of House Mars, behind The Quiet One (Pluto) and Mustang (Minerva), who share a public alliance. Each screen notes what it shows and where it hooks into the code.</p>
+    <div class="proto">
+      <nav class="rail" id="rail" aria-label="Mockup screens"></nav>
+      <div class="view">
+        <div class="view-cap"><div class="t" id="capT"></div><button class="reset" id="replay">Reset this screen</button></div>
+        <p class="narrow-note">The game HUD is shown at desktop scale. A wider screen makes it easier to read.</p>
+        <div class="stage-wrap" id="wrap"><div class="stage" id="stage"></div></div>
+        <div class="notes">
+          <div class="note"><div class="k">What it shows</div><p id="whyT"></p></div>
+          <div class="note"><div class="k">How it's built</div><p id="build"></p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">Choices this mockup makes</h2>
+    <p class="sec-lede">These are the design calls behind the screens. Say which to change; everything else goes into the build as drawn.</p>
+    <div class="princ">
+      <div class="pr-row"><div class="k">The button is always there<small>Screens 06, 18</small></div><p>The Ultimate button sits in the Draft bar from turn 1 and <b>says why it can't be used yet</b>. The alternative is to hide it until a House is eligible, which is cleaner but teaches nothing.</p></div>
+      <div class="pr-row"><div class="k">One flow, four steps<small>Screens 07 to 11</small></div><p>Target, cards, picks, preview. <b>Only Commit spends cards.</b> Mars and Jupiter pick on the map; the other five Houses skip step 3.</p></div>
+      <div class="pr-row"><div class="k">The cut-off is drawn<small>Screen 07</small></div><p>The target list ranks parties by Win % with a line under the last House that can't cast. It is the only place the standing appears; <b>the Proctors' Book is unchanged</b>.</p></div>
+      <div class="pr-row"><div class="k">Casts must be seen<small>Screen 12</small></div><p>An Ultimate's announcement <b>stays until you press Seen</b>, like a rival's played card. The alternative is a timed banner, which is faster but easy to miss.</p></div>
+      <div class="pr-row"><div class="k">Icons under the banner<small>Screens 13, 19</small></div><p>Status icons get their own row under each House's stats and <b>wrap when there are many</b>. Hover or tap reads one out. The icon set is the design sheet's.</p></div>
+      <div class="pr-row"><div class="k">Pick, then confirm<small>Screens 04, 05</small></div><p>Choose your Primus shows every Character at once and needs <b>a second click to swear one in</b>. Passives show at printed value.</p></div>
+      <div class="pr-row"><div class="k">House pills in the lobby<small>Screens 01 to 03</small></div><p>Each seat carries its House as a coloured pill. <b>A House the host assigns is locked</b> for that player until the host sets it back to Random.</p></div>
+      <div class="pr-row"><div class="k">Not mocked<small>Left to the spec</small></div><p>The phone layout, the Storm-struck and Seized markers in 3D, and the rules text. Pinned (the Wild Hunt) uses the same banner as Silenced on screen 16.</p></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const HOUSE = {
+    apollo: { n: 'Apollo', c: '#e8b21e', s: '☉' }, diana: { n: 'Diana', c: '#2fa36b', s: '☾' }, minerva: { n: 'Minerva', c: '#3f86e0', s: '⌘' },
+    mars: { n: 'Mars', c: '#d42a2a', s: '♂' }, pluto: { n: 'Pluto', c: '#8a5cc7', s: '♇' }, jupiter: { n: 'Jupiter', c: '#cfc9b8', s: '♃', pale: 1 }, ceres: { n: 'Ceres', c: '#e0782a', s: '⚳' },
+  };
+  const HK = ['mars', 'minerva', 'diana', 'apollo', 'jupiter', 'ceres', 'pluto'];
+  const PL = { M: { name: 'Reaper', house: 'mars' }, P: { name: 'The Quiet One', house: 'pluto', ai: 1 }, B: { name: 'Mustang', house: 'minerva' }, J: { name: 'Pax', house: 'jupiter' } };
+  const C = { M: HOUSE.mars.c, P: HOUSE.pluto.c, B: HOUSE.minerva.c, J: HOUSE.jupiter.c, N: '#6e6253' };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const hsig = (h) => `<span class="sig ${HOUSE[h].pale ? 'pale' : ''}" style="background:${HOUSE[h].c}">${HOUSE[h].s}</span>`;
+  const sig = (k) => hsig(PL[k].house);
+
+  // Territories in offset rows (odd rows shifted right). [name, col, row, owner, armies, keep, terrain]
+  const RAW = [
+    ['Frost Ridge', 1, 0, 'N', 3, 0, '⛰'], ['Owl Pass', 2, 0, 'P', 6], ['High Bluff', 3, 0, 'P', 12, 0, '⛰'], ['Cold Ford', 4, 0, 'B', 4], ['Minerva Reach', 5, 0, 'B', 7],
+    ['Wolf Den', 0, 1, 'M', 3], ['Ash Hollow', 1, 1, 'M', 5], ['Greatwoods', 2, 1, 'P', 15, 0, '🌲'], ['Argos Bend', 3, 1, 'P', 9], ['Grey Moor', 4, 1, 'B', 6], ["Owl's Rest", 5, 1, 'B', 5], ['Minerva Keep', 6, 1, 'B', 11, 1],
+    ['Mars Keep', 0, 2, 'M', 9, 1], ['Ember Fen', 1, 2, 'M', 4], ['Thornwall', 2, 2, 'P', 22], ['Argos Ford', 3, 2, 'P', 10], ['Stone Steps', 4, 2, 'P', 8], ['Pale Wood', 5, 2, 'B', 3, 0, '🌲'],
+    ['Iron Shore', 0, 3, 'M', 2], ['Red Gully', 1, 3, 'M', 6], ['Bog of Sorrow', 2, 3, 'N', 4], ['Willow Run', 3, 3, 'P', 4], ['Pluto Keep', 4, 3, 'P', 14, 1], ['Storm Shore', 5, 3, 'J', 5],
+    ['Southwatch', 1, 4, 'J', 7], ['Drowned Bay', 2, 4, 'J', 9], ['Ferry Point', 3, 4, 'J', 4], ['Jupiter Keep', 4, 4, 'J', 10, 1],
+  ];
+  const T = RAW.map(([name, c, r, o, a, keep, terr], id) => ({ id, name, c, r, o, a, keep: !!keep, terr: terr || '', west: c <= 3 }));
+  const by = Object.fromEntries(T.map((t) => [t.name, t.id]));
+  const id = (n) => by[n];
+  const R = 40, W = Math.sqrt(3) * R, X0 = 262, Y0 = 136;
+  const ctr = (t) => [X0 + t.c * W + (t.r % 2) * W / 2, Y0 + t.r * R * 1.5];
+  const hexPts = (x, y, r = R - 1) => Array.from({ length: 6 }, (_, i) => { const a = Math.PI / 180 * (60 * i - 30); return `${(x + r * Math.cos(a)).toFixed(1)},${(y + r * Math.sin(a)).toFixed(1)}`; }).join(' ');
+
+  const SEIZE = ['Thornwall', 'Greatwoods', 'High Bluff'].map(id);
+  const AFTER = { own: { [id('Thornwall')]: 'M', [id('Greatwoods')]: 'M', [id('High Bluff')]: 'M' }, arm: { [id('Thornwall')]: 11, [id('Greatwoods')]: 8, [id('High Bluff')]: 6 } };
+  const STORM = { own: AFTER.own, arm: { ...AFTER.arm, [id('Owl Pass')]: 5, [id('Argos Bend')]: 5, [id('Argos Ford')]: 5 } };
+  const VALID = ['Owl Pass', 'High Bluff', 'Greatwoods', 'Argos Bend', 'Thornwall', 'Argos Ford', 'Willow Run', 'Frost Ridge', 'Bog of Sorrow'].map(id);
+  const BLOCKED = { [id('Pluto Keep')]: 'A Keep, and it holds a Standard', [id('Stone Steps')]: 'Across the strait: Mars holds no land in that quadrant' };
+
+  const own = (t, m) => (m.own && m.own[t.id]) || t.o;
+  const armies = (t, m) => (m.arm && m.arm[t.id] != null ? m.arm[t.id] : t.a);
+
+  function map(m = {}) {
+    const g = new Set(m.glow || []), dim = new Set(m.dim || []), lit = new Set(m.lit || []), picks = m.picked || [], seized = new Set(m.seized || []), storm = new Set(m.storm || []);
+    const xa = X0 + 3.5 * W, xb = X0 + 4 * W;
+    let s = `<svg class="map" viewBox="0 0 1000 620" aria-label="Valley map">
+      <defs><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="rgba(232,228,216,.10)"/><line x1="0" y1="0" x2="0" y2="8" stroke="#e8e4d8" stroke-width="2" stroke-opacity=".5"/></pattern></defs>`;
+    for (const t of T) {
+      const [x, y] = ctr(t), o = own(t, m), col = C[o], pi = picks.indexOf(t.id);
+      const cls = ['hex', g.has(t.id) ? 'glow' : '', dim.has(t.id) ? 'dim' : '', pi >= 0 ? 'picked' : '', lit.has(t.id) ? 'lit' : ''].join(' ');
+      s += `<g class="${cls}" data-t="${t.id}">${m.titles && m.titles[t.id] ? `<title>${esc(m.titles[t.id])}</title>` : ''}
+        <polygon class="land" points="${hexPts(x, y)}" fill="${col}" fill-opacity="${o === 'N' ? .5 : .62}"/>
+        ${storm.has(t.id) ? `<polygon points="${hexPts(x, y, R - 3)}" fill="url(#hatch)" pointer-events="none"/>` : ''}
+        ${t.terr ? `<text class="terr" x="${x}" y="${y - 21}">${t.terr}</text>` : ''}
+        ${t.keep ? `<text class="terr" x="${x}" y="${y - 21}" fill="#f3d27a">♜${o !== 'N' ? '⚑' : ''}</text>` : ''}
+        <circle cx="${x}" cy="${y - 2}" r="13" fill="#120a09" stroke="${o === 'N' ? '#a39a88' : col}" stroke-width="2"/>
+        <text class="army" x="${x}" y="${y - 2}">${armies(t, m)}</text>
+        <text class="nm" x="${x}" y="${y + 24}">${esc(t.name)}</text>
+        ${m.delta && m.delta[t.id] ? `<text class="delta" x="${x + 24}" y="${y - 12}">${m.delta[t.id]}</text>` : ''}
+        ${pi >= 0 ? `<circle cx="${x + 21}" cy="${y - 19}" r="9" fill="#f3d27a" stroke="#0b0707" stroke-width="2"/><text class="pickn" x="${x + 21}" y="${y - 19}">${pi + 1}</text>` : ''}
+        ${seized.has(t.id) ? `<g transform="translate(${x - 27},${y - 30})"><path d="M2 20V2M2 2h13l-3 4.5 3 4.5H2" fill="#d42a2a" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></g>` : ''}</g>`;
+    }
+    s += `<polyline points="${xa},104 ${xa},156 ${xb},176 ${xb},216 ${xa},236 ${xa},276 ${xb},296 ${xb},336 ${xa},356 ${xa},408" fill="none" stroke="#ff8a4a" stroke-opacity=".55" stroke-width="4" stroke-linejoin="round" stroke-dasharray="2 5" stroke-linecap="round"/>
+      <text class="qlabel" x="${xa - 10}" y="98" text-anchor="end">WEST QUADRANT</text><text class="qlabel" x="${xa + 10}" y="98">EAST QUADRANT</text>`;
+    if (m.lines) s += `<g class="lead-l">${m.lines.map((t) => { const [x, y] = ctr(T[t]); return `<line x1="584" y1="${m.lineY || 150}" x2="${x + 16}" y2="${y}"/>`; }).join('')}</g>`;
+    return s + '</svg>';
+  }
+
+  /* ---------- status icons ---------- */
+  const IC = {
+    ready: { n: 'Ultimate ready', k: 'buff', i: 'ready', t: 'In the bottom half and off cooldown. Can cast in the Draft with 3 cards, 1 from their own House.', src: 'Bottom half of parties · round 4+' },
+    recharge: { n: 'Recharging', k: 'buff', i: 'recharge', t: 'Their Ultimate is on cooldown for this many of their turns.', src: 'After any cast' },
+    storm: { n: 'Storm-bound', k: 'debuff', i: 'storm', t: 'Their next Draft is capped at 5. Trades still add on top.', src: 'Stormfall' },
+    rot: { n: 'Rot', k: 'debuff', i: 'rot', t: 'Stacks of 5+ decay 30%, 20%, 10%, and their next Drafts are cut by the same amounts.', src: 'Rot' },
+    revealed: { n: 'Revealed', k: 'debuff', i: 'revealed', t: 'The Minerva caster can see this whole hand. Click to open it.', src: 'Blackout · one player' },
+    blackout: { n: 'Blacked Out', k: 'ctrl', i: 'blackout', t: 'Their next turn is skipped: no Draft, cards, attacks or Fortify.', src: 'Blackout · one player' },
+    silenced: { n: 'Silenced', k: 'ctrl', i: 'silenced', t: 'Next turn: Draft −60%, and no cards, attacks or Fortify.', src: 'Blackout · alliance' },
+    locked: { n: 'Locked out', k: 'ctrl', i: 'locked', t: "Can't form or join any alliance for 2 of their turns.", src: 'Walked out of an alliance' },
+  };
+  // icon spec: [key, causing House or null, turns left or 0]
+  const icon = (seat, [k, h, n]) => `<button class="ico ${IC[k].k} ${st.tip === seat + ':' + k ? 'sel' : ''}" style="--h:${h ? HOUSE[h].c : '#7d6b5a'}" data-tip="${seat}:${k}" aria-label="${IC[k].n}"><i class="h"></i><svg><use href="#i-${IC[k].i}"/></svg>${n ? `<span class="t">${n}</span>` : ''}</button>`;
+
+  /* ---------- HUD pieces ---------- */
+  const topbar = (o) => {
+    if (o.title) return `<div class="topbar"><span class="turn-who">${o.title}</span><span class="reinf">${o.sub || ''}</span></div>`;
+    const cur = o.cur || 'M', ph = ['draft', 'attack', 'fortify'];
+    return `<div class="topbar" id="topbar"><span class="turn-who" style="color:${C[cur]}">${PL[cur].name}${cur === (o.me || 'M') ? ' <span class="you">YOU</span>' : ''}</span>
+      <div class="phases">${ph.map((p) => `<span class="phase ${p === o.phase ? 'on' : ''}">${p}</span>`).join('')}</div>${o.reinf != null ? `<span class="reinf">${o.reinf}</span>` : ''}<span class="reinf">R${o.round || 6}</span></div>`;
+  };
+  const corner = () => `<div class="corner">${['☰', '?', '⚜', '🤝', '📖', '⚙', '🎓'].map((x) => `<button class="icon-btn" tabindex="-1">${x}</button>`).join('')}</div>`;
+  const roster = (o) => {
+    const m = o.m || {}, me = o.me || 'M', cur = o.cur || 'M', ally = o.ally || ['P', 'B'];
+    return `<div class="side left"><h3>HOUSES</h3>${['M', 'P', 'B', 'J'].map((k) => {
+      const mine = T.filter((t) => own(t, m) === k), ic = (o.icons || {})[k];
+      return `<div class="player ${k === cur ? 'cur' : ''}"><div class="pn">${sig(k)} ${PL[k].name} ${k === me ? '<span class="you">YOU</span>' : ''}${PL[k].ai ? '<span class="ai-tag">AI</span>' : ''}${ally.includes(k) ? '<span title="Public alliance">🤝</span>' : ''}</div>
+        <div class="meta">House ${HOUSE[PL[k].house].n} · ${mine.length} lands · ${mine.reduce((s, t) => s + armies(t, m), 0)} armies</div>
+        ${ic && ic.length ? `<div class="icons" id="ic-${k}">${ic.map((x) => icon(k, x)).join('')}</div>` : ''}</div>`;
+    }).join('')}</div>`;
+  };
+  const logp = (lines) => `<div class="side right log"><h3>WAR LOG</h3>${lines.map((l) => `<div class="ev">${l}</div>`).join('')}</div>`;
+  const HAND = [['Sevro au Barca', 'mars', 'Howlers in the Night: 1 attack may strike two territories away.'], ['Quiver', 'diana', 'Pinned Down: the defender rolls only 1 die in your next battle.'], ['Weasel', 'pluto', 'Kill armies in enemy territory beside yours.'], ['Brontes', 'jupiter', 'Siege Levy: +4 armies this turn.']];
+  const handRow = (dim) => `<div class="handrow" id="hand">${HAND.map(([n, h]) => `<span class="hcard ${dim ? 'dim' : ''}" style="--hc:${HOUSE[h].c}"><b>${n}</b><small>${HOUSE[h].n}</small></span>`).join('')}</div>`;
+  const ultBtn = (state, go) => {
+    const sub = { locked: 'Opens in round 4', top: 'Top half: no Ultimate', cd: 'Recharging: 2 turns', cards: 'Needs 3 cards, 1 from House Mars', ready: 'READY' }[state];
+    return `<button class="ult ${state === 'ready' ? 'ready' : 'off'}" ${state === 'ready' ? 'id="ultBtn"' : 'tabindex="-1"'} ${go ? `data-go="${go}"` : ''}><b>⚡ Where's Sevro?</b><small>${sub}</small></button>`;
+  };
+  const draftBar = (left, ult) => `<span class="hint">Click your territories to place armies.</span>
+    <span class="seg"><button class="on" tabindex="-1">+1</button><button tabindex="-1">+3</button><button tabindex="-1">+5</button><button tabindex="-1">All</button></span>
+    <button class="btn" tabindex="-1">Trade 3 → 10</button>${ult || ''}<button class="btn primary" disabled>End Draft ▸</button>`;
+  const LOG6 = ['<b>Round 6.</b> The Quiet One holds 9 lands and half the armies in the valley.', '<b>Mustang</b> took Cold Ford.', '<b>Pax</b> fortified Jupiter Keep.'];
+  function hud(o) {
+    return map(o.m || {}) + corner() + topbar(o) + roster(o) + logp(o.log || LOG6)
+      + `<div class="dock">${o.above || ''}${o.bar ? `<div class="actionbar" id="actionbar">${o.bar}</div>` : ''}${o.hand || ''}</div>`;
+  }
+  const readCard = ({ step, title, body, x, y, w = 360, cta = 'Got it ▸' }) => `
+    <div class="coach" style="left:${x}px;top:${y}px;width:${w}px" role="dialog" aria-label="${esc(title)}">
+      <div class="c-head"><span class="badge read">◼ Read</span><span class="c-step">${step}</span></div>
+      <h4>${title}</h4><div class="c-body">${body}</div>
+      <div class="c-foot"><span class="wait">⏸ The war waits for you</span><button class="btn gold sm" data-go="next">${cta}</button></div>
+    </div>`;
+
+  /* ---------- menu pieces ---------- */
+  const menuScr = (inner, w = 560, extra = '') => `<div class="menu-scr"><div class="card-panel" style="width:${w}px">${inner}</div>${extra}</div>`;
+  const onoff = (key, on, dis) => `<span class="seg"><button data-set="${key}" data-v="1" class="${on ? 'on' : ''}" ${dis ? 'disabled' : ''}>On</button><button data-set="${key}" data-v="0" class="${!on ? 'on' : ''}" ${dis ? 'disabled' : ''}>Off</button></span>`;
+  const pill = (seat, h, edit, lock) => {
+    const body = h ? `${hsig(h)}${HOUSE[h].n}` : '<span class="rnd">🎲</span>Random';
+    return edit ? `<button class="hpick" style="--hc:${h ? HOUSE[h].c : 'var(--ink-mute)'}" data-open="${seat}" aria-haspopup="true">${lock ? '🔒 ' : ''}${body}<span class="caret">▾</span></button>`
+      : `<span class="hpick ro" style="--hc:${h ? HOUSE[h].c : 'var(--ink-mute)'}">${body}</span>`;
+  };
+  const popover = (seats, i) => `<div class="hpop" role="menu" aria-label="Pick a House">
+    <button class="wide ${!seats[i].house ? 'on' : ''}" data-house="" style="--hc:var(--ink-mute)"><span>🎲</span><span>Random<small>Dealt on the Sorting wheel</small></span></button>
+    ${HK.map((h) => { const taken = seats.find((s, j) => j !== i && s.house === h); return `<button data-house="${h}" class="${seats[i].house === h ? 'on' : ''}" style="--hc:${HOUSE[h].c}" ${taken ? 'disabled' : ''}>${hsig(h)}<span>${HOUSE[h].n}${taken ? `<small>${esc(taken.name)}</small>` : ''}</span></button>`; }).join('')}</div>`;
+  const SEATS = () => [{ name: 'Reaper', host: 1, house: 'mars' }, { name: 'Mustang', house: 'minerva' }, { name: 'Pax', house: 'jupiter', lock: 1 }, { name: "Proctor's Pet", ai: 1, house: null }, { name: 'Some Tall Bastard', ai: 1, house: 'pluto', lock: 1 }];
+  const lobby = (viewer) => {
+    const host = viewer === 0;
+    return menuScr(`<h2>War Council</h2>
+      <div class="fine">Share this code or link. Up to 7 Houses; the valley grows with every House.</div>
+      <div class="code-big">K7QM</div>
+      ${st.seats.map((s, i) => { const edit = host || i === viewer && !s.lock;
+        return `<div class="seat-row"><span class="nm">${esc(s.name)} ${i === viewer ? '<span class="you">YOU</span>' : ''} ${s.ai ? '<span class="ai-tag">AI</span>' : ''} ${s.host ? '<span class="fine">host</span>' : ''}</span>
+          ${s.lock && !s.ai ? '<span class="lockn">set by host</span>' : ''}${pill(i, s.house, edit, s.lock && host && !s.ai)}
+          ${host && !s.host && !s.ai ? '<button class="btn sm ghost" tabindex="-1">Kick</button>' : ''}${st.open === i ? popover(st.seats, i) : ''}</div>`; }).join('')}
+      ${host ? `<div class="row" style="margin:8px 0"><button class="btn" tabindex="-1">+ AI Primus</button><button class="btn" tabindex="-1">− AI</button></div><button class="btn primary big" style="width:100%" tabindex="-1">Start the War</button>`
+        : '<p class="set-note" style="margin:10px 0 0">Waiting for the host to start. Sharpen something.</p>'}`, 540);
+  };
+
+  /* ---------- Primus cards ---------- */
+  const CH = {
+    mars: [['Darrow', 'The Reaper of Mars', '+1 to your highest attack die when your Standard attacks.', 'Break the Line'], ['Sevro au Barca', 'Goblin of the Howlers', '+1 army on a random frontline territory each Draft.', 'Howlers in the Night'],
+      ['Cassius au Bellona', 'The Morning Knight', '+1 to your highest defense die in every Keep you hold.', 'Bellona Blade'], ['Roque au Fabii', 'The Poet', '+1 extra fortify move each turn.', 'Verse and Logistics'],
+      ['Titus au Ladros', 'The Butcher of Castle Mars', '+1 to your highest attack die against neutral garrisons.', 'Raid the Weak'], ['Antonia au Severus-Julii', 'The Knife in the Back', '+1 extra army whenever your Standard enslaves a territory.', 'Bought Loyalty'],
+      ['Cassandra', 'Traitor of Mars', 'Your first conquest each turn drops +1 army on the new ground.', "Jackal's Coin"]],
+    diana: [['Tamara', 'Primus of Diana', '+1 to your highest attack die against neutral garrisons.', 'The Hunt'], ['Tactus au Rath', 'The Rotten Apple', 'Your first conquest each turn drops +1 army on the new ground.', 'Knife for the Primus'],
+      ['Hartsbane', 'Diana Stalker', '+1 army on a random frontline territory each Draft.', 'Arrow Storm'], ['Quiver', 'Diana Archer', '+1 extra fortify move each turn.', 'Pinned Down'], ['Moonsong', 'Diana Ambusher', '+1 reinforcement each Draft.', 'Birchwood Ambush']],
+  };
+  const primus = (h) => {
+    const cs = CH[h], p = st.pick;
+    if (st.sworn) return `<div class="modal"><div class="box" style="width:420px"><h2>${cs[p][0]} leads House ${HOUSE[h].n}</h2><p class="prose">Waiting for the other Houses to choose. 2 of 4 are ready.</p><div class="fine">Rivals see your Primus when everyone has chosen.</div></div></div>`;
+    return `<div class="modal"><div class="box" style="width:${cs.length > 5 ? 740 : 880}px">
+      <h2>Choose your Primus</h2><p class="prose">House ${HOUSE[h].n} is yours. Pick the Gold who leads it: their Passive works for you all war.</p>
+      <div class="cards-row">${cs.map(([n, t, pa, ac], i) => `<button class="gcard ${p === i ? 'on' : ''}" style="--hc:${HOUSE[h].c}" data-card="${i}">${p === i ? '<span class="pickd">YOUR PRIMUS</span>' : ''}
+        <div><div class="nm">${n}</div><div class="tt2">${t}</div></div><div class="blk"><span class="k">PASSIVE · ALL WAR</span>${pa}</div><div class="blk act"><span class="k">AS A CARD</span>${ac}</div></button>`).join('')}</div>
+      <button class="btn primary big" data-swear="1" ${p == null ? 'disabled' : ''}>${p == null ? 'Pick a Primus' : `Swear in ${cs[p][0].split(' ')[0]} ▸`}</button></div></div>`;
+  };
+
+  /* ---------- cast flow ---------- */
+  const castHead = (step, h = 'mars', name = "Where's Sevro?", steps = ['Target', 'Cards', 'Territories', 'Preview']) => `<div class="cast-h"><div class="medal">${HOUSE[h].s}</div>
+      <div><div class="sub">House ${HOUSE[h].n} · Ultimate</div><h2>${name}</h2></div><button class="btn sm ghost" tabindex="-1">✕</button></div>
+    <div class="steps">${steps.map((s, i) => `<span class="${i === step ? 'on' : i < step ? 'done' : ''}">${i < step ? '✓ ' : ''}${i + 1} · ${s}</span>`).join('')}</div>`;
+  const TGT = { P: 'The Quiet One', B: 'Mustang', A: 'The Quiet One and Mustang', J: 'Pax' };
+  const opt = (k, label, small) => `<button class="opt ${st.tgt === k ? 'on' : ''}" data-tgt="${k}"><i class="rb"></i>${label}${small ? ` <small>${small}</small>` : ''}</button>`;
+
+  /* ---------- scenes ---------- */
+  const S = [];
+  const add = (o) => S.push(o);
+  const BEFORE = 'Before the war', CAST = 'Casting an Ultimate', SEE = 'Seeing what happened', LES = 'The Proctor\'s Guide';
+
+  add({ group: BEFORE, label: 'War settings', type: 'chg', title: 'War Settings: the House Ultimates switch',
+    why: 'One more switch in a list the host already knows. It sits under Siege on Olympus because both are optional rules. With 2 Houses it turns itself off and says why. Try both with the control at the bottom.',
+    build: '<code>settingsHTML()</code> gets one more <code>toggle()</code> row and a note; <code>applySetting()</code> and Reset handle <code>ultimates</code>. <code>resolveSettings()</code> turns it off under 3 Houses. The same row shows in the War Council, read-only for guests.',
+    init: () => ({ ult: 1, n: 4 }),
+    render: () => { const two = st.n === 2, on = st.ult && !two;
+      return menuScr(`<div class="steps"><span>1 · Houses</span><span class="on">2 · War settings</span></div><h2>War Settings</h2>
+        <div class="settings">
+          <div class="set-old">Map size · Starting troops · Turn timer <span class="fine">(unchanged)</span></div>
+          <div class="set-row"><div class="set-k">Alliances</div>${onoff('x', 1)}</div>
+          <div class="set-row"><div class="set-k">Siege on Olympus <span class="fine">(win condition)</span></div>${onoff('x', 1)}</div>
+          <div class="set-new"><div class="set-row"><div class="set-k">House Ultimates <span class="fine">(comeback powers)</span> <span class="badge new">New</span></div>${onoff('ult', on, two)}</div>
+            <div class="set-note">${two ? 'House Ultimates need 3 or more Houses.' : on ? 'From round 4, Houses in the bottom half can spend 3 cards to strike the leader.' : 'No Ultimates in this war.'}</div></div>
+          <button class="btn sm ghost" style="align-self:flex-start" tabindex="-1">Reset to recommended</button>
+        </div>
+        <div class="row" style="margin-top:12px"><button class="btn" tabindex="-1">◂ Houses</button><button class="btn primary" tabindex="-1">Begin the Institute</button></div>`, 540,
+        `<div class="mock-ctl">Mockup control · show it with <span class="seg"><button data-set="n" data-v="4" class="${!two ? 'on' : ''}">4 Houses</button><button data-set="n" data-v="2" class="${two ? 'on' : ''}">2 Houses</button></span></div>`); } });
+
+  add({ group: BEFORE, label: 'War Council: pick a House', type: 'chg', title: 'War Council, as the host',
+    why: 'Each seat shows its House as a pill in that House\'s colour. The picker lists all seven plus Random, and a taken House is greyed out with the name of who holds it. The host can open any seat. Click a pill to try it.',
+    build: '<code>showLobby()</code> seat rows plus a popover. A new server op, <code>setHouse</code>, calls one engine helper that holds the rules, so they can be tested. A House the host sets for a player is locked (🔒) until the host sets it back to Random.',
+    init: () => ({ seats: SEATS(), open: 3 }), render: () => lobby(0) });
+
+  add({ group: BEFORE, label: 'War Council: a guest', type: 'chg', title: 'War Council, as a guest',
+    why: 'A guest can change only their own seat. Every other House is plain text, and a seat the host assigned says so. Here you are Mustang.',
+    build: 'The same rows with editing off. The lobby already refreshes on every change, so a pick shows for everyone at once. If two players reach for the same House, the second one gets "House Mars is taken."',
+    init: () => ({ seats: SEATS(), open: null }), render: () => lobby(1) });
+
+  add({ group: BEFORE, label: 'Local war: Houses', type: 'chg', title: 'Local war, step 1',
+    why: 'The same pill on the local setup screen, on the step already called Houses. Leaving everything on Random plays exactly like today.',
+    build: '<code>showLocalSetup()</code> step 1. The picks go to <code>createGame()</code> as <code>houses</code>. Practice war stays Random.',
+    init: () => ({ seats: [{ name: 'Reaper', house: 'mars' }, { name: "Proctor's Pet", ai: 1, house: null }, { name: 'Some Tall Bastard', ai: 1, house: null }, { name: 'A Very Angry Gold', none: 1, house: null }], open: null }),
+    render: () => menuScr(`<div class="steps"><span class="on">1 · Houses</span><span>2 · War settings</span></div><h2>Local War</h2>
+      <p class="fine" style="margin:0 0 12px">Up to 7 Houses. Hot-seat: pass one device between humans. Empty seats become neutral Houses.</p>
+      ${st.seats.map((s, i) => `<div class="seat-row" style="${s.none ? 'opacity:.5' : ''}"><span class="seg">${['Human', 'AI', 'None'].map((k, j) => `<button tabindex="-1" class="${(s.none ? 2 : s.ai ? 1 : 0) === j ? 'on' : ''}">${k}</button>`).join('')}</span>
+        <span class="field">${esc(s.name)}</span>${s.none ? '' : pill(i, s.house, true)}${st.open === i ? popover(st.seats, i) : ''}</div>`).join('')}
+      <div class="row" style="margin-top:10px"><button class="btn" tabindex="-1">Back</button><button class="btn primary" tabindex="-1">Next: War settings ▸</button></div>`, 600) });
+
+  add({ group: BEFORE, label: 'Choose your Primus', type: 'new', title: 'Choose your Primus (replaces the Passage)',
+    why: 'Every Character of your House at once, with the Passive you would get. Pick, then confirm, so a stray click can\'t lock in a leader. Mars has seven, so the cards wrap to two rows. Pick one, then swear them in.',
+    build: 'Replaces the Passage modal in <code>renderModals()</code>. The engine deals your House\'s Characters into <code>priv.passage</code>, and the <code>choose</code> action is unchanged. Passives show at printed value. The Sorting wheel only spins for Houses that were drawn at random.',
+    init: () => ({ pick: null, sworn: false }),
+    render: () => map({ dim: T.map((t) => t.id) }) + topbar({ title: 'CHOOSE YOUR PRIMUS', sub: 'House Mars' }) + primus('mars') });
+
+  add({ group: BEFORE, label: 'A House of five', type: 'new', title: 'Choose your Primus, House Diana',
+    why: 'Every House but Mars has five Characters, which fit one row. This one is shown with a Primus already picked.',
+    build: 'Same modal. The card row wraps by itself: five across here, and two rows on a phone.',
+    init: () => ({ pick: 0, sworn: false }),
+    render: () => map({ dim: T.map((t) => t.id) }) + topbar({ title: 'CHOOSE YOUR PRIMUS', sub: 'House Diana' }) + primus('diana') });
+
+  add({ group: CAST, label: 'The Ultimate button', type: 'new', title: 'The Ultimate button, in the Draft',
+    why: 'The button is in the Draft bar from the first turn, so a player can see why they can\'t cast before the day they can. Its second line is the reason. Ready is the only state that glows. The dashed panel lists the other four.',
+    build: 'The Draft branch of <code>renderActionBar()</code>. The state comes from one engine helper, <code>ultBlocker(v, me)</code>, which the AI also uses. The label is your House\'s Ultimate.',
+    render: () => hud({ phase: 'draft', reinf: '<b>7</b> to place', m: {}, bar: draftBar(7, ultBtn('ready', 'next')), hand: handRow(), icons: { M: [['ready', null, 0]] } })
+      + `<div class="anno" style="right:10px;top:262px;width:190px"><span class="ak">The other four states</span>${['locked', 'top', 'cd', 'cards'].map((s) => ultBtn(s)).join('')}</div>` });
+
+  add({ group: CAST, label: 'Step 1 · Target', type: 'new', title: 'Step 1: pick a target',
+    why: 'Parties are listed the way the rule ranks them, and the cut-off is a line: everyone under it may cast. A public alliance is one row with three choices, and the whole-alliance choice says what it costs you in strength.',
+    build: '<code>winScores()</code>, <code>partiesOf()</code> and <code>bottomHalfSeats()</code> from the engine. The whole-alliance option only appears for public alliances. Allies are never listed.',
+    init: () => ({ tgt: 'P' }),
+    render: () => hud({ phase: 'draft', reinf: '<b>7</b> to place', m: {}, bar: draftBar(7, ultBtn('ready')), hand: handRow() }) + `<div class="modal"><div class="box cast">${castHead(0)}
+      <div class="lbl">Standing by Win % · 3 parties</div>
+      <div class="party"><div class="ph"><span class="rank">1</span><span class="who">${sig('P')} The Quiet One <span class="p1">44%</span> + ${sig('B')} Mustang <span class="p1">20%</span> <span class="tagx">Public alliance</span><span class="tagx lead">★ Leader</span></span><span class="pct"><span class="pbar"><i style="width:64%"></i></span>64%</span></div>
+        <div class="opts">${opt('P', 'The Quiet One only')}${opt('B', 'Mustang only')}${opt('A', 'Whole alliance', 'every member, weaker hit')}</div></div>
+      <div class="party"><div class="ph"><span class="rank">2</span><span class="who">${sig('J')} Pax</span><span class="pct"><span class="pbar"><i style="width:19%"></i></span>19%</span></div><div class="opts">${opt('J', 'Pax')}</div></div>
+      <div class="cut">Below this line: may cast an Ultimate</div>
+      <div class="party me"><div class="ph"><span class="rank">3</span><span class="who">${sig('M')} Reaper <span class="you">YOU</span></span><span class="pct"><span class="pbar"><i style="width:17%"></i></span>17%</span></div></div>
+      <div class="cast-f"><span class="sum">Target: <b>${TGT[st.tgt]}</b></span><span class="row"><button class="btn" tabindex="-1">Cancel</button><button class="btn primary" data-go="next">Next: Cards ▸</button></span></div>
+    </div></div>` });
+
+  add({ group: CAST, label: 'Step 2 · Cards', type: 'new', title: 'Step 2: choose the 3 cards',
+    why: 'Three cards, with your birth-House card already picked and marked as required. The cost is in plain words: this replaces a trade. Click cards to swap which two go with it.',
+    build: '<code>ultCardsOk()</code>. Next stays disabled until 3 unlocked cards are picked with at least one from your own House. Casting counts as the forced trade at 5 cards.',
+    init: () => ({ cards: [0, 1, 2] }),
+    render: () => { const ok = st.cards.length === 3 && st.cards.includes(0), keep = HAND.filter((_, i) => !st.cards.includes(i)).map((c) => c[0]);
+      return hud({ phase: 'draft', reinf: '<b>7</b> to place', m: {}, bar: draftBar(7, ultBtn('ready')) }) + `<div class="modal"><div class="box cast">${castHead(1)}
+      <div class="lbl">Spend 3 cards · at least 1 from House Mars</div>
+      <div class="cards-row" style="margin:6px 0 0">${HAND.map(([n, h, a], i) => `<button class="gcard ${st.cards.includes(i) ? 'on' : ''}" style="--hc:${HOUSE[h].c};width:136px" data-hc="${i}">${h === 'mars' ? '<span class="req">REQUIRED · MARS</span>' : ''}${st.cards.includes(i) ? '<span class="pickd">SPEND</span>' : ''}
+        <div><div class="nm">${n}</div><div class="tt2">House ${HOUSE[h].n}</div></div><div class="blk act"><span class="k">YOU GIVE UP</span>${a}</div></button>`).join('')}</div>
+      <div class="cast-f"><span class="sum">${ok ? `Replaces a trade: <b>no +10 armies</b>. You keep ${keep.length ? '<b>' + keep.join(', ') + '</b>' : 'nothing'}.` : st.cards.includes(0) ? 'Pick exactly 3 cards.' : 'One card must be from <b>House Mars</b>.'}</span>
+        <span class="row"><button class="btn" data-go="prev">◂ Target</button><button class="btn primary" data-go="next" ${ok ? '' : 'disabled'}>Next: Territories ▸</button></span></div>
+    </div></div>`; } });
+
+  add({ group: CAST, label: 'Step 3 · Mars picks land', type: 'new', title: 'Step 3 (Mars): pick 3 territories',
+    why: 'For picks, the window gets out of the way and the map does the work, as a card preview does today. Land you may seize glows. Keeps, the Standard\'s territory and land outside Mars\'s quadrants are dimmed, and hovering one says why. Click a third territory.',
+    build: 'The glow reuses <code>renderHighlights()</code>. Picks travel in the action as <code>picks</code> and the engine checks them again. Jupiter gets the quadrant choice on the next screen. The other five Houses skip this step.',
+    init: () => ({ picks: [id('Thornwall'), id('Greatwoods')] }),
+    hex: (t) => { const i = st.picks.indexOf(t); if (i >= 0) st.picks.splice(i, 1); else if (VALID.includes(t) && st.picks.length < 3) st.picks.push(t); else return; render(); },
+    render: () => { const n = st.picks.length;
+      return hud({ phase: 'draft', reinf: '<b>7</b> to place', m: { glow: VALID.filter((t) => !st.picks.includes(t)), dim: T.filter((t) => !VALID.includes(t) && t.o !== 'M').map((t) => t.id), picked: st.picks, titles: BLOCKED },
+        bar: `<span class="hint"><b>⚡ Where's Sevro?</b> Pick 3 territories to seize.</span>
+          ${[0, 1, 2].map((i) => st.picks[i] != null ? `<span class="pchip">${i + 1} · ${T[st.picks[i]].name} <b>${T[st.picks[i]].a}</b></span>` : `<span class="pchip empty">${i + 1} · pick on the map</span>`).join('')}
+          <button class="btn" data-go="prev">◂ Cards</button><button class="btn primary" data-go="next" ${n === 3 ? '' : 'disabled'}>Preview ▸</button>`,
+        log: ['<b>Dimmed land can\'t be seized:</b> Keeps, a Standard\'s territory, and land in a quadrant where Mars holds nothing.', ...LOG6.slice(0, 1)] }); } });
+
+  add({ group: CAST, label: 'Step 3 · Jupiter picks a quadrant', type: 'new', title: 'Step 3 (Jupiter): pick a quadrant',
+    why: 'Seen by Pax, casting Stormfall on The Quiet One. Each quadrant shows what it would cut before you choose, and the map shades the one selected. A quadrant with nothing to cut can\'t be picked.',
+    build: 'The per-quadrant totals are worked out on the client from the public map. The quadrant goes in the action as <code>picks[0]</code>. The Draft cap line only names the targeted player, even against an alliance.',
+    init: () => ({ q: 'w' }),
+    render: () => { const west = ['Owl Pass', 'High Bluff', 'Greatwoods', 'Argos Bend', 'Thornwall', 'Argos Ford'].map(id), east = ['Stone Steps', 'Minerva Reach', 'Grey Moor'].map(id), hit = st.q === 'w' ? west : east;
+      return hud({ me: 'J', cur: 'J', phase: 'draft', reinf: '<b>6</b> to place', m: { storm: hit, lit: hit, delta: Object.fromEntries(hit.map((t) => [t, '−' + (T[t].a - 5)])) },
+        bar: `<span class="hint"><b>⚡ Stormfall</b> on The Quiet One and Mustang: every stack over 5 in one quadrant is cut to 5.</span><button class="btn" tabindex="-1">◂ Cards</button><button class="btn primary" data-go="next">Preview ▸</button>` })
+        + `<div class="qpanel"><div class="lbl" style="font-size:12px;letter-spacing:.18em;color:var(--gold-dim);font-weight:700">PICK A QUADRANT</div>
+          <div class="qgrid">
+            <button class="qbtn ${st.q === 'w' ? 'on' : ''}" data-q="w"><b>West</b><span class="cutn">−44</span><small>6 territories</small></button>
+            <button class="qbtn ${st.q === 'e' ? 'on' : ''}" data-q="e"><b>East</b><span class="cutn">−6</span><small>3 territories</small></button>
+            <button class="qbtn" disabled><b>North</b><span class="cutn">0</span><small>nothing to cut</small></button>
+            <button class="qbtn" disabled><b>South</b><span class="cutn">0</span><small>nothing to cut</small></button>
+          </div><div class="fine">Also: The Quiet One's next Draft is capped at 5 (it would be 23). Standards are immune.</div></div>`; } });
+
+  const DELTA = { [id('Thornwall')]: '−11', [id('Greatwoods')]: '−7', [id('High Bluff')]: '−6' };
+  add({ group: CAST, label: 'Step 4 · Preview and Commit', type: 'new', title: 'Step 4: preview, then Commit',
+    why: 'The exact result before anything is spent. No Ultimate has a random part, so the preview is what will happen. Commit is the only button in the whole flow that costs cards.',
+    build: '<code>simulate()</code> runs the <code>ultimate</code> action on a copy of the state, the same path card previews use, and lights the territories that change.',
+    render: () => hud({ phase: 'draft', reinf: '<b>7</b> to place', m: { ...AFTER, lit: SEIZE, delta: DELTA },
+      bar: `<span class="hint"><b>Preview · Where's Sevro?</b> on The Quiet One: <b>24</b> destroyed, <b>25</b> join Mars, <b>3</b> territories become yours.</span>
+        <span class="pchip">Costs Sevro au Barca, Quiver, Weasel · no +10</span><button class="btn" data-go="prev">◂ Back</button><button class="btn gold" data-go="next">⚡ Commit</button>`,
+      log: ['<b>Preview.</b> Nothing has been spent yet.', ...LOG6.slice(0, 1)] }) });
+
+  add({ group: SEE, label: 'The announcement', type: 'new', title: 'Everyone sees the cast',
+    why: 'Every player gets this, with the numbers, the moment an Ultimate lands. It stays until acknowledged, like a rival\'s played card, so nobody is left wondering why a stack halved.',
+    build: '<code>showcase()</code> gets an <code>ultimate</code> branch with lead lines to the territories. It follows the replay speed and Skip. The cast prompt comes from the design sheet. No new sounds: it reuses existing effects.',
+    render: () => hud({ phase: 'draft', reinf: '<b>7</b> to place', m: { ...AFTER, seized: SEIZE, lines: SEIZE, lineY: 170 }, bar: '<span class="hint">Acknowledge the Ultimate to go on.</span>', icons: { M: [['recharge', 'mars', 3]] },
+      log: ["<b>⚡ Reaper casts Where's Sevro?</b> on The Quiet One: 24 destroyed, 25 join House Mars.", '⚑ Thornwall, Greatwoods and High Bluff are seized.', ...LOG6.slice(0, 1)] })
+      + `<div class="sc" role="dialog" aria-label="House Ultimate"><div class="k">⚡ HOUSE ULTIMATE</div><div class="who">${sig('M')} <b>Reaper</b> · House Mars</div><h4>Where's Sevro?</h4>
+        <div class="q">“They were in the dead horses…”</div><div class="who">on ${sig('P')} <b>The Quiet One</b></div>
+        <table><tr><td><b>Thornwall</b> 22</td><td>11 die · 11 join Mars</td></tr><tr><td><b>Greatwoods</b> 15</td><td>7 die · 8 join Mars</td></tr><tr><td><b>High Bluff</b> 12</td><td>6 die · 6 join Mars</td></tr></table>
+        <div class="tot"><b>24</b> destroyed · <b>25</b> join Mars · <b>3</b> territories seized</div>
+        <button class="btn primary" data-go="next">Seen ▸</button></div>` });
+
+  const IC13 = { M: [['recharge', 'mars', 2]], P: [['storm', 'jupiter', 1]], B: [['locked', null, 2]], J: [['recharge', 'jupiter', 3]] };
+  const LOG13 = ['<b>⚡ Pax casts Stormfall</b> on The Quiet One: 10 armies cut in the west. Next Draft capped at 5.', '<b>Mustang</b> walks out on The Quiet One. No new alliance for 2 turns.', "<b>⚡ Reaper casts Where's Sevro?</b>"];
+  add({ group: SEE, label: 'Icons on banners', type: 'new', title: 'Status icons on every banner',
+    why: 'A strip under each House. The ring is the kind of effect (gold buff, red debuff, blue restriction), the dot is the House that caused it, and the number is how many of the bearer\'s turns are left. Hover or tap reads it out. Click the others.',
+    build: '<code>renderRoster()</code>, drawn from <code>v.ult</code> (effects and cooldowns) and the alliance lockout. Icons and wording come from the design sheet. Your own icons also show by your Primus, bottom-left.',
+    init: () => ({ tip: 'P:storm' }),
+    render: () => hud({ cur: 'B', phase: 'attack', round: 7, m: STORM, ally: [], icons: IC13, bar: `<span class="hint">${sig('B')} Watching <b style="color:${C.B}">Mustang</b> · attack</span><span class="seg"><button class="on" tabindex="-1">1×</button><button tabindex="-1">2×</button><button tabindex="-1">4×</button></span>`, log: LOG13 }) });
+
+  add({ group: SEE, label: 'Marks on the map', type: 'new', title: 'Seized and Storm-struck',
+    why: 'Instant Ultimates leave a mark for one round, so a player who looked away can still see what happened and where. Flags mark what Mars seized. Hatching marks the quadrant Stormfall hit.',
+    build: 'Overlays in <code>scene.ts</code>, driven by the last casts in <code>v.ult</code>. Flags stay until Mars\'s next turn, the hatching until Jupiter\'s next turn.',
+    render: () => hud({ cur: 'B', phase: 'attack', round: 7, m: { ...STORM, seized: SEIZE, storm: T.filter((t) => t.west).map((t) => t.id) }, ally: [], icons: IC13,
+      bar: '<span class="hint">⚑ <b>Seized</b> by House Mars, until Reaper\'s next turn · ▨ <b>Storm-struck</b> quadrant, until Pax\'s next turn</span>', log: LOG13 }) });
+
+  add({ group: SEE, label: 'Your turn was skipped', type: 'new', title: 'Blacked out',
+    why: 'A skipped turn is the one moment the game has to stop and explain itself, or it looks like a bug. The screen says who did it, what was lost, and that the caster can read your hand.',
+    build: 'Shown when my <code>turn</code> event arrives with <code>skipped: true</code>. One button, and Enter also closes it. Other players only see the War Log line and the icons.',
+    render: () => hud({ cur: 'P', phase: 'draft', round: 9, m: STORM, ally: [], icons: { M: [['revealed', 'minerva', 0]] }, bar: '', log: ['<b>⚡ Mustang casts Blackout</b> on Reaper.', ...LOG13.slice(0, 1)] })
+      + `<div class="skip-scr"><div class="in"><div class="medal" style="--hc:#3f86e0;width:56px;height:56px;font-size:28px">⌘</div><div class="big">BLACKED OUT</div>
+        <p><b>Mustang</b> of House Minerva cut your lines. Your turn was skipped: no Draft, cards, attacks or Fortify.</p>
+        <div class="lost"><span class="pchip">Draft lost <b>23</b></span><span class="pchip">Hand seen by Mustang until her next turn</span></div>
+        <p class="fine" style="font-size:15px">“Wisdom is just cruelty with patience.”</p><button class="btn primary big" data-go="next">Continue ▸</button></div></div>` });
+
+  add({ group: SEE, label: 'Silenced or Pinned', type: 'new', title: 'A turn with restrictions',
+    why: 'Here the turn still happens, so the HUD stays. A blue banner above the bar says what is blocked, and the blocked controls are greyed out. Pinned (the Wild Hunt) uses the same banner: no Fortify, and the Standard can\'t move.',
+    build: 'Reads <code>v.ts.ultMuted</code> and <code>v.ts.ultPinned</code>. Disabled buttons carry the reason as their tooltip. The banner goes when the turn ends.',
+    render: () => hud({ phase: 'draft', round: 9, reinf: '<b>5</b> to place <s>12</s>', m: STORM, ally: ['M', 'J'], icons: { M: [['silenced', 'minerva', 1]], J: [['silenced', 'minerva', 1]] },
+      above: `<div class="restrict"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6fa8ee" stroke-width="2" stroke-linecap="round"><use href="#i-silenced"/></svg><b>Silenced by House Minerva</b><span>Draft −60% (12 → 5) · no cards, attacks or Fortify this turn</span></div>`,
+      bar: `<span class="hint">Click your territories to place armies.</span><span class="seg"><button class="on" tabindex="-1">+1</button><button tabindex="-1">+3</button><button tabindex="-1">All</button></span>
+        <button class="btn" disabled title="Silenced: no cards this turn">Trade 3 → 10</button><button class="btn" disabled title="Silenced: no attacks this turn">Attack</button><button class="btn" disabled title="Silenced: no Fortify this turn">Fortify</button><button class="btn primary" tabindex="-1">End Turn ▸</button>`,
+      hand: handRow(true), log: ['<b>⚡ Mustang casts Blackout</b> on the alliance of Reaper and Pax.', ...LOG13.slice(0, 1)] }) });
+
+  add({ group: SEE, label: 'Minerva reads a hand', type: 'new', title: 'Revealed, as the Minerva caster sees it',
+    why: 'Seen by Mustang, who cast Blackout on The Quiet One. The eye on the target\'s banner opens their hand. It is read-only, nobody else gets it, and it closes itself at the caster\'s next turn.',
+    build: '<code>viewFor()</code> adds the target\'s hand to the caster\'s view only while the Revealed effect lasts. It is the one case where a hand leaves the server for someone who doesn\'t own it.',
+    init: () => ({ tip: null }),
+    render: () => hud({ me: 'B', cur: 'B', phase: 'attack', round: 8, m: STORM, ally: [], icons: { P: [['blackout', 'minerva', 1], ['revealed', 'minerva', 0]], B: [['recharge', 'minerva', 3]] },
+      bar: '<span class="hint">Pick one of your glowing territories to attack from.</span><button class="btn" tabindex="-1">Fortify ▸</button><button class="btn" tabindex="-1">End Turn</button>', log: ['<b>⚡ Mustang casts Blackout</b> on The Quiet One. Their next turn is skipped.', ...LOG13.slice(0, 1)] })
+      + `<div class="reveal" role="dialog" aria-label="The Quiet One's hand"><div class="rh"><span>${sig('P')} The Quiet One's hand · 4 cards</span><span class="fine">Visible until your next turn</span></div>
+        <div class="cards-row">${[['The Jackal', 'pluto'], ['Rigged Underworld', 'pluto', 'REACTION'], ['Thunderjaw', 'jupiter'], ['Pax au Telemanus', 'minerva']].map(([n, h, k]) => `<span class="gcard" style="--hc:${HOUSE[h].c}"><div class="nm">${n}</div><div class="tt2">House ${HOUSE[h].n}${k ? ' · ' + k : ''}</div></span>`).join('')}</div></div>` });
+
+  add({ group: LES, label: 'Lesson: your Ultimate is ready', type: 'read', title: 'Lesson: your Ultimate is ready',
+    why: 'The first time the button turns Ready, a Read card explains it in the .007 style: one idea, two sentences, pointing at the real control. It names your House\'s Ultimate and the cost.',
+    build: 'Lesson <code>ult-ready</code> in <code>lessons.ts</code>. It fires once, in Full or Hints, and never blocks in a timed war. A Tip (<code>ult-open</code>) announces round 4 before it.',
+    spot: '#ultBtn',
+    render: () => hud({ phase: 'draft', reinf: '<b>7</b> to place', m: {}, bar: draftBar(7, ultBtn('ready')), hand: handRow(), icons: { M: [['ready', null, 0]] } })
+      + readCard({ step: 'New: House Ultimates', x: 404, y: 246, w: 400, title: 'Your Ultimate is ready',
+        body: "<span>You're in the bottom half, so you may cast <b>Where's Sevro?</b>: seize 3 territories, and half their armies join you.</span><span>It costs <b>3 cards</b> (one from House Mars) instead of a trade, then recharges for 3 turns.</span>" }) });
+
+  add({ group: LES, label: 'Lesson: an Ultimate hit you', type: 'read', title: 'Lesson: an Ultimate hit you',
+    why: 'The first time you are the target, the guide points at your own banner instead of explaining the whole system. After this, the icons explain themselves on hover.',
+    build: 'Lesson <code>ult-hit</code>, fired after the announcement closes. A lighter Tip (<code>ult-status</code>) covers the first icon you see on a rival.',
+    spot: '#ic-M',
+    render: () => hud({ phase: 'draft', round: 8, reinf: '<b>5</b> to place <s>14</s>', m: STORM, ally: [], icons: { M: [['storm', 'jupiter', 1]], J: [['recharge', 'jupiter', 3]] }, bar: draftBar(5, ultBtn('top')), hand: handRow(),
+      log: ['<b>⚡ Pax casts Stormfall</b> on Reaper. Next Draft capped at 5.', ...LOG13.slice(1, 2)] })
+      + readCard({ step: 'New: House Ultimates', x: 226, y: 62, w: 380, title: 'Stormfall hit you',
+        body: '<span>The icons on your banner show what is on you and for how many of your turns.</span><span><b>Hover one</b> to read it.</span>' }) });
+
+  /* ---------- runtime ---------- */
+  const stage = document.getElementById('stage'), wrap = document.getElementById('wrap'), rail = document.getElementById('rail');
+  let cur = 0, st = {};
+  try { const h = location.hash.slice(1); if (/^s\d+$/.test(h)) cur = Math.min(S.length - 1, +h.slice(1)); } catch (e) {}
+  const fresh = () => (S[cur].init ? S[cur].init() : {});
+  const badge = (t) => t === 'new' ? '<span class="badge new">New</span>' : t === 'chg' ? '<span class="badge chg">Changed</span>' : '<span class="badge read">Lesson</span>';
+  function drawRail() {
+    let html = '', g = '';
+    S.forEach((s, i) => {
+      if (s.group !== g) { g = s.group; html += `<div class="grp">${g.toUpperCase()}</div>`; }
+      html += `<button class="it ${i === cur ? 'on' : ''}" data-i="${i}" aria-current="${i === cur}"><span class="n">${String(i).padStart(2, '0')}</span><span>${s.label}</span>${badge(s.type)}</button>`;
+    });
+    html += `<div class="nav"><button class="btn sm" id="prev" ${cur ? '' : 'disabled'}>◂ Back</button><button class="btn sm primary" id="next" ${cur < S.length - 1 ? '' : 'disabled'}>Next ▸</button></div><div class="keys">← → to move between screens</div>`;
+    rail.innerHTML = html;
+  }
+  const scale = () => wrap.clientWidth / 1000;
+  const rectIn = (el, pad = 0) => { const sc = scale(), sr = stage.getBoundingClientRect(), r = el.getBoundingClientRect(); return { x: (r.left - sr.left) / sc - pad, y: (r.top - sr.top) / sc - pad, w: r.width / sc + 2 * pad, h: r.height / sc + 2 * pad }; };
+  function render() {
+    const s = S[cur];
+    stage.innerHTML = s.render();
+    document.getElementById('capT').innerHTML = `<span class="n">${String(cur).padStart(2, '0')}</span>${s.title}`;
+    document.getElementById('whyT').textContent = s.why;
+    document.getElementById('build').innerHTML = s.build;
+    if (s.spot) {
+      const t = stage.querySelector(s.spot);
+      if (t) { const r = rectIn(t, 6);
+        stage.insertAdjacentHTML('beforeend', `<div class="blocker"></div><div class="spot" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"></div>`);
+        const coach = stage.querySelector('.coach'); if (coach) stage.appendChild(coach); }
+    }
+    if (st.tip) {
+      const el = stage.querySelector(`[data-tip="${st.tip}"]`), d = IC[st.tip.split(':')[1]];
+      if (el && d) { const r = rectIn(el);
+        stage.insertAdjacentHTML('beforeend', `<div class="tt" role="tooltip" style="left:${Math.max(222, r.x + r.w + 12)}px;top:${Math.max(8, r.y - 8)}px"><b>${d.n}</b><p>${d.t}</p><span class="src">${d.src}</span></div>`); }
+    }
+  }
+  function go(i) {
+    cur = Math.max(0, Math.min(S.length - 1, i));
+    st = fresh();
+    try { history.replaceState(null, '', '#s' + cur); } catch (e) {}
+    drawRail(); render();
+  }
+  new ResizeObserver(() => { stage.style.setProperty('--s', scale()); if (S[cur].spot || st.tip) render(); }).observe(wrap);
+
+  rail.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.i != null) go(+b.dataset.i);
+    else if (b.id === 'prev') go(cur - 1);
+    else if (b.id === 'next') go(cur + 1);
+  });
+  document.getElementById('replay').onclick = () => go(cur);
+  stage.addEventListener('click', (e) => {
+    const q = (sel) => e.target.closest(sel);
+    let b;
+    if ((b = q('[data-go]')) && !b.disabled) { go(cur + (b.dataset.go === 'prev' ? -1 : 1)); return; }
+    if ((b = q('[data-set]')) && !b.disabled) { st[b.dataset.set] = +b.dataset.v; render(); return; }
+    if ((b = q('[data-house]')) && !b.disabled && st.open != null) { st.seats[st.open].house = b.dataset.house || null; st.open = null; render(); return; }
+    if ((b = q('[data-open]'))) { st.open = st.open === +b.dataset.open ? null : +b.dataset.open; render(); return; }
+    if ((b = q('[data-card]'))) { st.pick = +b.dataset.card; render(); return; }
+    if ((b = q('[data-swear]')) && !b.disabled) { st.sworn = true; render(); return; }
+    if ((b = q('[data-tgt]'))) { st.tgt = b.dataset.tgt; render(); return; }
+    if ((b = q('[data-hc]'))) { const i = +b.dataset.hc, k = st.cards.indexOf(i); if (k >= 0) st.cards.splice(k, 1); else if (st.cards.length < 3) st.cards.push(i); render(); return; }
+    if ((b = q('[data-q]')) && !b.disabled) { st.q = b.dataset.q; render(); return; }
+    if ((b = q('[data-tip]'))) { st.tip = st.tip === b.dataset.tip ? null : b.dataset.tip; render(); return; }
+    const h = q('.hex');
+    if (h && S[cur].hex) { S[cur].hex(+h.dataset.t); return; }
+    if (st.open != null) { st.open = null; render(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input, textarea, select')) return;
+    if (e.key === 'ArrowRight') go(cur + 1);
+    else if (e.key === 'ArrowLeft') go(cur - 1);
+  });
+
+  stage.style.setProperty('--s', scale());
+  st = fresh(); drawRail(); render();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => render());
+})();
+</script>

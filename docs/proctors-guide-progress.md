@@ -1,10 +1,10 @@
 # Proctor's Guide (.007) — progress
 
 ## Status
-READY TO DEPLOY
+DEPLOYED (pushed 137e39e to main, 2026-10-01)
 
 ## Next step
-None. Waiting for the user to say "deploy" (push main via the scratchpad clone, per the deploy memory; no edge function redeploy needed, src/engine/ is unchanged).
+None. .007 is pushed; GitHub Actions builds and publishes Pages. No edge function redeploy (src/engine/ unchanged).
 
 ---
 
@@ -143,3 +143,4 @@ None. Waiting for the user to say "deploy" (push main via the scratchpad clone, 
 - 2026-10-01 S1: WS3 done (Practice button, rules entry, README; copy.ts kept CRLF). npm test 244 pass, build clean. WS4 backup taken.
 - 2026-10-01 S1: WS4 §7 walk: all 13 PASS; 2 small fixes (chooser before name save; leaving Full drops turn-1 card). version .007. npm test 245, build clean.
 - 2026-10-01 S1: release check done (only .007 files differ; engine identical). Status READY TO DEPLOY. Final report sent.
+- 2026-10-01 S1: user said deploy. Fresh clone matched the release check; pushed 137e39e to main as sloppycodes4L. No edge function redeploy.
