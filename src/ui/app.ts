@@ -14,6 +14,7 @@ import { BOOK_W, bookChart, bookIndexAt, bookLines, bookX, roundOf, type Line } 
 import { LocalSession, OnlineSession, allCreds, fetchWarLog, fetchWars, flagLine, savedCreds, type Creds, type LobbySeat, type Session } from '../net/session.ts';
 import { ERRORS_FLAVOR, PASSAGE_INTRO, RULES_HTML, TAGLINES, describe, headline } from './copy.ts';
 import { VERSION } from '../version.ts';
+import { PATCH_NOTES } from './patch-notes.ts';
 import { assaultFight, attackFight, defenseNote, keepWalls, oddsClass, pct, standardFight, winChance } from './odds.ts';
 import { sound, turnHorn, type Mood } from './sound.ts';
 import { ELEVEN_SOUNDS } from './audio-manifest.ts';
@@ -217,7 +218,10 @@ export class App {
         <p class="fine">A free, non-commercial fan game inspired by Pierce Brown's <i>Red Rising</i>. Not affiliated with or endorsed by the author or publisher. Contains violence and foul language.</p>
         <p class="fine credits">Music: A.T.W., <i>The Wrath of God</i>.${ELEVEN_SOUNDS.length ? ' Some sound effects made with <a href="https://elevenlabs.io" target="_blank" rel="noopener">elevenlabs.io</a>.' : ''} Sound is off until you tick Sound below (or press M).</p>
         <div class="version" title="Game version">Version ${VERSION}</div>
-      </div></div>`)!;
+      </div><button class="patch-btn" data-a="patch" title="What changed, patch by patch">📜 Patch notes</button></div>`)!;
+    // The Patch notes button sits beside the Sound checkbox (desktop widths only: the stylesheet hides it on phones).
+    const sw = document.querySelector('.sound-toggle');
+    if (sw) s.querySelector<HTMLElement>('.patch-btn')!.style.left = `${Math.round(sw.getBoundingClientRect().right) + 8}px`;
     const nm = s.querySelector<HTMLInputElement>('#nm')!;
     const nameOk = () => { const n = nm.value.trim(); if (!n) { this.toast('Give yourself a name first, Pixie.'); nm.focus(); return null; } store.set('ic-name', n); return n; };
     s.addEventListener('click', async (e) => {
@@ -243,7 +247,18 @@ export class App {
       if (a === 'wars') this.showWars();
       if (a === 'rules') this.modalRules();
       if (a === 'codex') this.modalCodex();
+      if (a === 'patch') this.modalPatches();
     });
+  }
+
+  /** Patch notes: one fold per patch, newest first, one open at a time (the <details> share a name). */
+  modalPatches() {
+    const folds = PATCH_NOTES.map((p) => `<details class="pn" name="patch-notes" ${p.open ? 'open' : ''}>
+      <summary><span class="v">${esc(p.v)}</span><span class="t">${esc(p.title)}</span><span class="d">${esc(p.date)}</span><span class="chev" aria-hidden="true">▸</span></summary>
+      <div class="prose">${p.html}</div></details>`).join('');
+    this.standaloneModal(`<div class="modal"><div class="box patches"><h2>Patch notes</h2>
+      <p class="fine" style="margin:0">What changed, patch by patch. You are on Version ${VERSION}.</p>${folds}
+      <div style="text-align:right;margin-top:12px"><button class="btn primary" data-a="close">Close</button></div></div></div>`);
   }
 
   /** Every online war fought from this browser whose War Log the server still keeps (90 days). */

@@ -4,11 +4,11 @@ The build agent's checklist and memory between sessions. Spec: [patch-008.md](pa
 
 ## Status
 
-READY TO DEPLOY
+DEPLOYED (2026-10-04): commit 848a92ee5b70a524f5088bddb49587dc0c813420 on main, GitHub Pages build green, edge function `institute` version 6, live site verified, online smoke test passed. Final report sent.
 
 ## Next step
 
-WS7: fresh clone of GitHub main into the scratchpad (`gh-deploy`), copy the changed files in (list below under "Release check"), commit as `sloppycodes4L <298088978+sloppycodes4L@users.noreply.github.com>` with a message starting "v.008:", push `main`; watch the Actions run for that sha; when green, redeploy the edge function `institute` (project `hflggavblnedfgyjqbsr`, verify_jwt false, entrypoint index.ts, files index.ts + engine/data.ts, cards.ts, engine.ts, bot.ts from `supabase/functions/institute/`); check the live bundle for `.008` and a new string; run `node --experimental-transform-types scripts/smoke-online.ts`. Rollback sources: commit 9bb5bec and its `supabase/functions/institute/` (the scratchpad clone `gh-main`).
+None. .008 is live. If a session lands here, re-send the final report. For the next engine change, read "How the edge function was deployed" under Decisions first.
 
 ## Before WS1
 
@@ -130,12 +130,12 @@ Deploy access: `git ls-remote` and `git push --dry-run` succeed; Supabase lists 
 
 ## WS7 Deploy
 
-- [ ] Commit `v.008: …` as the repository's author, push `main`
-- [ ] GitHub Actions run green
-- [ ] Edge function `institute` redeployed
-- [ ] Live bundle contains `.008` and a new string
-- [ ] Online smoke test: a full war with 3+ Houses, House picks honoured, Ultimates cast counted
-- [ ] Status DEPLOYED with the commit sha; final report sent
+- [x] Commit `v.008: …` as the repository's author, push `main` (848a92ee5b70a524f5088bddb49587dc0c813420; the committed tree passed `npm test` and `npm run build` in the clone before the push)
+- [x] GitHub Actions run green (run 37238670701: tests, build and Pages)
+- [x] Edge function `institute` redeployed (version 6, verify_jwt false, entrypoint index.ts; see Decisions for how)
+- [x] Live bundle (`assets/index-Dupb81Ik.js`, the same file as the local build) contains `.008`, "Choose your Primus", "HOUSE ULTIMATE", "BLACKED OUT" and `setHouse`; the title screen reads "Version .008" with no console error
+- [x] Online smoke test, first run: war XQ343, Houses mars, minerva, jupiter, pluto; both picks honoured, a taken House refused, Ultimates on; 143 steps, 0 server refusals, 0 Draft mismatches, the war ended at turn 61; 3 Ultimates cast (Minerva 2, Jupiter 1)
+- [x] Status DEPLOYED with the commit sha; final report sent
 
 ## Section 10 acceptance
 
@@ -250,6 +250,7 @@ Casts by House over the 150 games with Ultimates on: Minerva 67, Ceres 63, Pluto
 
 - WS1: `defenseNote()` returns `'Keep'` for a House's Keep (it returned `''`), so the UI can name the Walls; `keepWalls()` gives the number (Walls plus `defKeep`).
 - WS1: the bot treats each point on a Keep's highest defense die as 35% more defenders (calibrated on `odds.ts`: 6 defenders need 9, 12, 16 attackers for ~80% at +0, +1, +2).
+- WS7, how the edge function was deployed: `index.ts` was uploaded as it is in the repository. The four engine files were uploaded as one-line re-exports of the committed files on GitHub, pinned to the commit (`export * from 'https://raw.githubusercontent.com/sloppycodes4L/institute-conquest/848a92ee5b70a524f5088bddb49587dc0c813420/supabase/functions/institute/engine/engine.ts'` and the same for `bot.ts`, `data.ts`, `cards.ts`). Supabase fetches them once, when it bundles the function. Reason: the function is now 214 KB, and uploading it through the Supabase tool means the agent re-types every byte in one message, which risks a typo in the server and may not fit in one message at all. The engine the server runs is byte for byte the committed one (hashes checked against `src/engine/`). The same file names are deployed as the spec lists; only their content differs. A later deploy can do the same with its own commit sha, or upload the files whole.
 - WS5: `ult-hit` fires when an Ultimate leaves an icon on my banner (that is what its card points at). Where's Sevro? leaves none on its victim (its marks are on the map), so a Mars cast does not trigger it.
 - WS5: `choose-primus` only runs in a .008 war. A war caught mid-Passage by the update finishes it without a lesson (its text would be wrong there).
 - WS5: the 🎓 menu offered Replay only when every lesson of a group had been seen. House Ultimates has seven, two of which need a war to go a certain way (short of cards, Locked out), so a group now offers Replay as soon as one of its lessons has been seen, and shows ◐ until all are (`guide.ts` `paintMenu()`). This applies to every group.
@@ -293,6 +294,8 @@ Casts by House over the 150 games with Ultimates on: Minerva 67, Ceres 63, Pluto
 - 2026-10-03 s1: baseline sims recorded. WS1 backup. WS1 engine, odds, bot, UI notes, copy and tests done; sync:fn; 247 tests pass. After-WS1 sims running in the background.
 - 2026-10-03 s1: WS1 pace +17-29%, so the bot was tuned (Keep storming in the Draft); pace back at baseline. Browser check done. Tests 247 pass, build passes. WS1 complete.
 - 2026-10-03 s1: WS2 backup. WS2 engine (picks, pickHouse, Choose your Primus, printed Passives), server op setHouse, session, lobby and local pickers, wheel, modal, CSS, log copy and tests written; tsc clean.
+- 2026-10-04 s2: follow-up patch .0081 (asked for after the .008 report): a Patch notes button on the title screen beside the Sound checkbox, desktop widths only (hidden at 900 px and below), opening a modal with one fold per patch (`src/ui/patch-notes.ts`, `modalPatches()` in `app.ts`, styles at the end of `style.css`, `tests/patch-notes.test.ts`). Entries: .0081 and .008 (open by default). 307 tests pass, build passes, checked in the browser at 1366, 901 and 375 px. No engine change, so no edge function redeploy. Pushed as its own commit (v.0081).
+- 2026-10-04 s2: WS7 done. Pushed 848a92e, Pages green, edge function version 6, live bundle and title screen show .008, smoke test passed on the first run. DEPLOYED.
 - 2026-10-04 s2: WS6 done: AI fallback fix and test, 100-game sims, section 10 table filled (4 more browser checks: Ultimates Off, effects and marks clearing, Silenced AIs, hot-seat), version .008, release check. 306 tests pass, build passes. READY TO DEPLOY.
 - 2026-10-04 s2: WS5 done: lessons, menu groups, guide tests, rules text, README, smoke script. 305 tests pass, build passes, lessons checked in the browser.
 - 2026-10-04 s2: resumed (tests 291, tsc clean). WS4 browser check finished at 1366, 1920 and phone width. Two bugs found and fixed, both a CSS class shared by accident: the announcement's wrapper had the Ultimate button's class `ult` and painted a dark panel over the whole map (now plain `showcase`); the skipped-turn headline's class `big` also styled the Continue button (now `ttl`). 4 tests added ("what the screen shows"). 295 tests pass, build passes. WS4 complete.

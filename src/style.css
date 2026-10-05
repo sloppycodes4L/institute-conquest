@@ -1020,3 +1020,26 @@ button.pchip:hover { border-color: var(--gold); }
   .ult-tbl td:first-child { white-space: normal; }
   .ult-tbl th, .ult-tbl td { padding: 4px 5px; }
 }
+
+/* ---------- .0081: Patch notes (title screen, desktop widths only) ---------- */
+.patch-btn { position: fixed; left: 124px; bottom: 10px; display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; font-size: 15px; letter-spacing: .04em; color: var(--ink-dim); backdrop-filter: blur(6px); }
+.patch-btn:hover, .patch-btn:focus-visible { border-color: var(--gold-dim); color: var(--ink); }
+@media (max-width: 900px) { .patch-btn { display: none; } }
+.modal .box.patches { width: min(640px, 100%); }
+.pn { border: 1px solid var(--line); border-radius: 10px; background: #140b0a; margin-top: 8px; }
+.pn[open] { border-color: var(--gold-dim); }
+.pn summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; padding: 9px 12px; border-radius: 10px; }
+.pn summary::-webkit-details-marker { display: none; }
+.pn summary:hover .t { color: var(--gold); }
+.pn summary .v { font-family: var(--display); font-weight: 900; color: var(--gold); letter-spacing: .08em; font-size: 17px; }
+.pn summary .t { font-weight: 700; color: var(--ink); letter-spacing: .04em; text-transform: uppercase; font-size: 15px; }
+.pn summary .d { color: var(--ink-mute); font-size: 13px; }
+.pn summary .chev { color: var(--gold-dim); transition: transform .15s; }
+.pn[open] summary .chev { transform: rotate(90deg); }
+.modal .pn .prose { padding: 2px 14px 12px; border-top: 1px solid rgba(138,58,30,.5); font-size: 16.5px; }
+.pn .prose p { margin: 8px 0 0; }
+.pn .prose ul { margin: 4px 0 0; padding-left: 20px; }
+.pn .prose li { margin: 3px 0; }
+.pn .prose li::marker { color: var(--blood-hi); }
+.modal .pn .prose table.ult-tbl { font-size: 15px; margin: 8px 0 0; }
+@media (prefers-reduced-motion: reduce) { .pn summary .chev { transition: none; } }
