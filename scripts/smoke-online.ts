@@ -1,6 +1,7 @@
 // Plays a full online game against the deployed edge function: 1 scripted "human" + 3 server AIs.
-// The human picks House Mars, the host gives the first AI House Minerva, and the other two stay on Random.
-// Reports the Houses dealt, the House Ultimates cast, and any action or Draft count the server disagreed with.
+// The war opens with the House Draft: the AI seats pick at once, the human tries a House that is taken (refused) and
+// then takes a free one. Reports the Houses dealt, the House Ultimates cast, how the war ended, and any action or
+// Draft count the server disagreed with.
 import { botAction } from '../src/engine/bot.ts';
 import { reinforcementBreakdown } from '../src/engine/engine.ts';
 import { HOUSES } from '../src/engine/data.ts';
@@ -18,24 +19,34 @@ let j = await call({ op: 'create', name: 'Smoke Reaper' });
 const { id: game, token, code } = j;
 console.log('created', code, Date.now() - t0, 'ms');
 for (let i = 0; i < 3; i++) j = await call({ op: 'addBot', game, token });
-// House pick: my own seat, then the host sets (and locks) an AI's. A House already taken is refused.
-await call({ op: 'setHouse', game, token, house: hid('mars') });
-await call({ op: 'setHouse', game, token, seat: 1, house: hid('minerva') });
-let dup = 'accepted';
-try { await call({ op: 'setHouse', game, token, seat: 2, house: hid('mars') }); } catch (e) { dup = String((e as Error).message); }
-const dupRefused = /taken/i.test(dup);
-console.log(`a taken House is refused: ${dupRefused ? 'yes' : `NO (${dup})`}`);
 j = await call({ op: 'start', game, token });
+// The House Draft: AI seats ahead of me have picked already. A taken House is refused; a free one is mine.
+let dupRefused = true, mine = -1;
+if (j.status === 'lobby' && j.draft) {
+  const taken = j.lobby.find((l: any) => l.house != null);
+  if (taken) {
+    let dup = 'accepted';
+    try { await call({ op: 'draftPick', game, token, house: taken.house }); } catch (e) { dup = String((e as Error).message); }
+    dupRefused = /taken/i.test(dup);
+    console.log(`a taken House is refused: ${dupRefused ? 'yes' : `NO (${dup})`}`);
+  } else console.log('I pick first: no taken House to try');
+  const free = HOUSES.map((_, h) => h).filter((h) => !j.lobby.some((l: any) => l.house === h));
+  mine = free.includes(hid('mars')) ? hid('mars') : free[0];
+  j = await call({ op: 'draftPick', game, token, house: mine });
+} else console.log('NO House Draft opened');
+if (!j.view) throw new Error(`the war did not start after the Draft: ${JSON.stringify(j).slice(0, 300)}`);
 const houses: string[] = j.view.players.map((p: any) => HOUSES[p.house].id);
-const picksOk = houses[0] === 'mars' && houses[1] === 'minerva' && new Set(houses).size === houses.length;
-console.log(`Houses: ${houses.join(', ')}. Picks honoured: ${picksOk ? 'yes' : 'NO'}. Ultimates ${j.view.ult ? 'on' : 'OFF'}`);
+const picksOk = mine >= 0 && j.view.players[0].house === mine && new Set(houses).size === houses.length;
+console.log(`Houses: ${houses.join(', ')}. Draft pick honoured: ${picksOk ? 'yes' : 'NO'}. Ultimates ${j.view.ult ? 'on' : 'OFF'}. Finale rule ${j.view.opts.finale ? 'on' : 'OFF'}`);
 let steps = 0, errors = 0, mismatches = 0;
 const casts = new Map<number, string>();
 while (j.view.phase !== 'over' && steps < 1500) {
   steps++;
   const v = j.view;
   for (const e of v.log) if (e.k === 'ultimate' && !casts.has(e.id)) casts.set(e.id, HOUSES[e.house].id);
-  const acting = v.phase === 'passage' ? (v.me.passage ? 0 : -1) : v.reaction ? v.reaction.defender : v.cur;
+  // The final vote stops the war until every ally has answered: mine comes first.
+  const owesVote = !!v.vote && v.alliances.some((a: any) => a.id === v.vote.alliance && a.members.includes(0)) && !v.vote.yes.includes(0) && !v.vote.no.includes(0);
+  const acting = v.phase === 'passage' ? (v.me.passage ? 0 : -1) : owesVote ? 0 : v.vote?.final ? -1 : v.reaction ? v.reaction.defender : v.cur;
   if (acting !== 0) { j = await call({ op: 'state', game, token }); continue; }
   // My turn has just begun when the log ends with my `turn` event, followed only by the ticks of Ultimates on me.
   let ti = v.log.length - 1;
@@ -66,4 +77,6 @@ const by: Record<string, number> = {};
 for (const h of casts.values()) by[h] = (by[h] ?? 0) + 1;
 console.log(`steps ${steps}, errors ${errors}, mismatches ${mismatches}, phase ${v.phase}, turn ${v.turn}, winner ${v.winner != null ? v.players[v.winner].name : '-'} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 console.log(`Ultimates cast: ${casts.size}${casts.size ? ` (${Object.entries(by).map(([h, n]) => `${h} ${n}`).join(', ')})` : ''}`);
+const end = v.log.find((e: any) => e.k === 'win' || e.k === 'olympusFalls');
+console.log(`Ending: ${!end ? '-' : end.k === 'olympusFalls' ? 'Olympus fell' : end.shared ? `the alliance ended the war (${end.members.length} Houses)` : 'last House standing'}. Final votes: ${v.log.filter((e: any) => e.k === 'finale').length}`);
 if (!picksOk || !dupRefused || v.phase !== 'over') process.exitCode = 1;

@@ -15,13 +15,35 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    v: '.009', title: 'The House Draft', date: '7 Oct 2026', open: true,
+    html: `<p>You asked, Golds. Houses get drafted, the Passage is back for those who miss the blood, and alliances can finally call it a day.</p>
+<h3>♜ House Selection</h3>
+<ul>
+<li>The host picks <b>Draft</b> or <b>Random</b> in War Settings.</li>
+<li><b>Draft:</b> a random order, one pick at a time, <b>30 seconds</b> each. Run out the clock and you get a random House.</li>
+<li>Every House has a page to read first: its Ultimate vs a player and vs an alliance, pros and cons, and its top 3 Primus options.</li>
+</ul>
+<h3>♛ Primus Selection</h3>
+<ul>
+<li><b>Pick:</b> choose any Character of your House. No Passage.</li>
+<li><b>Random (Passage):</b> two Characters of your House. One walks out with <b>+1</b> on their Passive. The other doesn't walk anywhere.</li>
+</ul>
+<h3>🏛 Ending the war</h3>
+<ul>
+<li>When an alliance drops its last enemy, it votes: <b>End Game</b> or <b>Siege Olympus</b>. Two Houses is enough.</li>
+<li>The Siege needs more than half. A tie ends the war and everyone in the alliance wins.</li>
+<li>No more hunting neutral Standards first.</li>
+<li>Wars already running keep their old rules.</li>
+</ul>`,
+  },
+  {
     v: '.0081', title: 'Patch notes', date: '4 Oct 2026',
     html: `<ul>
 <li>Patch notes live here now. You found the button, so that works.</li>
 </ul>`,
   },
   {
-    v: '.008', title: 'House Ultimates', date: '4 Oct 2026', open: true,
+    v: '.008', title: 'House Ultimates', date: '4 Oct 2026',
     html: `<p>The biggest rules patch yet, Golds. Losing Houses get teeth, Keeps get Walls, and nobody dies in the Passage anymore. (We'll miss the screaming too.)</p>
 <h3>⚡ House Ultimates</h3>
 <ul>

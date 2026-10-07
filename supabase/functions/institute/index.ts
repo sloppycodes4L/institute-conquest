@@ -3,7 +3,7 @@
 // then the new version is broadcast on Realtime so clients refetch their private view.
 // The engine lives in ./engine, copied verbatim from src/engine by scripts/sync-fn.mjs.
 
-import { act, actingSeat, aiDuty, cleanSettings, createGame, drainLog, kickToAI, pickHouse, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from './engine/engine.ts';
+import { act, actingSeat, aiDuty, cleanSettings, createGame, draftPick, draftSeat, drainLog, kickToAI, openDraft, viewFor, type Action, type GameEvent, type GameState, type HouseDraft, type WarSettings } from './engine/engine.ts';
 import { botAction, botFallback } from './engine/bot.ts';
 import { MAX_PLAYERS } from './engine/data.ts';
 
@@ -16,9 +16,10 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-/** `house`: the House this seat picked (missing: Random). `houseBy: 'host'`: the host set it, and it is locked for that player. */
+/** `house`: the House this seat chose in the House Draft (missing: not chosen yet, or House Selection is Random). */
 interface LobbySeat { seat: number; name: string; ai?: boolean; house?: number | null; houseBy?: 'host' }
-interface GameRow { id: string; code: string; status: 'lobby' | 'playing' | 'over'; host_seat: number; lobby: LobbySeat[]; opts: Partial<WarSettings> | null; state: GameState | null; version: number }
+/** `opts.draft`: the House Draft, while one is running (the war is still in its lobby until the last House is chosen). */
+interface GameRow { id: string; code: string; status: 'lobby' | 'playing' | 'over'; host_seat: number; lobby: LobbySeat[]; opts: (Partial<WarSettings> & { draft?: HouseDraft }) | null; state: GameState | null; version: number }
 
 class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 const bad = (msg: string, status = 400): never => { throw new HttpError(status, msg); };
@@ -91,7 +92,26 @@ function payload(g: GameRow, seat: number | null, tv?: unknown) {
   if (view && typeof tv === 'number') view.trail = view.trail.filter((f) => f.v > tv);
   return {
     id: g.id, code: g.code, status: g.status, hostSeat: g.host_seat, lobby: g.lobby, settings: cleanSettings(g.opts ?? {}), version: g.version, seat, view,
+    // The House Draft, and the server's clock to read its deadline by.
+    draft: g.status === 'lobby' ? g.opts?.draft ?? null : null, now: Date.now(),
   };
+}
+/** The House Draft a lobby is in, if any. */
+const draftOf = (g: GameRow) => (g.status === 'lobby' ? g.opts?.draft ?? null : null);
+const noHouses = (lobby: LobbySeat[]) => lobby.map((l) => { const x = { ...l }; delete x.house; delete x.houseBy; return x; });
+
+/** The war begins: the Houses are dealt (each seat's Draft pick, or at random) and the AI seats take their first moves. */
+async function startWar(g: GameRow, lobby: LobbySeat[], seat: number) {
+  const settings = cleanSettings(g.opts ?? {});
+  drainLog();
+  const s = createGame(lobby.map((l) => l.name), rng, { ai: lobby.map((l) => !!l.ai), settings, houses: lobby.map((l) => l.house ?? null) });
+  runBots(s);
+  const events = drainLog();
+  if (!(await saveGame(g, g.version, { status: 'playing', state: s, lobby, opts: settings, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+  await persistMeta(g, s);
+  await persistLog(g.id, events);
+  await broadcast(g.code, g.version + 1);
+  return payload(await getGame(`id=eq.${g.id}`), seat);
 }
 
 /** Let AI seats take their moves (and answer invitations and siege votes) until a human must act. */
@@ -181,6 +201,7 @@ async function handle(body: any) {
     case 'join': {
       const g = await getGame(`code=eq.${String(body.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '')}`);
       if (g.status !== 'lobby') bad('That war already started. No latecomers.');
+      if (draftOf(g)) bad('That war is drafting its Houses. No latecomers.');
       if (g.lobby.length >= MAX_PLAYERS) bad('Seven Houses already. The valley is full.');
       const token = newToken();
       const seat = g.lobby.length;
@@ -196,6 +217,7 @@ async function handle(body: any) {
       const seat = await seatFor(g, body.token);
       if (seat !== g.host_seat) bad('Only the host can do that.', 403);
       if (g.status !== 'lobby') bad('Game already started.');
+      if (draftOf(g)) bad('The House Draft is under way.');
       let lobby = g.lobby;
       if (body.op === 'addBot') {
         if (lobby.length >= MAX_PLAYERS) bad('Lobby full.');
@@ -210,20 +232,35 @@ async function handle(body: any) {
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
-    case 'setHouse': {
-      // A player picks their own House; the host may set any seat's (which locks it until the host sets it back to Random).
+    case 'draftPick': case 'draftTimeout': {
+      // The House Draft: the seat whose pick it is takes a House. Once its clock has run out, anyone at the table may
+      // call time, and it is dealt a random one. The last pick starts the war.
       const g = await getGame(`id=eq.${gameId(body.game)}`);
       const seat = await seatFor(g, body.token);
-      if (g.status !== 'lobby') bad('Too late, the war has started.');
-      const target = body.seat == null ? seat : Number(body.seat);
-      if (target !== seat && seat !== g.host_seat) bad('Only the host can set another seat\'s House.', 403);
-      const house = body.house == null ? null : Number(body.house);
-      const r = pickHouse(g.lobby, target, house, target !== seat);
-      if (!r.ok) bad(r.err);
-      else {
-        if (!(await saveGame(g, g.version, { lobby: r.lobby, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
-        await broadcast(g.code, g.version + 1);
+      const d = draftOf(g);
+      if (!d) return g.status === 'lobby' ? bad('There is no House Draft to pick in.') : payload(current(g), seat);
+      let r;
+      if (body.op === 'draftTimeout') {
+        if (!d.deadline || Date.now() < d.deadline) bad('There is still time on the clock.');
+        r = draftPick(d, g.lobby, draftSeat(d), null, rng, Date.now());
+      } else {
+        const house = Number(body.house);
+        if (!Number.isInteger(house)) bad('Pick a House.');
+        r = draftPick(d, g.lobby, seat, house, rng, Date.now());
       }
+      if (!r.ok) return bad(r.err);
+      if (r.done) return await startWar(g, r.lobby, seat);
+      if (!(await saveGame(g, g.version, { lobby: r.lobby, opts: { ...cleanSettings(g.opts ?? {}), draft: r.draft }, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+      await broadcast(g.code, g.version + 1);
+      return payload(await getGame(`id=eq.${g.id}`), seat);
+    }
+    case 'draftCancel': {
+      const g = await getGame(`id=eq.${gameId(body.game)}`);
+      const seat = await seatFor(g, body.token);
+      if (seat !== g.host_seat) bad('Only the host can call off the Draft.', 403);
+      if (!draftOf(g)) bad('There is no House Draft to call off.');
+      if (!(await saveGame(g, g.version, { lobby: noHouses(g.lobby), opts: cleanSettings(g.opts ?? {}), version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+      await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
     case 'setOpts': {
@@ -231,6 +268,7 @@ async function handle(body: any) {
       const seat = await seatFor(g, body.token);
       if (seat !== g.host_seat) bad('Only the host sets the rules of the war.', 403);
       if (g.status !== 'lobby') bad('Too late, the war has started.');
+      if (draftOf(g)) bad('The House Draft is under way.');
       if (!(await saveGame(g, g.version, { opts: cleanSettings(body.settings), version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
@@ -241,13 +279,13 @@ async function handle(body: any) {
       if (seat !== g.host_seat) bad('Only the host can start the war.', 403);
       if (g.status !== 'lobby') bad('Already started.');
       if (g.lobby.length < 2) bad('You need at least one rival. Add a human or an AI.');
-      drainLog();
-      const s = createGame(g.lobby.map((l) => l.name), rng, { ai: g.lobby.map((l) => !!l.ai), settings: cleanSettings(g.opts ?? {}), houses: g.lobby.map((l) => l.house ?? null) });
-      runBots(s);
-      const events = drainLog();
-      if (!(await saveGame(g, g.version, { status: 'playing', state: s, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
-      await persistMeta(g, s);
-      await persistLog(g.id, events);
+      if (draftOf(g)) bad('The House Draft is already under way.');
+      const settings = cleanSettings(g.opts ?? {});
+      // House Selection: Random deals every House by lot. Draft opens the House Draft first (the AI seats pick at once).
+      if (settings.houseSel !== 'draft') return await startWar(g, noHouses(g.lobby), seat);
+      const d = openDraft(g.lobby, rng, Date.now());
+      if (d.done) return await startWar(g, d.lobby, seat);
+      if (!(await saveGame(g, g.version, { lobby: d.lobby, opts: { ...settings, draft: d.draft }, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }
@@ -284,6 +322,7 @@ async function handle(body: any) {
       const k = Number(body.seat);
       if (!Number.isInteger(k) || k === g.host_seat || !g.lobby.some((l) => l.seat === k)) bad('Pick another seat to kick.');
       if (g.status === 'lobby') {
+        if (draftOf(g)) bad('Call off the House Draft first.');
         // The seat leaves the lobby; everyone after it moves up one.
         const lobby = g.lobby.filter((l) => l.seat !== k).map((l, i) => ({ ...l, seat: i }));
         if (!(await saveGame(g, g.version, { lobby, version: g.version + 1, host_seat: g.host_seat > k ? g.host_seat - 1 : g.host_seat }))) bad('Lobby changed, try again.', 409);

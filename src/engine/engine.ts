@@ -62,9 +62,15 @@ export interface WarSettings {
   timer: number;
   /** House Ultimates (comeback powers). They need 3 or more Houses: with 2 the war is fought without them. */
   ultimates: boolean;
+  /** House Selection: `draft` (the House Draft before the war: one pick at a time, in a random order) or `random`. */
+  houseSel: HouseSel;
+  /** Primus Selection: `pick` (Choose your Primus, no Passage) or `random` (the Passage). */
+  primusSel: PrimusSel;
 }
+export type HouseSel = 'draft' | 'random';
+export type PrimusSel = 'pick' | 'random';
 export const TURN_TIMERS = [0, 60, 90, 120];
-export const DEFAULT_SETTINGS: WarSettings = { size: 0, troops: 0, alliances: true, siege: true, timer: 0, ultimates: true };
+export const DEFAULT_SETTINGS: WarSettings = { size: 0, troops: 0, alliances: true, siege: true, timer: 0, ultimates: true, houseSel: 'draft', primusSel: 'pick' };
 /** House Ultimates need this many Houses in the war. */
 export const ULT_MIN_PLAYERS = 3;
 export const TROOP_LEVELS: Record<string, number> = { '-2': 0.6, '-1': 0.8, '0': 1, '1': 1.3, '2': 1.6 };
@@ -78,11 +84,17 @@ export interface GameOpts {
   /** Which House is dealt onto each slice of the valley (missing: slice i is House i). */
   houses?: number[];
   /**
-   * A war from .008 on: every player chooses their Primus from the Characters of their own House, nobody dies, and a
-   * Passive works at its printed value. Missing on older wars, which finish the Passage the old way (two cards, one
-   * dies) and keep the +1 for a General of the player's own House.
+   * Choose your Primus: every player chooses from the Characters of their own House, nobody dies, and a Passive works
+   * at its printed value. Missing in a war fought with the Passage (Primus Selection: Random, or a war from before
+   * .008): two cards, one dies, and a General of the player's own House gets +1 on its Passive.
    */
   pick?: boolean;
+  /**
+   * A war from .009 on: the moment every living House stands in one alliance, that alliance must choose between
+   * ending the war (a shared victory) and the Siege on Olympus. Missing on older wars, where an alliance calls its own
+   * Siege once every neutral Standard has fallen.
+   */
+  finale?: boolean;
   /** House Ultimates are on in this war (the setting is on and 3 or more Houses play). Missing on wars from before .008. */
   ultimates?: boolean;
 }
@@ -102,7 +114,10 @@ export function resolveSettings(n: number, ws: Partial<WarSettings> = {}): GameO
 }
 export function cleanSettings(x: any): WarSettings {
   const num = (v: any) => (Number.isFinite(+v) ? Math.max(-2, Math.min(2, Math.round(+v))) : 0);
-  return { size: num(x?.size), troops: num(x?.troops), alliances: x?.alliances !== false, siege: x?.siege !== false, timer: TURN_TIMERS.includes(+x?.timer) ? +x.timer : 0, ultimates: x?.ultimates !== false };
+  return {
+    size: num(x?.size), troops: num(x?.troops), alliances: x?.alliances !== false, siege: x?.siege !== false, timer: TURN_TIMERS.includes(+x?.timer) ? +x.timer : 0, ultimates: x?.ultimates !== false,
+    houseSel: x?.houseSel === 'random' ? 'random' : 'draft', primusSel: x?.primusSel === 'random' ? 'random' : 'pick',
+  };
 }
 
 export type Phase = 'passage' | 'draft' | 'attack' | 'fortify' | 'over';
@@ -166,7 +181,12 @@ export interface GameEvent { id: number; k: string; /** Private event: only thes
 export interface Private { deck: string[]; discard: string[]; hands: HandCard[][]; passage: (string[] | null)[] }
 export interface Alliance { id: number; members: number[]; public: boolean; since: number }
 export interface Invite { id: number; from: number; to: number; public: boolean; turn: number }
-export interface SiegeVote { alliance: number; by: number; yes: number[]; no: number[] }
+/**
+ * An alliance's vote on the Siege. `final` (.009): the vote every living House owes once the valley is theirs: `yes` is
+ * the Siege, `no` ends the war as a shared victory, and nothing else moves until it is settled. `left`: what was on the
+ * turn clock when it was called (the clock waits).
+ */
+export interface SiegeVote { alliance: number; by: number; yes: number[]; no: number[]; final?: boolean; left?: number | null }
 export interface Siege {
   alliance: number;
   members: number[];
@@ -724,11 +744,62 @@ export function pickHouse<T extends HouseSeat>(lobby: T[], seat: number, house: 
   return { ok: true, lobby: lobby.map((l, i) => (i === seat ? next : l)) };
 }
 
+// The House Draft (House Selection: Draft). Before the war the seats choose their Houses one at a time, in a random
+// order, each on a clock. It runs on the lobby (the war itself starts when the last House is chosen), so these are
+// pure helpers shared by the server and the local setup screen.
+
+/** `order`: the seats in pick order. `at`: whose pick it is (an index into `order`). `deadline`: when that pick's clock runs out (ms), or null with no clock. */
+export interface HouseDraft { order: number[]; at: number; deadline: number | null }
+/** Each pick's clock. When it runs out the seat is dealt a random House. */
+export const DRAFT_MS = 30_000;
+export function newDraft(n: number, rng: () => number, now: number | null): HouseDraft {
+  return { order: shuffle(Array.from({ length: n }, (_, i) => i), rng), at: 0, deadline: now == null ? null : now + DRAFT_MS };
+}
+/** The seat whose pick it is, or -1 when the Draft is over. */
+export const draftSeat = (d: HouseDraft) => d.order[d.at] ?? -1;
+/** The Houses nobody has chosen yet. */
+export const draftFree = (lobby: HouseSeat[]) => HOUSES.map((_, h) => h).filter((h) => !lobby.some((l) => l.house === h));
+/**
+ * Seat `seat` takes `house` (null: a random one of those left, for an AI seat or a clock that ran out). Then every AI
+ * seat that is up next picks at random, at once. Returns the new lobby and Draft (the ones passed in are not changed),
+ * or why not. `now`: restarts the clock for the next seat (null: no clock).
+ */
+export function draftPick<T extends HouseSeat & { ai?: boolean }>(d: HouseDraft, lobby: T[], seat: number, house: number | null, rng: () => number, now: number | null):
+  { ok: true; lobby: T[]; draft: HouseDraft; done: boolean } | { ok: false; err: string } {
+  if (draftSeat(d) < 0) return { ok: false, err: 'The Draft is over.' };
+  if (seat !== draftSeat(d)) return { ok: false, err: 'It is not your pick.' };
+  let L = lobby, at = d.at;
+  const take = (st: number, h: number | null): string | null => {
+    const free = draftFree(L);
+    const r = pickHouse(L, st, h ?? free[Math.floor(rng() * free.length)], false);
+    if (!r.ok) return r.err;
+    L = r.lobby; at++;
+    return null;
+  };
+  const err = take(seat, house);
+  if (err) return { ok: false, err };
+  while (at < d.order.length && L[d.order[at]].ai) if (take(d.order[at], null)) break;
+  return { ok: true, lobby: L, draft: { order: d.order, at, deadline: now == null ? null : now + DRAFT_MS }, done: at >= d.order.length };
+}
+/** Open the Draft on a lobby: every House pick is cleared, and the AI seats at the head of the order pick at once. */
+export function openDraft<T extends HouseSeat & { ai?: boolean }>(lobby: T[], rng: () => number, now: number | null): { lobby: T[]; draft: HouseDraft; done: boolean } {
+  let L = lobby.map((l) => { const x = { ...l }; delete x.house; delete x.houseBy; return x; });
+  const d = newDraft(L.length, rng, now);
+  while (d.at < d.order.length && L[d.order[d.at]].ai) {
+    const free = draftFree(L);
+    const r = pickHouse(L, d.order[d.at], free[Math.floor(rng() * free.length)], false);
+    if (!r.ok) break;
+    L = r.lobby; d.at++;
+  }
+  return { lobby: L, draft: d, done: d.at >= d.order.length };
+}
+
 export function createGame(names: string[], rng: () => number, opts: { ai?: boolean[]; settings?: Partial<WarSettings>; /** Each seat's House pick (null: Random). */ houses?: (number | null)[] } = {}): GameState {
   R = rng;
   const n = names.length;
   if (n < MIN_PLAYERS || n > MAX_PLAYERS) throw new Error(`${MIN_PLAYERS} to ${MAX_PLAYERS} players`);
-  const o: GameOpts = { ...resolveSettings(n, opts.settings), seed: 1 + Math.floor(rng() * 2 ** 30), pick: true };
+  const passageWar = opts.settings?.primusSel === 'random';
+  const o: GameOpts = { ...resolveSettings(n, opts.settings), seed: 1 + Math.floor(rng() * 2 ** 30), ...(passageWar ? {} : { pick: true }), finale: true };
   const deal = dealHouses(mapGeo(o.layout, o.seed), n, rng, opts.houses);
   o.houses = deal.sliceHouse;
   const g = mapGeo(o.layout, o.seed, o.houses);
@@ -738,8 +809,12 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
   }));
 
   // Choose your Primus: every player is offered the Characters of their own House. The deck starts with everything
-  // else; the Characters nobody chose join it when the last player has chosen.
-  const passage = players.map((p) => CHARACTER_IDS.filter((id) => CARD[id].house === p.house));
+  // else; the Characters nobody chose join it when the last player has chosen. The Passage (Primus Selection: Random)
+  // deals each player two of their House's Characters at random instead: one walks out, the other dies.
+  const passage = players.map((p) => {
+    const own = CHARACTER_IDS.filter((id) => CARD[id].house === p.house);
+    return passageWar ? shuffle(own).slice(0, 2) : own;
+  });
   const offered = new Set(passage.flat());
   const deck = shuffle(ALL_CARD_IDS.filter((id) => !offered.has(id)));
 
@@ -1726,6 +1801,7 @@ function joinRally(s: GameState, seat: number) {
 export function siegeBlocker(s: GameState, seat: number): string | null {
   if (s.phase === 'passage' || s.phase === 'over') return 'Not now.';
   if (!s.opts.siege) return 'The Siege on Olympus is off in this war.';
+  if (s.opts.finale) return 'When your alliance\'s last enemy falls, it chooses: end the war, or besiege Olympus.';
   const a = allianceOf(s, seat);
   if (!a) return 'Only an alliance can besiege Olympus.';
   if (s.siege) return 'The siege is already underway.';
@@ -1743,12 +1819,64 @@ function tallyVote(s: GameState) {
   const a = s.alliances.find((x) => x.id === v.alliance);
   if (!a) { s.vote = null; return; }
   const m = a.members.length;
+  if (v.final) {
+    // The final vote: the Siege needs more than half. Once it can't get there (a tie included), the war ends.
+    if (v.yes.length * 2 > m) {
+      s.vote = null;
+      if (v.left != null) s.deadline = NOW + v.left;
+      beginSiege(s, a);
+    } else if (v.no.length * 2 >= m) endWar(s, a, v.by);
+    return;
+  }
   if (v.yes.length * 2 > m) { s.vote = null; beginSiege(s, a); return; }
   if (v.no.length * 2 >= m) {
     s.vote = null;
     s.siegeCooldown = s.turn + 1;
     log(s, { k: 'siegeRejected', yes: v.yes, no: v.no });
   }
+}
+
+/** The alliance that holds every living House (two or more of them), or null. */
+export function lastAlliance(s: GameState): Alliance | null {
+  const alive = s.players.filter((p) => p.alive);
+  if (alive.length < 2) return null;
+  const a = allianceOf(s, alive[0].seat);
+  return a && alive.every((p) => a.members.includes(p.seat)) ? a : null;
+}
+
+/**
+ * .009 wars: the moment an alliance has no enemy left (its last rival fell, or the last Houses standing swore to each
+ * other) it must choose. With the Siege on, every member votes: more than half for the Siege begins it, anything else
+ * ends the war. With the Siege off the war simply ends. Either way the whole alliance wins together.
+ */
+function checkFinale(s: GameState, by: number) {
+  if (!s.opts.finale || s.phase === 'over' || s.phase === 'passage' || s.siege || s.vote?.final) return;
+  const a = lastAlliance(s);
+  if (!a) return;
+  const caller = a.members.includes(by) ? by : a.members[0];
+  if (!s.opts.siege) { endWar(s, a, caller); return; }
+  // An attack still waiting on a REACTION card is called off: there is nobody left to fight.
+  s.reaction = null;
+  s.invites = [];
+  if (s.rally) { log(s, { k: 'rallyClosed', by: s.rally.by, why: 'won' }); s.rally = null; }
+  a.public = true;
+  s.vote = { alliance: a.id, by: caller, yes: [], no: [], final: true, left: s.deadline != null ? Math.max(0, s.deadline - NOW) : null };
+  s.deadline = null;
+  log(s, { k: 'finale', seat: caller, members: [...a.members] });
+}
+
+/** The alliance ends the war: every member wins. */
+function endWar(s: GameState, a: Alliance, by: number) {
+  s.phase = 'over';
+  s.winner = by;
+  s.winners = [...a.members];
+  s.reaction = null;
+  s.ts.mustMove = null;
+  s.vote = null;
+  s.siege = null;
+  s.deadline = null;
+  snap(s, -1);
+  log(s, { k: 'win', seat: by, members: [...a.members], shared: true });
 }
 
 export function olympusPreview(s: GameState, members: number[]) {
@@ -1983,6 +2111,7 @@ function commit(s: GameState, seat: number, ctx: Ctx, fn: () => void): Result {
   const mark = FRESH.length;
   try {
     fn();
+    checkFinale(s, seat);
     slayPrimi(s);
     // Announce every bonus region that just fell wholly into one House's hands.
     for (const r of geo(s).regions) {
@@ -2046,6 +2175,7 @@ function apply(s: GameState, seat: number, a: Action) {
     return;
   }
   if (s.phase === 'over') fail('The game is over.');
+  if (s.vote?.final && a.type !== 'vote') fail('The valley is yours. The alliance must first choose: end the war, or besiege Olympus.');
 
   if (a.type === 'choose') {
     const pick = !!s.opts.pick;
@@ -2177,7 +2307,7 @@ function apply(s: GameState, seat: number, a: Action) {
       if (allianceOf(s, seat)?.id !== v.alliance) fail('Not your alliance\'s vote.');
       if (v.yes.includes(seat) || v.no.includes(seat)) fail('You already voted.');
       (a.yes ? v.yes : v.no).push(seat);
-      log(s, { k: 'siegeVote', seat, yes: a.yes });
+      log(s, { k: 'siegeVote', seat, yes: a.yes, ...(v.final ? { final: true } : {}) });
       tallyVote(s);
       return;
     }
@@ -2391,6 +2521,11 @@ export const clone = (s: GameState): GameState => JSON.parse(JSON.stringify(s));
 /** Which seat should be acting right now (for local hot-seat and prompts). */
 export function actingSeat(s: GameState): number {
   if (s.phase === 'passage') return s.priv ? s.priv.passage.findIndex((p) => p !== null) : -1;
+  // The final vote: nothing moves until every ally has answered.
+  if (s.vote?.final && s.phase !== 'over') {
+    const owes = s.alliances.find((x) => x.id === s.vote!.alliance)?.members.find((m) => !s.vote!.yes.includes(m) && !s.vote!.no.includes(m));
+    if (owes != null) return owes;
+  }
   if (s.reaction) return s.reaction.defender;
   return s.cur;
 }

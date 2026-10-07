@@ -122,7 +122,7 @@ input, select { font: inherit; }
 .gcard.locked { filter: grayscale(.7); opacity: .7; }
 .gcard .hdr { display: flex; gap: 7px; align-items: flex-start; }
 .gcard .nm { font-family: var(--display); font-weight: 700; font-size: 15px; line-height: 1.05; }
-.gcard .tt { font-size: 12px; color: var(--ink-mute); line-height: 1.1; margin-top: 2px; }
+.gcard .tt { font-size: 12px; color: var(--ink-mute); line-height: 1.1; margin-top: 2px; background: none; border: 0; border-radius: 0; padding: 0; display: block; box-shadow: none; }
 .gcard .blk { font-size: 13px; line-height: 1.22; border-radius: 6px; padding: 5px 6px; background: rgba(255,255,255,.04); }
 .gcard .blk .k { font-size: 10.5px; letter-spacing: .14em; color: var(--gold-dim); display: block; }
 .gcard .blk.act .k { color: #ff7b6b; }
@@ -822,29 +822,94 @@ body.sorting #hud .leftcol, body.sorting #hud .rightcol, body.sorting #hud .topb
   .sound-toggle { left: 8px; bottom: 8px; font-size: 14px; padding: 4px 9px 4px 7px; }
 }
 
-/* ---------- .008: House pick (War Council, Local setup) ---------- */
+/* ---------- War Council and Local setup seats ---------- */
 .seat-row { position: relative; }
 .seat-row.none { opacity: .5; }
 .seat-row .nm { min-width: 0; }
 .seat-row span.nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hpick { --hc: var(--ink-mute); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hc); border-radius: 999px; padding: 2px 10px 2px 4px; background: #1a0d0a; font-size: 14px; font-weight: 600; letter-spacing: .04em; white-space: nowrap; flex: none; }
-button.hpick:hover { border-color: var(--gold); }
-.hpick.ro { border-style: dashed; cursor: default; padding-right: 10px; }
-.hpick .caret { color: var(--ink-mute); font-size: 11px; }
-.hpick .rnd { width: 20px; text-align: center; }
-.hpick .sig, .hpop .sig { width: 20px; height: 20px; font-size: 13px; border-radius: 5px; }
-.lockn { font-size: 12px; color: var(--ink-mute); white-space: nowrap; }
-.hpop { position: absolute; right: 8px; top: 34px; z-index: 6; width: 300px; max-width: calc(100% - 16px); background: var(--panel-solid); border: 1px solid var(--gold-dim); border-radius: 12px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; box-shadow: 0 16px 40px rgba(0,0,0,.7); }
-.hpop button { --hc: #888; display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 6px; align-items: center; text-align: left; border: 1px solid var(--line); border-left: 4px solid var(--hc); border-radius: 7px; background: #1a0d0a; padding: 4px 7px; font-size: 14px; line-height: 1.1; }
-.hpop button:hover:not(:disabled) { border-color: var(--gold); border-left-color: var(--hc); }
-.hpop button.on { background: rgba(230,187,92,.14); border-color: var(--gold); border-left-color: var(--hc); }
-.hpop button:disabled { opacity: .4; cursor: not-allowed; }
-.hpop small { display: block; color: var(--ink-mute); font-size: 11.5px; }
-.hpop .wide { grid-column: 1 / -1; }
 @media (max-width: 640px) {
   .seat-row { flex-wrap: wrap; }
-  .hpop { left: 8px; right: 8px; width: auto; max-width: none; top: 100%; margin-top: -4px; }
 }
+
+/* ---------- .009: the House Draft ---------- */
+.screen:has(.draft) { align-items: flex-start; overflow-y: auto; }
+.menu.draft { width: min(1040px, 100%); text-align: left; margin: auto 0; }
+.draft-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.draft-head h2 { margin: 2px 0 0; font-size: clamp(18px, 2.6vw, 26px); }
+.draft-clock { flex: none; width: 108px; text-align: center; border: 1px solid var(--line-hi); border-radius: 10px; padding: 6px 10px 2px; background: #140b0a; }
+.draft-clock b { font-family: var(--display); font-size: 30px; line-height: 1; color: var(--gold); font-variant-numeric: tabular-nums; }
+.draft-clock span { display: block; font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-mute); }
+.draft-clock .timer { margin: 5px 0 4px; height: 4px; }
+.draft-clock.low b { color: var(--blood-hi); }
+.draft-order { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 12px 0; }
+.draft-order li { --hc: var(--line-hi); display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-left: 4px solid var(--hc); border-radius: 8px; padding: 4px 10px 4px 7px; background: #140b0a; font-size: 14px; min-width: 0; }
+.draft-order li .do-n { font-family: var(--display); font-size: 12px; color: var(--ink-mute); }
+.draft-order li .do-who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.draft-order li .do-got { color: var(--ink-dim); font-size: 13px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.draft-order li.done { opacity: .8; }
+.draft-order li.up { border-color: var(--gold); border-left-color: var(--gold); box-shadow: 0 0 14px rgba(230,187,92,.3); }
+.draft-order li.up .do-got { color: var(--gold); font-style: italic; }
+.dh-tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.dh-tab { --hc: #888; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 4px 6px; border: 1px solid var(--line); border-bottom: 3px solid var(--hc); border-radius: 9px 9px 4px 4px; background: #1a0d0a; font-weight: 700; font-size: 13.5px; min-width: 0; }
+.dh-tab:hover { border-color: var(--gold); border-bottom-color: var(--hc); }
+.dh-tab.on { background: color-mix(in srgb, var(--hc) 20%, #1a0d0a); border-color: var(--hc); }
+.dh-tab.taken { opacity: .45; }
+.dh-tab.taken.on { opacity: .8; }
+.dh-tab small { font-weight: 400; font-size: 11px; color: var(--ink-mute); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-tab:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.dh-page { --hc: #888; border: 1px solid var(--line); border-top: 3px solid var(--hc); border-radius: 4px 4px 12px 12px; margin-top: 6px; padding: 12px 14px 14px; background: #120a09; }
+.dh-title { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.dh-title h3 { font-family: var(--display); font-size: 22px; margin: 0; color: var(--hc); letter-spacing: .04em; }
+.dh-title .dh-ep { color: var(--ink-mute); margin: 0; font-family: var(--prose); font-style: italic; font-size: 15px; }
+.sig.lg { width: 40px; height: 40px; font-size: 25px; border-radius: 9px; }
+.dh-taken { margin-left: auto; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-mute); border: 1px dashed var(--ink-mute); border-radius: 999px; padding: 2px 10px; }
+.dh-cols { display: grid; grid-template-columns: 1.25fr 1fr 1.15fr; gap: 12px; }
+.dh-blk { min-width: 0; font-size: 14.5px; line-height: 1.35; color: var(--ink-dim); }
+.dh-blk .dh-label { display: block; font-family: var(--display); font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--gold-dim); margin: 0 0 5px; }
+.dh-blk .dh-label i { font-family: inherit; font-style: normal; color: var(--ink-mute); letter-spacing: .08em; }
+.dh-blk ul + .dh-label { margin-top: 10px; }
+.dh-blk .dh-vs { border-left: 2px solid var(--hc); padding: 1px 0 1px 9px; margin-bottom: 8px; }
+.dh-blk .dh-vs .dh-k { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink); }
+.dh-blk .dh-vs p { margin: 2px 0 0; }
+.dh-blk ul { list-style: none; margin: 0; padding: 0; }
+.dh-blk li { position: relative; padding-left: 18px; margin-bottom: 4px; }
+.dh-blk li::before { position: absolute; left: 0; font-weight: 700; }
+.dh-blk .pro li::before { content: '+'; color: #6fbf73; }
+.dh-blk .con li::before { content: '−'; color: var(--blood-hi); }
+.dh-blk .fine { margin: 8px 0 0; }
+.dh-primus { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--line); border-left: 3px solid var(--hc); border-radius: 8px; padding: 5px 8px; margin-bottom: 5px; background: #1a0d0a; }
+.dh-primus .dh-rk { font-family: var(--display); font-weight: 700; color: var(--gold); width: 14px; flex: none; }
+.dh-primus b { color: var(--ink); font-family: var(--display); font-size: 14px; }
+.dh-primus .dh-tt { font-size: 12px; color: var(--ink-mute); }
+.dh-primus .dh-pv { font-size: 13.5px; color: var(--ink); }
+.dh-primus .dh-why { font-size: 13px; font-family: var(--prose); font-style: italic; }
+.draft-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.draft-foot .btn.big { min-width: min(320px, 100%); }
+@media (max-width: 900px) {
+  .dh-cols { grid-template-columns: 1fr; }
+  .dh-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .draft-order li .do-who { max-width: 110px; }
+  .draft-foot { position: sticky; bottom: -20px; background: var(--panel-solid); margin: 12px -20px -20px; padding: 10px 20px 20px; border-top: 1px solid var(--line); border-radius: 0 0 14px 14px; }
+}
+@media (max-width: 480px) {
+  .draft-head { align-items: flex-start; }
+  .draft-clock { width: 84px; }
+  .draft-foot { flex-direction: column-reverse; align-items: stretch; }
+}
+
+/* ---------- .009: the final vote (end the war, or besiege Olympus) ---------- */
+.modal .box.final-vote { width: min(700px, 100%); }
+.fv-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; text-align: left; }
+.fv-opt { border: 1px solid var(--line-hi); border-radius: 12px; padding: 12px; background: #1a0d0a; display: flex; flex-direction: column; gap: 6px; }
+.fv-opt h3 { font-family: var(--display); color: var(--gold); margin: 0; font-size: 17px; letter-spacing: .05em; }
+.fv-opt p { margin: 0; color: var(--ink-dim); font-size: 14.5px; line-height: 1.35; flex: 1; }
+.fv-opt .btn { width: 100%; margin-top: 4px; }
+.fv-list { text-align: left; border-top: 1px solid var(--line); }
+.fv-row { display: flex; align-items: center; gap: 7px; padding: 6px 2px; border-bottom: 1px solid rgba(77,37,24,.4); }
+.fv-row .grow { flex: 1; }
+.fv-v { font-size: 13.5px; color: var(--ink-mute); font-style: italic; }
+.fv-v.siege, .fv-v.end { color: var(--gold); font-style: normal; font-weight: 700; }
+@media (max-width: 560px) { .fv-opts { grid-template-columns: 1fr; } }
 
 /* ---------- .008: Choose your Primus ---------- */
 /* Five cards across (5 x 160 + gaps) inside the box padding; House Mars has seven, in rows of four and three. */

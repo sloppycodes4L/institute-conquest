@@ -21,7 +21,8 @@ function trial(members: number, perHouse: number): boolean {
   }
   s.alliances = [{ id: 99, members: keep, public: true, since: 0 }];
   s.warBegun = true; s.turn = 20; s.cur = keep[0]; s.phase = 'fortify';
-  act(s, keep[0], { type: 'proposeSiege' }, { rng, now: 0 });
+  // Any accepted action opens the final vote: the alliance has no enemy left.
+  act(s, keep[0], { type: 'holdReactions', on: false }, { rng, now: 0 });
   for (const m of keep) if (s.vote) act(s, m, { type: 'vote', yes: true }, { rng, now: 0 });
   act(s, keep[0], { type: 'endTurn' }, { rng, now: 0 });
   let now = 0;

@@ -129,6 +129,7 @@ export function describe(s: GameState, e: GameEvent): string {
     case 'rallyClosed': return e.why === 'full' ? `📯 ${who(s, e.by)}'s Rally is full. The banners are counted.`
       : e.why === 'cancelled' ? `📯 ${who(s, e.by)} calls off the Rally.`
       : e.why === 'fallen' ? `📯 ${who(s, e.by)} has fallen, and their Rally with them.`
+      : e.why === 'won' ? `📯 ${who(s, e.by)}'s Rally is over: there is nobody left to rally against.`
       : `📯 Nobody else answers ${who(s, e.by)}'s Rally in time. The horns go quiet.`;
     case 'defect': {
       const b = betrayalLine(s, { ...e, victim: e.members.find((m: number) => m !== e.seat) ?? e.seat });
@@ -144,7 +145,10 @@ export function describe(s: GameState, e: GameEvent): string {
       return `🗡 BETRAYAL! ${who(s, e.seat)} turns on ${who(s, e.victim)}.${e.wasPublic ? '' : ' (A secret pact, now very public.)'} ${esc(b.speaker)}: <i>"${esc(b.line)}"</i> The alliance is dead.`;
     }
     case 'siegeProposed': return `🏛 ${who(s, e.seat)} calls for a SIEGE ON OLYMPUS. The alliance votes.`;
-    case 'siegeVote': return `🏛 ${who(s, e.seat)} votes ${e.yes ? '<b>STORM IT</b>' : '<b>not yet</b>'}.`;
+    case 'finale': return `♛ THE VALLEY IS WON. ${houses(e.members)} have no enemy left. The alliance votes: <b>end the war</b>, or <b>besiege Olympus</b>.`;
+    case 'siegeVote': return e.final
+      ? `♛ ${who(s, e.seat)} votes to ${e.yes ? '<b>BESIEGE OLYMPUS</b>' : '<b>end the war</b>'}.`
+      : `🏛 ${who(s, e.seat)} votes ${e.yes ? '<b>STORM IT</b>' : '<b>not yet</b>'}.`;
     case 'siegeRejected': return `🏛 The alliance loses its nerve. Olympus will wait.`;
     case 'siegeBegins': return `🏛 TO OLYMPUS! ${houses(e.members)} march on the Proctors: <b>${e.garrison}</b> defenders behind the walls, commanded by ${e.proctors.map((p: string) => card(p)).join(', ')}. ${e.turns} allied turns to break it.`;
     case 'olympusTurn': return `🏛 Olympus regroups (+${e.regen})${e.killed ? ` and smites ${e.killed} of ${who(s, e.seat)}'s soldiers at the Foot` : ''}. <b>${e.garrison}</b> hold the walls; ${e.turnsLeft} allied turns left.`;
@@ -157,7 +161,7 @@ export function describe(s: GameState, e: GameEvent): string {
     case 'sorted':
       return e.picked ? `${who(s, e.seat)} takes ${house(e.house)}, ${HOUSES[e.house].epithet}.` : `${who(s, e.seat)} is sorted into ${house(e.house)}, ${HOUSES[e.house].epithet}.`;
     case 'chosen':
-      // From .008 a Primus is chosen and nobody dies. Older wars walked out of the Passage.
+      // Choose your Primus: nobody dies. In a war with the Passage (Primus Selection: Random, or one from before .008) somebody does.
       return s.opts?.pick ? `${who(s, e.seat)} has chosen a Primus.` : `${who(s, e.seat)} walks out of the Passage with blood on their hands.`;
     case 'passage':
       return e.killed ? `${who(s, e.seat)}: ${passageLine(e.general, e.killed, sd)}` : `${who(s, e.seat)}: ${card(e.general)} leads ${house(s.players[e.seat].house)} as its Primus.`;
@@ -251,7 +255,9 @@ export function describe(s: GameState, e: GameEvent): string {
     case 'timeUp': return `⏱ Time! The Proctors drag ${who(s, e.seat)} off the field${e.placed ? ` and dump their ${e.placed} unplaced soldiers on the front` : ''}.`;
     case 'region': return `⬡ ${who(s, e.seat)} holds all of <b>${esc(geo(s).regions[e.region].name)}</b>: <b>+${e.bonus}</b> armies every turn.`;
     case 'endTurn': return '';
-    case 'win': return e.seat != null
+    case 'win': return e.shared
+      ? `♛ THE WAR IS OVER. ${houses(e.members)} end it together, with no enemy left in the valley. Olympus keeps its walls.`
+      : e.seat != null
       ? `♛ ${who(s, e.seat)} is ARCHPRIMUS OF THE INSTITUTE. One House out of many. Hail, you magnificent bastard.`
       : 'Nobody is left standing. The Proctors are furious.';
   }
@@ -284,7 +290,9 @@ export function headline(s: GameState, e: GameEvent): { title: string; sub: stri
       : { title: `HOUSE ${HOUSES[s.players[e.victim].house].name.toUpperCase()} FALLS`, sub: `${s.players[e.victim].name} is out`, color: '#888' };
     case 'stdCaptured': return e.victim == null && e.captor >= 0 ? { title: `${HOUSES[e.house].name.toUpperCase()}'S STANDARD TAKEN`, sub: `${s.players[e.captor].name} now owns House ${HOUSES[e.house].name}`, color: hc(e.captor) } : null;
     case 'ultimate': return { title: `⚡ ${ULTIMATE[HOUSES[e.house].id].name.toUpperCase()}`, sub: `${s.players[e.seat].name} of House ${HOUSES[e.house].name} strikes ${ultTargetNames(s, e, true)}`, color: hc(e.seat), long: true };
-    case 'win': return e.seat != null ? { title: 'ARCHPRIMUS', sub: `${s.players[e.seat].name} of House ${HOUSES[s.players[e.seat].house].name} rules the Institute`, color: hc(e.seat) } : null;
+    case 'finale': return { title: 'THE VALLEY IS WON', sub: `Houses ${names(e.members)} have no enemy left. End the war, or besiege Olympus?`, color: '#f3d27a', long: true };
+    case 'win': return e.shared ? { title: 'THE WAR IS OVER', sub: `Houses ${names(e.members)} end it together`, color: '#f3d27a', long: true }
+      : e.seat != null ? { title: 'ARCHPRIMUS', sub: `${s.players[e.seat].name} of House ${HOUSES[s.players[e.seat].house].name} rules the Institute`, color: hc(e.seat) } : null;
   }
   return null;
 }
@@ -296,7 +304,7 @@ export const RULES_HTML = `
 <p>Every House gets a castle, a Standard, and a slice of the valley full of children with swords. Make one House out of many.
 Up to <b>7 players</b>, one per House. The valley grows with the number of players.</p>
 <h3>Setting up a war</h3>
-<p>Whoever creates the war picks the <b>map size</b> and <b>starting troops</b> (both default to the recommended settings), can switch
+<p>Whoever creates the war picks the <b>House Selection</b> (Draft or Random) and the <b>Primus Selection</b> (Pick, or Random: the Passage), the <b>map size</b> and <b>starting troops</b> (both default to the recommended settings), can switch
 <b>Alliances</b>, the <b>Siege on Olympus</b> and <b>House Ultimates</b> off, and can set a <b>turn timer</b> (60, 90 or 120 seconds). When time runs out, your unplaced armies
 go to your front and the turn passes. House Ultimates need 3 or more Houses: with 2 they are off.</p>
 <h3>Controls</h3>
@@ -307,13 +315,15 @@ go to your front and the turn passes. House Ultimates need 3 or more Houses: wit
 <h3>Winning</h3>
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
 A dominated House gives you <b>everything</b>: its land, its armies, its cards, and any Standards it had taken.
-Or, with allies, <b>take House Olympus</b> (below) and share the win.</p>
+Or win with allies: when an alliance's last enemy falls, it <b>ends the war</b> as a shared victory or <b>takes House Olympus</b> (below).</p>
 <h3>Choose your House and Primus</h3>
-<p><b>Your House.</b> Before the war, pick a House from the list by your name, or leave it on <b>Random</b>. First come, first served: no two players share a House.
-The host can set anyone's House, AIs included; a House the host set is locked until the host sets it back to Random.
-Then <b>the Sorting</b>: hit <b>Start Selection</b> and the wheel spins once for every House left to chance.</p>
-<p><b>Your Primus.</b> Every player then chooses a <b>Primus</b> from the Characters of their own House (5 to choose from, 7 for Mars). Your Primus is your General:
+<p><b>Your House.</b> The host sets the <b>House Selection</b>. With <b>Draft</b>, starting the war opens the <b>House Draft</b>: the players are put in a random order and choose their Houses one at a time.
+Every House has a page to read first: its Ultimate against one player and against an alliance, its pros and cons, and its top 3 Primus options. Anyone can browse while they wait.
+Online each pick has <b>30 seconds</b>; when the clock runs out you are dealt a random House. AI seats pick at once. No two players share a House. The host can call the Draft off.
+With <b>Random</b>, every House is dealt on <b>the Sorting</b> wheel instead.</p>
+<p><b>Your Primus.</b> The host sets the <b>Primus Selection</b>. With <b>Pick</b>, every player chooses a <b>Primus</b> from the Characters of their own House (5 to choose from, 7 for Mars). Your Primus is your General:
 their <b>Passive</b> is always on, at the value printed on the card. Nobody dies for it: the Characters you pass over go into the deck.
+With <b>Random (Passage)</b>, you are dealt <b>two</b> of your House's Characters at random. Keep one as your Primus, with <b>+1</b> on its Passive. The other dies.
 Your Primus is always shown in the <b>Your Primus</b> panel; every rival Primus is in the roster.</p>
 <h3>The valley</h3>
 <p>You start holding the heart of your House slice: your Keep and the land around it. The rest of your slice, and every House nobody plays,
@@ -352,13 +362,15 @@ You can <b>take back</b> an offer you sent, and <b>walk out</b> of your alliance
 With House Ultimates on, leaving costs more: walk out, attack an ally, or leave to answer a Rally, and you are <b>Locked out</b> of every alliance for <b>2 of your own turns</b> (the broken-chain icon on your banner counts them down).</p>
 <p><b>📯 Rally Against Olympus.</b> The strongest House (the most armies, no ties) may call a public Rally: the first Houses to answer join its public alliance, up to half the living Houses (the rallier counts).
 Answering walks you out of your old alliance, and your old allies hear it as a betrayal. One Rally at a time; it closes when full, when the rallier calls it off, or when the rallier's next turn begins.</p>
-<h3>The Siege on Olympus</h3>
-<p>When an alliance is all that is left (every rival House dominated and every neutral Standard taken), any member can call a <b>Siege on Olympus</b>. Majority vote decides.
-Olympus is defended by the <b>Proctors of the attacking Houses</b>, and gets all of their powers. It holds about 11 soldiers per territory of a House slice (143 on the 4-player map), fights behind walls (+1 to its defense dice), regrows every allied turn, and smites troops at its Foot.
+<h3>The end of the war: End Game, or the Siege on Olympus</h3>
+<p>The moment an alliance has <b>no enemy left</b> (its last rival House falls, or the last Houses standing swear to each other), the war stops and the alliance must choose. Two Houses are enough.
+Every member votes: <b>End the war</b> (a shared victory, there and then) or <b>Siege Olympus</b>. The Siege needs <b>more than half</b> the votes; anything less, a tie included, ends the war.
+Nothing else can be done until the vote is settled. Neutral Standards no longer matter. With the Siege on Olympus switched off, the war simply ends and the alliance wins together.</p>
+<p><b>The Siege.</b> Olympus is defended by the <b>Proctors of the attacking Houses</b>, and gets all of their powers. It holds about 11 soldiers per territory of a House slice (143 on the 4-player map), fights behind walls (+1 to its defense dice), regrows every allied turn, and smites troops at its Foot.
 Assault it from the <b>Foot of Olympus</b> (the inner ring, next to the chasm) with the normal dice; everyone rolls their own assaults and plays their own cards, including <b>Relics</b> that only work in the siege.
 Each ally gets 3 turns. Every assault is that House against <b>its own Proctor</b>, and the siege panel keeps score: when it ends, the final tally shows each House's share of the damage.
-Break it and the whole alliance wins. Fail and the Proctors laugh, and the alliance shatters.
-It usually takes three Houses, or two very large ones, so mass your armies at the Foot before you vote.</p>
+Break it and the whole alliance wins. Fail and the Proctors laugh, the alliance shatters, and the war goes on between its Houses.
+It usually takes three Houses, or two very large ones, so mass your armies at the Foot before your last enemy falls.</p>
 <h3>The Standard: high risk, high reward</h3>
 <p>Once per turn, from the territory holding your Standard, you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your Primus's Active fires for free.
 There is <b>no retreat</b>. Win, and the territory is yours <b>and every defender you killed joins you as a slave</b>. Lose, and your Standard is captured: <b>your whole House goes to the defender</b>.</p>

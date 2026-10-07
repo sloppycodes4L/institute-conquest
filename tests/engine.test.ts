@@ -943,6 +943,7 @@ describe('alliances', () => {
 
   it('attacking an ally shatters the alliance', () => {
     const { s, a, b, c, rng } = threeWay();
+    delete s.opts.finale; // a war from before .009: three allies with no enemy left are not made to choose
     ally(s, a, b, rng);
     ally(s, a, c, rng);
     expect(allianceOf(s, c)?.members.length).toBe(3);
@@ -963,8 +964,11 @@ describe('alliances', () => {
     s.owner = s.owner.map((o, t) => (keep.includes(o) ? o : keep[t % keep.length]));
   }
 
+  // The next three are wars from before .009 (no `opts.finale`): the alliance calls its own Siege once the neutral
+  // Standards have fallen. The .009 rule (the final vote) is in tests/patch-009.test.ts.
   it('Olympus can only be besieged by an alliance that stands alone, by majority vote', () => {
     const { s, a, b, c, rng } = threeWay();
+    delete s.opts.finale;
     ally(s, a, b, rng);
     expect(act(s, a, { type: 'proposeSiege' }, ctx(rng)).ok).toBe(false); // c and the neutrals still stand
     ally(s, a, c, rng);
@@ -982,6 +986,7 @@ describe('alliances', () => {
 
   it('a successful assault on Olympus wins for the whole alliance', () => {
     const { s, a, b, c, rng, g } = threeWay();
+    delete s.opts.finale;
     ally(s, a, b, rng); ally(s, a, c, rng);
     clearTheBoard(s, [a, b, c]);
     act(s, a, { type: 'proposeSiege' }, ctx(rng));
@@ -1004,6 +1009,7 @@ describe('alliances', () => {
 
   it('a siege that runs out of time breaks the alliance', () => {
     const { s, a, b, c, rng } = threeWay();
+    delete s.opts.finale;
     ally(s, a, b, rng); ally(s, a, c, rng);
     clearTheBoard(s, [a, b, c]);
     act(s, a, { type: 'proposeSiege' }, ctx(rng));

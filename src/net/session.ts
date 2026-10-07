@@ -2,7 +2,7 @@
 // browser, or an online game where the Supabase edge function is the authority.
 
 import { RealtimeClient } from '@supabase/realtime-js';
-import { DEFAULT_SETTINGS, act, actingSeat, aiDuty, createGame, viewFor, type Action, type GameEvent, type GameState, type WarSettings } from '../engine/engine.ts';
+import { DEFAULT_SETTINGS, act, actingSeat, aiDuty, createGame, draftSeat, viewFor, type Action, type GameEvent, type GameState, type HouseDraft, type WarSettings } from '../engine/engine.ts';
 import { botAction, botFallback } from '../engine/bot.ts';
 
 export const SUPABASE_URL = 'https://hflggavblnedfgyjqbsr.supabase.co';
@@ -10,7 +10,7 @@ export const SUPABASE_URL = 'https://hflggavblnedfgyjqbsr.supabase.co';
 export const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmbGdnYXZibG5lZGZneWpxYnNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NDQ1OTcsImV4cCI6MjEwNDMyMDU5N30.MWm1amKwcsMJc9VdpiNc_OajeXaYRdzJQZGBN2rB44Y';
 const FN = `${SUPABASE_URL}/functions/v1/institute`;
 
-/** A seat before the war. `house`: the House it picked (missing or null: Random). `houseBy: 'host'`: the host set it, so it is locked for that player. */
+/** A seat before the war. `house`: the House it chose in the House Draft (missing or null: not yet, or dealt at random). */
 export interface LobbySeat { seat: number; name: string; ai?: boolean; house?: number | null; houseBy?: 'host' }
 export interface Session {
   mode: 'local' | 'online';
@@ -213,6 +213,10 @@ export class OnlineSession implements Session {
   code: string;
   hostSeat = 0;
   settings: WarSettings = { ...DEFAULT_SETTINGS };
+  /** The House Draft, while the lobby is in one. */
+  draft: HouseDraft | null = null;
+  /** The server's clock minus this device's (ms), to read the Draft's deadline by. */
+  skew = 0;
   get key() { return `online-${this.creds.game}`; }
   private version = -1;
   private cbs: (() => void)[] = [];
@@ -220,6 +224,7 @@ export class OnlineSession implements Session {
   private poll = 0;
   private timeoutTimer = 0;
   private turnTimer = 0;
+  private draftTimer = 0;
   private lastTimeUp = 0;
   private busy = false;
 
@@ -270,10 +275,28 @@ export class OnlineSession implements Session {
     this.lobby = j.lobby;
     this.hostSeat = j.hostSeat;
     if (j.settings) this.settings = j.settings;
+    this.draft = j.draft ?? null;
+    if (typeof j.now === 'number') this.skew = j.now - Date.now();
     this.view = j.view;
     this.cbs.forEach((c) => c());
     this.armTimeout();
     this.armTurnTimer();
+    this.armDraftTimer();
+  }
+
+  /**
+   * When a House Draft pick runs out of time, any screen may call time on the server (which checks the clock itself and
+   * deals that seat a random House). The picker's own screen asks first; the others wait a little longer.
+   */
+  private armDraftTimer() {
+    clearTimeout(this.draftTimer);
+    const d = this.draft;
+    if (this.status !== 'lobby' || !d?.deadline) return;
+    const wait = Math.max(0, d.deadline - (Date.now() + this.skew)) + (draftSeat(d) === this.seat ? 600 : 2500);
+    this.draftTimer = window.setTimeout(async () => {
+      try { this.apply(await call({ op: 'draftTimeout', game: this.creds.game, token: this.creds.token })); }
+      catch (e) { this.checkGone(e); this.refresh(); }
+    }, wait);
   }
 
   /**
@@ -330,9 +353,14 @@ export class OnlineSession implements Session {
     catch (e) { this.checkGone(e); return (e as Error).message; }
   }
 
-  /** Pick a House in the lobby (null: back to Random). A player sets their own seat; the host may set any seat. */
-  async setHouse(seat: number, house: number | null): Promise<string | null> {
-    try { this.apply(await call({ op: 'setHouse', game: this.creds.game, token: this.creds.token, seat, house })); return null; }
+  /** The House Draft: take `house` (it must be this seat's pick). */
+  async draftPick(house: number): Promise<string | null> {
+    try { this.apply(await call({ op: 'draftPick', game: this.creds.game, token: this.creds.token, house })); return null; }
+    catch (e) { this.checkGone(e); return (e as Error).message; }
+  }
+  /** The host calls the House Draft off: back to the War Council. */
+  async draftCancel(): Promise<string | null> {
+    try { this.apply(await call({ op: 'draftCancel', game: this.creds.game, token: this.creds.token })); return null; }
     catch (e) { this.checkGone(e); return (e as Error).message; }
   }
 
@@ -348,6 +376,7 @@ export class OnlineSession implements Session {
     clearInterval(this.poll);
     clearTimeout(this.timeoutTimer);
     clearTimeout(this.turnTimer);
+    clearTimeout(this.draftTimer);
     this.rt?.disconnect();
     this.cbs = [];
   }
