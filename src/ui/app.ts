@@ -18,6 +18,7 @@ import { VERSION } from '../version.ts';
 import { PATCH_NOTES } from './patch-notes.ts';
 import { assaultFight, attackFight, defenseNote, keepWalls, oddsClass, pct, standardFight, winChance } from './odds.ts';
 import { sound, turnHorn, type Mood } from './sound.ts';
+import { mountTitleScene, type TitleScene } from './title-scene.ts';
 import { ELEVEN_SOUNDS } from './audio-manifest.ts';
 import { Guide } from './guide.ts';
 import { ICON, ULTIMATE, restrictedBy, statusIcons, ultButton, ultOf, type StatusIcon } from './ultimates.ts';
@@ -92,6 +93,8 @@ export class App {
   ui: UIState = this.freshUI();
   lastEvent = -1;
   private screen: HTMLElement | null = null;
+  /** The storm over the Keep: the home screen's backdrop (src/ui/title-scene.ts). */
+  private titleScene: TitleScene | null = null;
   private tip = el('<div class="tip hidden"></div>');
   private diceQueue: Promise<void> = Promise.resolve();
   private battleHide = 0;
@@ -138,7 +141,7 @@ export class App {
     box.checked = !sound.muted;
     // Blur after: the M key ignores focused inputs.
     box.addEventListener('change', () => { sound.setMuted(!box.checked); box.blur(); });
-    sound.listen(() => { box.checked = !sound.muted; });
+    sound.listen(() => { box.checked = !sound.muted; this.syncTitleSound(); });
     document.body.appendChild(sw);
     this.world.onPick = (t) => this.pick(t);
     this.world.onHover = (t, x, y) => this.hover(t, x, y);
@@ -173,6 +176,14 @@ export class App {
   // screens
 
   private setScreen(html: string | null) {
+    // Leaving the home screen: the storm stops, the music clears, and the valley is drawn again.
+    if (this.titleScene) {
+      this.titleScene.destroy();
+      this.titleScene = null;
+      sound.storm(false);
+      this.world.setPaused(false);
+      document.body.classList.remove('title-on');
+    }
     this.screen?.remove();
     this.screen = null;
     if (html) { this.screen = el(html); document.body.appendChild(this.screen); }
@@ -184,29 +195,58 @@ export class App {
     this.endSession();
     this.world.controls.autoRotate = true;
     const last = store.get('ic-last-code');
+    const wars = allCreds().length > 0;
     const s = this.setScreen(`
-      <div class="screen"><div class="menu">
-        <div class="logo-sub">RED RISING · THE INSTITUTE</div>
-        <h1 class="logo">CONQUEST</h1>
-        <div class="tagline">${TAGLINES[Math.floor(Math.random() * TAGLINES.length)]}</div>
-        <div class="stack">
-          <input class="field" id="nm" maxlength="24" placeholder="Your name, Gold" value="${esc(this.name)}">
-          <button class="btn primary big" data-a="create">Create Online War</button>
-          <div class="row"><input class="field" id="code" maxlength="5" placeholder="CODE" style="text-transform:uppercase;letter-spacing:.2em;text-align:center"><button class="btn big" data-a="join">Join</button></div>
-          ${last && savedCreds(last) ? `<button class="btn gold" data-a="rejoin">Rejoin war ${esc(last)}</button>` : ''}
-          <button class="btn" data-a="local">Local · Hot-seat & AI</button>
-          <button class="btn" data-a="practice" title="A small war against one AI, no timer">Practice war · You vs 1 AI</button>
-          ${allCreds().length ? '<button class="btn ghost" data-a="wars">📜 Past wars (War Logs)</button>' : ''}
-          <button class="btn ghost" data-a="rules">How to Play</button>
-          <button class="btn ghost" data-a="codex">The Codex (all cards)</button>
-        </div>
-        <p class="fine">A free, non-commercial fan game inspired by Pierce Brown's <i>Red Rising</i>. Not affiliated with or endorsed by the author or publisher. Contains violence and foul language.</p>
-        <p class="fine credits">Music: A.T.W., <i>The Wrath of God</i>.${ELEVEN_SOUNDS.length ? ' Some sound effects made with <a href="https://elevenlabs.io" target="_blank" rel="noopener">elevenlabs.io</a>.' : ''} Sound is off until you tick Sound below (or press M).</p>
-        <div class="version" title="Game version">Version ${VERSION}</div>
-      </div><button class="patch-btn" data-a="patch" title="What changed, patch by patch">📜 Patch notes</button></div>`)!;
-    // The Patch notes button sits beside the Sound checkbox (desktop widths only: the stylesheet hides it on phones).
-    const sw = document.querySelector('.sound-toggle');
-    if (sw) s.querySelector<HTMLElement>('.patch-btn')!.style.left = `${Math.round(sw.getBoundingClientRect().right) + 8}px`;
+      <div class="screen title">
+        <div class="t-sp a"></div>
+        <section class="menu t-menu">
+          <div class="logo-sub">RED RISING · THE INSTITUTE</div>
+          <h1 class="logo">CONQUEST</h1>
+          <div class="tagline">${TAGLINES[Math.floor(Math.random() * TAGLINES.length)]}</div>
+          <div class="t-panel">
+            <input class="field" id="nm" maxlength="24" placeholder="Your name, Gold" aria-label="Your name" value="${esc(this.name)}">
+            <button class="btn primary big" data-a="create">Create Online War</button>
+            <div class="row"><input class="field code" id="code" maxlength="5" placeholder="CODE" aria-label="War code"><button class="btn big" data-a="join">Join</button></div>
+            ${last && savedCreds(last) ? `<button class="btn gold" data-a="rejoin">Rejoin war ${esc(last)}</button>` : ''}
+            <div class="t-rule"><span>or play offline</span></div>
+            <div class="row">
+              <button class="btn t-duo" data-a="local"><span>Local War</span><small>Hot-seat &amp; AI</small></button>
+              <button class="btn t-duo" data-a="practice" title="A small war against one AI, no timer"><span>Practice War</span><small>You vs 1 AI · no timer</small></button>
+            </div>
+            <div>
+              <button class="t-rule t-adv-toggle" data-a="adv" aria-expanded="false" aria-controls="t-adv"><span>Advanced <i class="chev">▾</i></span></button>
+              <div class="t-adv" id="t-adv"><div><div class="row">
+                ${wars ? '<button class="btn ghost" data-a="wars" tabindex="-1" title="War Logs of the wars you played">📜 Past Wars</button>' : ''}
+                <button class="btn ghost" data-a="codex" tabindex="-1" title="Every card in the game">📖 The Codex</button>
+              </div></div></div>
+            </div>
+          </div>
+        </section>
+        <div class="t-sp b"></div>
+        <footer class="t-foot">
+          <div class="t-dock">
+            <label class="t-pill t-sound" title="Sound on or off (M)"><input type="checkbox"> <span>🔊 Sound</span></label>
+            <button class="t-pill" data-a="patch" title="What changed, patch by patch">📜 Patch notes</button>
+            <button class="t-pill how" data-a="rules" title="The full rules"><span class="q">?</span> How to Play</button>
+            ${sound.muted ? '<div class="t-hint">Tick Sound for music and thunder</div>' : ''}
+          </div>
+          <div class="t-legal">
+            <p>A free, non-commercial fan game inspired by Pierce Brown's <i>Red Rising</i>. Not affiliated with or endorsed by the author or publisher. Contains violence and foul language.</p>
+            <p>Music: A.T.W., <i>The Wrath of God</i>.${ELEVEN_SOUNDS.length ? ' Some sound effects made with <a href="https://elevenlabs.io" target="_blank" rel="noopener">elevenlabs.io</a>.' : ''}</p>
+            <div class="version" title="Game version">Version ${VERSION}</div>
+          </div>
+        </footer>
+      </div>`)!;
+    // The backdrop: the Keep in a storm. While it covers the valley the 3D map rests, the music is heard through
+    // the weather, and every strike of lightning brings its thunder. Here the Sound switch lives in the corner
+    // row with Patch notes and How to Play, so the one pinned to every other screen steps aside.
+    this.titleScene = mountTitleScene(s, { onStrike: (kind, x) => sound.thunder(kind, x) });
+    this.world.setPaused(true);
+    sound.storm(true);
+    document.body.classList.add('title-on');
+    const sw = s.querySelector<HTMLInputElement>('.t-sound input')!;
+    sw.addEventListener('change', () => { sound.setMuted(!sw.checked); sw.blur(); });
+    this.syncTitleSound();
     const nm = s.querySelector<HTMLInputElement>('#nm')!;
     const nameOk = () => { const n = nm.value.trim(); if (!n) { this.toast('Give yourself a name first, Pixie.'); nm.focus(); return null; } store.set('ic-name', n); return n; };
     s.addEventListener('click', async (e) => {
@@ -229,11 +269,27 @@ export class App {
         const you = nm.value.trim() || this.name || 'Reaper';
         this.startSession(new LocalSession([{ seat: 0, name: you, ai: false }, { seat: 1, name: AI_NAMES[0], ai: true }], { ...DEFAULT_SETTINGS, size: -2, timer: 0 }));
       }
+      // Advanced: the rarely used doors (Past Wars, The Codex) fold away under the offline wars.
+      if (a === 'adv') {
+        const b = s.querySelector<HTMLElement>('.t-adv-toggle')!, open = b.getAttribute('aria-expanded') !== 'true';
+        b.setAttribute('aria-expanded', String(open));
+        s.querySelector('.t-adv')!.classList.toggle('open', open);
+        s.querySelectorAll<HTMLElement>('.t-adv button').forEach((x) => { x.tabIndex = open ? 0 : -1; });
+      }
       if (a === 'wars') this.showWars();
       if (a === 'rules') this.modalRules();
       if (a === 'codex') this.modalCodex();
       if (a === 'patch') this.modalPatches();
     });
+  }
+
+  /** The home screen's own Sound switch follows the real one (M, Settings, the other checkbox). */
+  private syncTitleSound() {
+    const pill = this.screen?.querySelector('.t-sound');
+    if (!pill) return;
+    pill.querySelector('input')!.checked = !sound.muted;
+    pill.classList.toggle('on', !sound.muted);
+    if (!sound.muted) this.screen!.querySelector('.t-hint')?.remove();
   }
 
   /** Patch notes: one fold per patch, newest first, one open at a time (the <details> share a name). */

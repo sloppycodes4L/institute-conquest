@@ -1086,10 +1086,7 @@ button.pchip:hover { border-color: var(--gold); }
   .ult-tbl th, .ult-tbl td { padding: 4px 5px; }
 }
 
-/* ---------- .0081: Patch notes (title screen, desktop widths only) ---------- */
-.patch-btn { position: fixed; left: 124px; bottom: 10px; display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; font-size: 15px; letter-spacing: .04em; color: var(--ink-dim); backdrop-filter: blur(6px); }
-.patch-btn:hover, .patch-btn:focus-visible { border-color: var(--gold-dim); color: var(--ink); }
-@media (max-width: 900px) { .patch-btn { display: none; } }
+/* ---------- .0081: Patch notes ---------- */
 .modal .box.patches { width: min(640px, 100%); }
 .pn { border: 1px solid var(--line); border-radius: 10px; background: #140b0a; margin-top: 8px; }
 .pn[open] { border-color: var(--gold-dim); }
@@ -1108,3 +1105,154 @@ button.pchip:hover { border-color: var(--gold); }
 .pn .prose li::marker { color: var(--blood-hi); }
 .modal .pn .prose table.ult-tbl { font-size: 15px; margin: 8px 0 0; }
 @media (prefers-reduced-motion: reduce) { .pn summary .chev { transition: none; } }
+
+/* ====================================================================================================
+   .0091: the home screen. A menu in front of the Keep in a storm (the scene is built by src/ui/title-scene.ts).
+   ==================================================================================================== */
+/* --lintel, --hangH and --S are set by the scene's layout: the gate lintel's thickness, how far the hanging
+   banners drop, and the scene's scale. */
+.screen.title { --lintel: 34px; --hangH: 150px; --S: 1; flex-direction: column; align-items: center; justify-content: flex-start; background: #05050a;
+  padding: calc(var(--lintel) + var(--hangH) + 6px) 16px 16px; }
+.screen.title::before { content: ""; position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(ellipse 340px 42% at 50% 62%, rgba(7,4,5,.84), rgba(7,4,5,.5) 58%, transparent 100%); }
+/* The pinned Sound checkbox steps aside: on this screen it sits in the corner row. */
+body.title-on .sound-toggle { display: none; }
+.t-sp { flex: 1 0 0; } .t-sp.b { flex-grow: 2; }
+.menu.t-menu { position: relative; z-index: 2; width: min(440px, 100%); flex: none; }
+.t-menu .logo-sub { font-size: 15px; margin: 0 -.5em 0 0; text-shadow: 0 0 14px rgba(224,38,44,.5), 0 1px 3px #000; }
+.t-menu .logo { font-size: 68px; margin: 6px -30px 0; background: linear-gradient(#fff1c4, #e2ae48 48%, #7a4a12); -webkit-background-clip: text; background-clip: text;
+  filter: drop-shadow(0 4px 18px rgba(179,22,27,.6)) drop-shadow(0 1px 0 rgba(0,0,0,.8)); }
+.t-menu .tagline { margin: 10px 0 16px; min-height: 0; text-shadow: 0 1px 6px #000, 0 0 14px #000; }
+
+.t-panel { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 18px 18px 10px;
+  background: linear-gradient(rgba(24,14,13,.84), rgba(10,6,6,.9)); border: 1px solid rgba(156,122,54,.55); border-radius: 14px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 30px 80px rgba(0,0,0,.75), 0 0 0 1px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,226,154,.14); }
+.t-panel::before { content: ""; position: absolute; inset: 5px; border: 1px solid rgba(156,122,54,.16); border-radius: 10px; pointer-events: none; }
+.t-panel::after { content: ""; position: absolute; top: -6px; left: 50%; width: 10px; height: 10px; transform: translateX(-50%) rotate(45deg); background: #1c110f; border: 1px solid var(--gold-dim); box-shadow: 0 0 10px rgba(230,187,92,.35); }
+.t-panel .row > * { min-width: 0; }
+.t-panel .btn { position: relative; background: linear-gradient(#2a1510, #1a0d0a); box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 2px 6px rgba(0,0,0,.45); transition: transform .08s, border-color .15s, box-shadow .15s; }
+.t-panel .btn:hover, .t-panel .btn:focus-visible { border-color: var(--gold); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 18px rgba(230,187,92,.2); outline: none; }
+.t-panel .btn.primary { background: linear-gradient(#c8242a, #7c0e12); border-color: #ff5a4a; text-shadow: 0 1px 0 rgba(0,0,0,.55); box-shadow: inset 0 1px 0 rgba(255,200,180,.4), 0 8px 26px rgba(179,22,27,.4); }
+.t-panel .btn.primary:hover { border-color: #ffd0a0; box-shadow: inset 0 1px 0 rgba(255,200,180,.5), 0 8px 34px rgba(224,38,44,.6); }
+.t-panel .btn.gold { background: linear-gradient(#e6bb5c, #9c7a36); border-color: #ffe29a; }
+.t-panel .btn.ghost { background: rgba(0,0,0,.25); }
+.t-panel .btn.t-duo { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 10px; line-height: 1.12; }
+.t-panel .btn.t-duo small { font-size: 13px; letter-spacing: .03em; text-transform: none; font-weight: 400; color: var(--ink-dim); }
+.t-panel .field { background: rgba(12,7,6,.9); box-shadow: inset 0 2px 6px rgba(0,0,0,.6); }
+.t-panel .field::placeholder { color: var(--ink-mute); }
+.t-panel .field.code { text-transform: uppercase; letter-spacing: .2em; text-align: center; flex: 1.5; }
+
+.t-rule { display: flex; align-items: center; gap: 10px; color: var(--ink-mute); font-size: 12.5px; letter-spacing: .22em; text-transform: uppercase; margin: 2px 0; }
+.t-rule::before, .t-rule::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--line-hi)); }
+.t-rule::after { transform: scaleX(-1); }
+.t-adv-toggle { width: 100%; background: none; border: 0; padding: 7px 0; margin: 0; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--gold-dim); border-radius: 6px; cursor: pointer; }
+.t-adv-toggle:hover, .t-adv-toggle:focus-visible { color: var(--gold); outline: none; }
+.t-adv-toggle .chev { display: inline-block; font-style: normal; transition: transform .2s; }
+.t-adv-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.t-adv { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s ease; }
+.t-adv.open { grid-template-rows: 1fr; }
+.t-adv > div { overflow: hidden; min-height: 0; }
+.t-adv .row { padding: 3px 0 8px; }
+
+/* The bottom corners: Sound, Patch notes and How to Play on the left, the small print on the right. */
+.t-foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; justify-content: space-between; align-items: flex-end; padding: 0 16px 12px 14px; pointer-events: none; }
+.t-foot > * { pointer-events: auto; }
+.t-dock { position: relative; display: flex; gap: 8px; }
+.t-pill { display: flex; align-items: center; gap: 6px; padding: 6px 13px 6px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  font-family: var(--ui); font-size: 15px; letter-spacing: .04em; color: var(--ink-dim); cursor: pointer; user-select: none; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.t-pill:hover, .t-pill:focus-visible { border-color: var(--gold-dim); color: var(--ink); outline: none; }
+.t-pill input { width: 16px; height: 16px; margin: 0; accent-color: var(--gold); cursor: pointer; }
+.t-pill.how, .t-pill.t-sound.on { border-color: var(--gold-dim); color: var(--ink); }
+.t-pill.how:hover, .t-pill.how:focus-visible { border-color: var(--gold); }
+.t-pill .q { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: var(--gold); color: #1a0d05; font-weight: 700; font-size: 13px; }
+/* The storm has a voice, and sound starts off: say so once. */
+.t-hint { position: absolute; left: 0; bottom: calc(100% + 10px); white-space: nowrap; padding: 6px 11px; font-size: 14.5px; letter-spacing: .03em; color: var(--ink);
+  background: #1c110f; border: 1px solid var(--gold-dim); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.7); pointer-events: none; opacity: 0; animation: t-hint 11s ease 1.5s forwards; }
+.t-hint::after { content: ""; position: absolute; left: 24px; top: 100%; border: 6px solid transparent; border-top-color: var(--gold-dim); }
+@keyframes t-hint { 0% { opacity: 0; } 6%, 88% { opacity: 1; } 100% { opacity: 0; } }
+.t-legal { width: min(350px, 26vw); text-align: right; color: var(--ink-mute); font-size: 12px; line-height: 1.35; text-shadow: 0 1px 4px #000; }
+.t-legal p { margin: 0 0 3px; }
+.t-legal a { color: inherit; }
+.t-legal .version { margin-top: 5px; }
+
+@media (max-height: 700px) and (min-width: 761px) {
+  .t-menu .logo { font-size: 56px; } .t-menu .tagline { margin: 6px 0 10px; font-size: 17px; }
+  .t-panel { gap: 8px; padding: 14px 16px 8px; } .t-panel .btn.big { padding: 11px 20px; }
+}
+/* Phones and narrow windows: one column, thumb-sized targets, the corners fold in under the menu. */
+@media (max-width: 760px) {
+  .screen.title { padding-left: 14px; padding-right: 14px; padding-bottom: 0; }
+  .t-sp.a { flex: 0 0 2px; } .t-sp.b { flex: 1 0 10px; }
+  .t-menu .logo-sub { font-size: 11.5px; letter-spacing: .4em; margin-right: -.4em; }
+  .t-menu .logo { font-size: clamp(38px, 13.4vw, 62px); margin: 5px 0 0; }
+  .t-menu .tagline { font-size: 16.5px; margin: 7px 0 12px; }
+  .t-panel { padding: 14px 14px 8px; gap: 9px; }
+  .t-panel .btn.big { padding: 13px 16px; font-size: 18px; }
+  .t-panel .btn.t-duo { padding: 9px 6px; min-height: 50px; justify-content: center; }
+  .t-panel .btn.t-duo small { font-size: 12.5px; }
+  .t-panel .field { padding: 12px; }
+  .t-adv-toggle { padding: 11px 0; }
+  .t-adv .btn { min-height: 44px; }
+  .t-foot { position: relative; flex: none; width: min(440px, 100%); flex-direction: column; align-items: center; gap: 9px; padding: 4px 0 calc(8px + env(safe-area-inset-bottom)); }
+  .t-dock { justify-content: center; flex-wrap: wrap; }
+  .t-pill { padding: 8px 13px 8px 11px; }
+  .t-hint { left: 50%; margin-left: -96px; } .t-hint::after { left: 30px; }
+  .t-legal { width: auto; text-align: center; font-size: 11px; }
+}
+
+/* ---------- the scene: planes from the sky forward, each sliding a little against the next ---------- */
+.ts-stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; background: #05050a; }
+.ts-stage > * { position: absolute; pointer-events: none; }
+.ts-cover { inset: 0; width: 100%; height: 100%; }
+.ts-plane { inset: -20px; will-change: transform; }
+.ts-plane > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ts-sky { transform: scale(1.08); animation: ts-drift 90s ease-in-out infinite alternate; will-change: transform; }
+@keyframes ts-drift { from { transform: scale(1.08) translateX(-3%); } to { transform: scale(1.08) translateX(3%); } }
+.ts-skyflash { opacity: 0; }
+.ts-skyflash.a { background: radial-gradient(ellipse 70% 80% at var(--fx, 50%) 18%, rgba(200,215,255,.55), rgba(110,140,255,.2) 45%, transparent 78%); mix-blend-mode: screen; }
+.ts-skyflash.b { background: radial-gradient(ellipse 95% 95% at var(--fx, 50%) 15%, rgba(215,225,255,.95), rgba(140,160,255,.5) 50%, transparent 88%); mix-blend-mode: color-dodge; }
+#ts-bolts { opacity: 0; }
+.ts-klit, #ts-wallLit { isolation: isolate; }
+/* The Keep's night: a wash multiplied over the lit stone, so its form survives the dark. */
+.ts-knight { mix-blend-mode: multiply; }
+
+/* Mist between the planes: the further the stone, the more of it there is in the way. */
+.ts-fog { left: -12%; width: 124%; will-change: transform; }
+.ts-fog.f1 { bottom: calc(var(--S) * 300px); height: calc(var(--S) * 260px);
+  background: radial-gradient(ellipse 42% 62% at 28% 72%, rgba(96,110,160,.2), transparent 70%), radial-gradient(ellipse 46% 70% at 72% 64%, rgba(86,98,150,.18), transparent 72%), linear-gradient(transparent 45%, rgba(84,38,46,.2));
+  animation: ts-fog 46s ease-in-out infinite alternate; }
+.ts-fog.f2 { bottom: calc(var(--S) * 240px); height: calc(var(--S) * 210px);
+  background: radial-gradient(ellipse 36% 60% at 20% 84%, rgba(130,124,150,.17), transparent 70%), radial-gradient(ellipse 40% 56% at 64% 80%, rgba(120,114,146,.15), transparent 70%), radial-gradient(ellipse 30% 50% at 94% 86%, rgba(126,120,150,.16), transparent 70%);
+  animation: ts-fog 34s ease-in-out infinite alternate-reverse; }
+.ts-fog.f3 { bottom: 0; height: calc(var(--S) * 250px);
+  background: radial-gradient(ellipse 34% 60% at 18% 100%, rgba(150,160,190,.16), transparent 70%), radial-gradient(ellipse 40% 55% at 60% 100%, rgba(150,150,180,.12), transparent 70%), radial-gradient(ellipse 30% 50% at 92% 100%, rgba(160,160,190,.14), transparent 70%);
+  animation: ts-fog 28s ease-in-out infinite alternate; }
+@keyframes ts-fog { from { transform: translateX(-4%); } to { transform: translateX(4%); } }
+
+/* Firelight: the bloom round each brazier, and the wet flagstones throwing it back. */
+#ts-glows { position: absolute; inset: 0; mix-blend-mode: screen; }
+.ts-gl { position: absolute; border-radius: 50%; will-change: opacity;
+  background: radial-gradient(closest-side, rgba(255,150,60,.38), rgba(255,110,40,.12) 36%, rgba(255,90,30,0) 100%); }
+.ts-gl.refl { background: radial-gradient(closest-side, rgba(255,170,90,.4), rgba(255,120,50,.12) 55%, rgba(255,120,50,0)); }
+
+/* Curtains of rain sweeping across, on top of the single drops the canvas draws, and slanted exactly as they are
+   (the loop turns this layer with the wind). */
+.ts-sheets { inset: -40%; transform: rotate(-9deg); opacity: .1; mix-blend-mode: screen; will-change: transform; }
+.ts-sheets i { position: absolute; left: 0; right: 0; top: -600px; bottom: 0; will-change: transform; animation: ts-sheet 1.7s linear infinite; }
+@keyframes ts-sheet { to { transform: translateY(600px); } }
+.ts-vignette { background: radial-gradient(ellipse 78% 72% at 50% 46%, transparent 42%, rgba(3,2,3,.74) 100%), linear-gradient(transparent 80%, rgba(3,2,3,.6)); }
+.ts-grain { opacity: .12; mix-blend-mode: overlay; }
+
+/* House banners. Wide screens: six standards planted along the approach, in perspective, and Mars alone hung
+   over the title. Narrow ones: all seven hung in a row from the lintel. */
+.ts-std { position: absolute; will-change: transform; transform-origin: 50% 100%; }
+.ts-std svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.ts-std .ts-cl { position: absolute; inset: 0; transform-origin: 50% 7%; will-change: transform; }
+#ts-hang { position: absolute; inset: 20px; }
+.ts-bn { position: absolute; top: calc(var(--lintel) - 5px); transform-origin: 50% 0; will-change: transform; }
+.ts-bn svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ts-stage.avenue .ts-bn:not(.c), .ts-stage.row .ts-std { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ts-sky, .ts-sheets i, .ts-fog, .t-hint { animation: none; }
+  .t-hint { opacity: 1; }
+}

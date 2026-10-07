@@ -1,4 +1,4 @@
-// Patch notes, newest first: the "Patch notes" button on the title screen (desktop widths) opens them as an accordion.
+// Patch notes, newest first: the "Patch notes" button on the title screen opens them as an accordion.
 // Add an entry here with every deploy (tests/patch-notes.test.ts checks the first one is the current version).
 // The voice is a community manager's: short, plain, a little wry. Headings are <h3>, points are <ul><li>.
 
@@ -15,7 +15,19 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    v: '.009', title: 'The House Draft', date: '7 Oct 2026', open: true,
+    v: '.0091', title: 'A new front gate', date: '7 Oct 2026', open: true,
+    html: `<p>No rules changed, Golds. We just stopped making you stare at an empty valley before the killing starts.</p>
+<h3>⛈ The home screen</h3>
+<ul>
+<li>You now stand under the gate of a Keep in a storm: lightning, rain, braziers, and seven torn House standards. The blood on the wall is not ours.</li>
+<li>Tick <b>Sound</b> for the title music and thunder on every strike.</li>
+<li><b>How to Play</b> lives bottom-left now, next to Sound and Patch notes.</li>
+<li><b>Past Wars</b> and <b>The Codex</b> moved under <b>Advanced</b>. Still there, just out of the way.</li>
+<li>Phones get the same screen in one column, with bigger buttons. Patch notes included.</li>
+</ul>`,
+  },
+  {
+    v: '.009', title: 'The House Draft', date: '7 Oct 2026',
     html: `<p>You asked, Golds. Houses get drafted, the Passage is back for those who miss the blood, and alliances can finally call it a day.</p>
 <h3>♜ House Selection</h3>
 <ul>

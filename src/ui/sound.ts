@@ -28,6 +28,9 @@ const STEADY = new Set(['cue', 'dread', 'horn', 'drum', 'nature', 'wind', 'confi
 /** Below this the music swaps between calm and tense only after the current piece has had its say. */
 const SOFT_DWELL_MS = 40_000;
 const MUSIC_LEVEL = 0.5;
+/** On the home screen the music is heard through a storm: this much of its level, and nothing above STORM_CUTOFF Hz. */
+const STORM_MUSIC = 0.72;
+const STORM_CUTOFF = 3000;
 
 // ---------------------------------------------------------------------------
 // synthesized stand-ins
@@ -163,6 +166,7 @@ class Sound {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   private musicBus!: GainNode;
+  private musicLP!: BiquadFilterNode;
   private sfxBus!: GainNode;
   private buffers = new Map<string, Promise<AudioBuffer | null>>();
   private lastAt = new Map<string, number>();
@@ -197,7 +201,12 @@ class Sound {
         this.master = c.createGain();
         this.master.connect(c.destination);
         this.musicBus = c.createGain();
-        this.musicBus.connect(this.master);
+        // Wide open except on the home screen, where it dulls the music as weather would (see storm()).
+        this.musicLP = c.createBiquadFilter();
+        this.musicLP.type = 'lowpass';
+        this.musicLP.Q.value = 0.5;
+        this.musicLP.frequency.value = 20000;
+        this.musicBus.connect(this.musicLP).connect(this.master);
         this.sfxBus = c.createGain();
         this.sfxBus.connect(this.master);
         this.applyVolumes();
@@ -221,9 +230,12 @@ class Sound {
     const t = this.ctx.currentTime;
     // Squared: sliders feel even to the ear.
     this.master.gain.setTargetAtTime(this.muted ? 0 : 1, t, 0.05);
-    this.musicBus.gain.setTargetAtTime(this.musicVol ** 2 * MUSIC_LEVEL, t, 0.05);
+    this.musicBus.gain.cancelScheduledValues(t);
+    this.musicBus.gain.setTargetAtTime(this.musicLevel(), t, this.stormOn ? 0.4 : 0.05);
+    this.musicLP.frequency.setTargetAtTime(this.stormOn ? STORM_CUTOFF : 20000, t, 0.3);
     this.sfxBus.gain.setTargetAtTime(this.sfxVol ** 2, t, 0.05);
   }
+  private musicLevel() { return this.musicVol ** 2 * MUSIC_LEVEL * (this.stormOn ? STORM_MUSIC : 1); }
   setMusic(v: number) { this.musicVol = v; store.set('ic-vol-music', String(v)); this.applyVolumes(); this.syncMusic(); }
   setSfx(v: number) { this.sfxVol = v; store.set('ic-vol-sfx', String(v)); this.applyVolumes(); }
   setMuted(m: boolean) {
@@ -400,6 +412,124 @@ class Sound {
     tr.gain.gain.cancelScheduledValues(c.currentTime);
     tr.gain.gain.setTargetAtTime(0, c.currentTime, secs / 3);
     setTimeout(() => { tr.el.pause(); tr.el.removeAttribute('src'); tr.el.load(); tr.node.disconnect(); tr.gain.disconnect(); }, secs * 1000 + 400);
+  }
+
+  // --- the storm over the home screen ------------------------------------
+
+  private stormOn = false;
+  private stormFx: { bus: AudioNode; verb: ConvolverNode; white: AudioBuffer; brown: AudioBuffer } | null = null;
+
+  /** The home screen stands in a storm: while it is up, the music is turned down and dulled, as if heard through the weather. */
+  storm(on: boolean) {
+    if (on === this.stormOn) return;
+    this.stormOn = on;
+    this.applyVolumes();
+  }
+
+  /** What thunder needs: noise to roll and to crack, the echo of a stone yard and the hills beyond, and a limiter. */
+  private stormGraph(c: AudioContext) {
+    if (this.stormFx) return this.stormFx;
+    // Seamless noise: brown for the roll, white for the crack.
+    const loop = (secs: number, brown: boolean) => {
+      const n = Math.floor(c.sampleRate * secs), F = 2400, buf = c.createBuffer(2, n, c.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const raw = new Float32Array(n + F);
+        let last = 0;
+        for (let i = 0; i < n + F; i++) { const w = Math.random() * 2 - 1; if (brown) { last = (last + 0.02 * w) / 1.02; raw[i] = last; } else raw[i] = w; }
+        const d = buf.getChannelData(ch);
+        let sum = 0;
+        for (let i = 0; i < n; i++) { d[i] = i < F ? raw[i] * (i / F) + raw[n + i] * (1 - i / F) : raw[i]; sum += d[i] * d[i]; }
+        const g = 0.25 / Math.sqrt(sum / n);
+        for (let i = 0; i < n; i++) d[i] *= g;
+      }
+      return buf;
+    };
+    // A long tail that darkens as it dies.
+    const ir = c.createBuffer(2, Math.floor(c.sampleRate * 4.2), c.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = ir.getChannelData(ch), n = d.length;
+      let lp = 0;
+      for (let i = 0; i < n; i++) { const tt = i / n; lp += ((Math.random() * 2 - 1) - lp) * (0.5 - 0.42 * tt); d[i] = lp * (1 - tt) ** 2.4; }
+    }
+    const comp = c.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.knee.value = 20; comp.ratio.value = 5; comp.attack.value = 0.005; comp.release.value = 0.35;
+    comp.connect(this.sfxBus);
+    const verb = c.createConvolver();
+    verb.buffer = ir;
+    const vg = c.createGain();
+    vg.gain.value = 0.42;
+    verb.connect(vg).connect(comp);
+    return (this.stormFx = { bus: comp, verb, white: loop(3, false), brown: loop(6, true) });
+  }
+
+  /**
+   * Thunder for a lightning strike, late by its distance: the library's thunder and rumble over a low synthesized
+   * roll, so no two are alike. `x` is where the bolt fell, 0 (left) to 1 (right). Far thunder has lost its top; a
+   * close one keeps its crack. The music gives way to it.
+   */
+  thunder(kind: 'sheet' | 'bolt' | 'close', x = 0.5) {
+    const c = this.running();
+    if (!c || this.muted || this.sfxVol === 0) return;
+    const fx = this.stormGraph(c);
+    const gain = (v: number) => { const g = c.createGain(); g.gain.value = v; return g; };
+    const filter = (type: BiquadFilterType, fq: number, q = 0.7) => { const b = c.createBiquadFilter(); b.type = type; b.frequency.value = fq; b.Q.value = q; return b; };
+    const near = kind === 'close' ? 1 : kind === 'bolt' ? rnd(0.55, 0.75) : rnd(0.18, 0.3);
+    const delay = kind === 'close' ? rnd(0.06, 0.18) : kind === 'bolt' ? rnd(0.45, 1.35) : rnd(1.5, 3.1);
+    const t0 = c.currentTime + delay;
+    // BOOST: the Effects slider sits at 0.8 by default, and thunder should still fill the yard.
+    const BOOST = 1.5;
+    const out = gain((0.24 + near * 0.26) * BOOST), lp = filter('lowpass', 500 + near * near * 9000, 0.4), pan = c.createStereoPanner(), send = gain(0.55 - near * 0.2);
+    pan.pan.value = (x - 0.5) * 1.2;
+    out.connect(lp).connect(pan);
+    pan.connect(fx.bus);
+    pan.connect(send).connect(fx.verb);
+    const shot = (key: string, at: number, level: number, rate: number) => void this.buffer(key).then((buf) => {
+      if (!buf) return;
+      const s = c.createBufferSource();
+      s.buffer = buf;
+      s.playbackRate.value = rate;
+      s.connect(gain(level)).connect(out);
+      s.start(Math.max(at, c.currentTime));
+    });
+    if (SFX_TAKES.thunder) shot('thunder-1', t0, 0.75, rnd(0.74, 1.04) - (1 - near) * 0.08);
+    if (SFX_TAKES.rumble) shot(`rumble-${1 + Math.floor(Math.random() * SFX_TAKES.rumble)}`, t0 + rnd(0.15, 0.65), 0.5, rnd(0.7, 1));
+    // The roll: overlapping bursts of low noise, each dying at its own pace.
+    for (let i = 0, n = 5 + Math.floor(Math.random() * 5); i < n; i++) {
+      const s = c.createBufferSource(), g = gain(0), at = t0 + (i ? Math.random() * (2.2 - near) : 0), dec = rnd(1.1, 3.9);
+      s.buffer = fx.brown;
+      s.loop = true;
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(rnd(0.55, 1.15) * (i ? 0.65 : 1), at + rnd(0.03, 0.15));
+      g.gain.exponentialRampToValueAtTime(0.0008, at + dec);
+      s.connect(filter('lowpass', rnd(70, 300) + near * 180, 0.6)).connect(g).connect(out);
+      s.start(at, Math.random() * 3);
+      s.stop(at + dec + 0.1);
+    }
+    // Something felt more than heard.
+    const sub = c.createOscillator(), sg = gain(0);
+    sub.frequency.setValueAtTime(52, t0);
+    sub.frequency.exponentialRampToValueAtTime(27, t0 + 2.8);
+    sg.gain.setValueAtTime(0, t0);
+    sg.gain.linearRampToValueAtTime((0.12 + near * 0.18) * BOOST, t0 + 0.06);
+    sg.gain.exponentialRampToValueAtTime(0.0008, t0 + 3.4);
+    sub.connect(sg).connect(fx.bus);
+    sub.start(t0);
+    sub.stop(t0 + 3.6);
+    // The crack of a near strike: a tearing burst, and its echo.
+    if (near > 0.5) for (let j = 0, n = near > 0.9 ? 3 : 1; j < n; j++) {
+      const s = c.createBufferSource(), g = gain(0), at = t0 + j * rnd(0.06, 0.18);
+      s.buffer = fx.white;
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime((near - 0.35) * (j ? 0.3 : 0.58) * BOOST, at + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0008, at + rnd(0.09, 0.25));
+      s.connect(filter('highpass', rnd(700, 1600))).connect(g).connect(pan);
+      s.start(at, Math.random() * 2);
+      s.stop(at + 0.4);
+    }
+    const level = this.musicLevel();
+    this.musicBus.gain.setTargetAtTime(level * (1 - 0.45 * near), t0, 0.08);
+    this.musicBus.gain.setTargetAtTime(level, t0 + 1.6 + near, 0.9);
+    setTimeout(() => { pan.disconnect(); send.disconnect(); sg.disconnect(); }, (delay + 9) * 1000);
   }
 
   // --- ambience ----------------------------------------------------------

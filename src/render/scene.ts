@@ -142,6 +142,14 @@ export class World {
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
+  private paused = false;
+  /** Stop drawing while something opaque covers the valley (the home screen), and start again after. */
+  setPaused(p: boolean) {
+    if (p === this.paused) return;
+    this.paused = p;
+    this.renderer.setAnimationLoop(p ? null : () => this.frame());
+  }
+
   /** Rebuild the valley for a different map size (the map grows with the player count). */
   setGeo(geo: Geo) {
     if (this.geo === geo) return;
