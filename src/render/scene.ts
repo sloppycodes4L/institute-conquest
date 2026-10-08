@@ -37,7 +37,7 @@ const rnd = (a: number, b: number) => {
 export type HighlightKind = 'attack' | 'fortify' | 'place' | 'target' | 'std' | 'assault';
 export type OlympusMode = 'solid' | 'ghost' | 'hidden';
 export interface HighlightOpts {
-  /** Territories that could act (soft glow while nothing is selected). */
+  /** The viewer's territories that could act (soft glow, in their House colour, while nothing is selected). */
   sources?: number[];
   /** Draw an arc from the selection to every target. */
   fan?: boolean;
@@ -47,6 +47,8 @@ export interface HighlightOpts {
   olympus?: boolean;
   /** Territories already picked (an Ultimate's picks): lit steady, like a selection. */
   picked?: number[];
+  /** The targets are land the viewer holds (the Draft): they glow in their House colour, not the kind's. */
+  own?: boolean;
 }
 
 interface Decor { mesh: THREE.InstancedMesh; terr: number[]; base: THREE.Color }
@@ -1170,12 +1172,15 @@ export class World {
     const sources = new Set(opts.sources ?? []);
     const picked = new Set(opts.picked ?? []);
     const mineCol = this.focusSeat != null && this.lastState ? this.colorOf(this.lastState, this.focusSeat) : null;
+    // Land the viewer holds glows in its own House colour: a gold glow turned every House's land the same cream.
+    const s = this.lastState;
+    const ownCol = (t: number) => (s ? this.colorOf(s, s.owner[t]) : '#f3d27a');
     for (let t = 0; t < this.geo.nt; t++) {
       const m = this.mats[t];
       m.userData.pulse = 0;
       if (t === sel || picked.has(t)) { m.emissive.set('#f3d27a'); m.emissiveIntensity = picked.has(t) ? 0.7 : 0.55; }
-      else if (targets.has(t)) { m.emissive.set(warn.has(t) ? '#ffb020' : kcol); m.emissiveIntensity = 0.4; m.userData.pulse = 1; }
-      else if (sources.has(t)) { m.emissive.set('#f3d27a'); m.emissiveIntensity = 0.16; m.userData.pulse = 0.5; }
+      else if (targets.has(t)) { m.emissive.set(warn.has(t) ? '#ffb020' : opts.own ? ownCol(t) : kcol); m.emissiveIntensity = 0.4; m.userData.pulse = 1; }
+      else if (sources.has(t)) { m.emissive.set(ownCol(t)); m.emissiveIntensity = 0.16; m.userData.pulse = 0.5; }
       else if (t === this.hover) { m.emissive.set('#ffffff'); m.emissiveIntensity = 0.12; }
       else if (mineCol && this.lastState?.owner[t] === this.focusSeat) { m.emissive.set(mineCol); m.emissiveIntensity = 0.14; }
       else { m.emissive.set('#000000'); m.emissiveIntensity = 0; }

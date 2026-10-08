@@ -1556,7 +1556,7 @@ export class App {
     if (!this.myTurn()) { this.world.setHighlights(null, [], 'attack'); return; }
     if (v.phase === 'draft') {
       if (u.pending?.needs === 'territory') this.world.setHighlights(null, this.cardImpact(u.pending.card).targets, 'target');
-      else this.world.setHighlights(u.sel, territoriesOf(v, this.me!).filter((t) => t !== u.sel), 'place');
+      else this.world.setHighlights(u.sel, territoriesOf(v, this.me!).filter((t) => t !== u.sel), 'place', { own: true });
       return;
     }
     if (v.phase === 'attack') {

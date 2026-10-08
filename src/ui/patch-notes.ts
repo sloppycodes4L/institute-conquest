@@ -15,6 +15,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    v: '.0092', title: 'Two small fixes', date: '8 Oct 2026',
+    html: `<ul>
+<li>Clicks on the map no longer die in the empty space around the bottom bar and the side panels. More of the valley is yours to poke.</li>
+<li>Your land keeps its House colour while it glows, in the Draft and when it can attack. The old gold glow washed every House out to the same cream.</li>
+</ul>`,
+  },
+  {
     v: '.0091', title: 'A new front gate', date: '7 Oct 2026', open: true,
     html: `<p>No rules changed, Golds. We just stopped making you stare at an empty valley before the killing starts.</p>
 <h3>⛈ The home screen</h3>

@@ -64,6 +64,9 @@ input, select { font: inherit; }
 /* ---------- HUD ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 #hud > * { pointer-events: auto; }
+/* Boxes that only lay panels out: the map shows through their gaps, so a click there must reach it.
+   The #hud prefix is needed: the rule above outranks a bare class. */
+#hud > .leftcol, #hud > .rightcol, #hud > .notices, #hud > .dock { pointer-events: none; }
 .topbar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 8px 6px 16px; max-width: calc(100vw - 20px); backdrop-filter: blur(6px); }
 .turn-who { font-family: var(--display); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
@@ -105,6 +108,7 @@ input, select { font: inherit; }
 
 /* bottom dock */
 .dock { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); width: min(1100px, calc(100vw - 16px)); display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.dock > * { pointer-events: auto; }
 .actionbar { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; backdrop-filter: blur(6px); max-width: 100%; }
 .actionbar .hint { font-family: var(--prose); font-style: italic; color: var(--ink-dim); font-size: 17px; padding: 0 6px; }
 .actionbar label { display: flex; align-items: center; gap: 6px; color: var(--ink-dim); font-size: 14px; }
