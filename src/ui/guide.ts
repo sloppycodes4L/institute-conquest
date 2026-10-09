@@ -25,7 +25,10 @@ const LEVEL_NOTE: Record<Level, string> = {
 };
 const PIP: Record<Level, string> = { full: 'ON', hints: 'HINT', off: 'OFF' };
 const TIP_MS = 6000;
-const narrow = () => window.innerWidth <= 900;
+/** A phone held upright, or a screen too short for the desktop layout (the same test as the HUD's phone rules in style.css). */
+const narrow = () => window.matchMedia('(max-width: 700px), (max-height: 480px)').matches;
+/** Where an element of the HUD is on screen, if it is there at all. */
+const rectOf = (sel: string) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return r && r.width > 0 && r.height > 0 ? r : null; };
 
 /** The first sentence of a card body's first line, for the narrow strip (tags left open are closed by the parser). */
 function firstSentence(html: string) {
@@ -412,9 +415,10 @@ export class Guide {
     const root = this.root;
     if (!root) return;
     const W = window.innerWidth, H = window.innerHeight;
-    const dock = document.querySelector('#hud .dock');
-    const dockTop = dock && dock.getBoundingClientRect().height > 0 ? dock.getBoundingClientRect().top : H - 10;
-    const above = Math.max(12, H - dockTop + 12);
+    // What stands along the bottom of the map-first HUD: the bar in the middle, the hand's tray (and a card lifted out of it)
+    // on the right, your Primus on the left. Whatever the guide docks there sits just above the pieces it would cover.
+    const bottoms = [rectOf('#hud .dock'), rectOf('#hand'), rectOf('#inspector'), rectOf('#general')];
+    const clear = (l: number, r: number) => Math.max(12, H - Math.min(H - 10, ...bottoms.map((q) => (q && q.left < r && q.right > l ? q.top : H))) + 12);
     const v = this.view;
     const spot = root.querySelector<HTMLElement>('.g-spot')!, dim = root.querySelector<HTMLElement>('.g-dim')!;
     const card = root.querySelector<HTMLElement>(':scope > .g-card');
@@ -438,9 +442,13 @@ export class Guide {
 
     if (card && c) {
       const read = c.kind === 'read';
+      const lifted = rectOf('#inspector');
       card.style.left = card.style.right = card.style.top = card.style.bottom = '';
+      // On a phone a lifted card has the width of the screen: a Your move strip steps aside while it is being read.
+      card.classList.toggle('hidden', narrow() && !read && !!lifted);
       if (narrow() && !c.recap) {
-        Object.assign(card.style, { left: '16px', right: '16px', width: 'auto', bottom: `${above}px` });
+        bottoms[2] = null;
+        Object.assign(card.style, { left: '16px', right: '16px', width: 'auto', bottom: `${clear(16, W - 16)}px` });
       } else if (read && (v.blocking || c.recap)) {
         const w = Math.min(c.width ?? 360, W - 32);
         card.style.width = `${w}px`;
@@ -457,17 +465,27 @@ export class Guide {
         }
         Object.assign(card.style, { left: `${Math.max(8, x)}px`, top: `${Math.max(8, Math.min(H - h - 8, y))}px` });
       } else {
-        // Your move (and a Read in a timed war): docked bottom-right, just above the dock.
-        Object.assign(card.style, { right: '10px', width: `${read ? 320 : 260}px`, bottom: `${above}px` });
+        // Your move (and a Read in a timed war): docked in the bottom right corner, above the hand's tray, and to the left of a
+        // lifted card or the open drawer, so it never covers what the player has just opened.
+        const w = read ? 320 : 260;
+        const edge = Math.min(W - 10, (lifted?.left ?? W) - 10, (rectOf('#drawer.open')?.left ?? W) - 10);
+        const right = Math.max(10, Math.min(W - w - 10, W - edge));
+        bottoms[2] = null;
+        Object.assign(card.style, { right: `${right}px`, width: `${w}px`, bottom: `${clear(W - right - w, W - right)}px` });
       }
     }
+    // The hint line rides on the bar (and on whatever else stands under it on a small screen).
     const hint = root.querySelector<HTMLElement>(':scope > .g-hint');
-    if (hint) hint.style.bottom = `${above}px`;
-    const tip = root.querySelector<HTMLElement>(':scope > .g-tip');
-    if (tip) {
-      const top = document.getElementById('topbar')?.getBoundingClientRect();
-      tip.style.top = `${(top && top.height ? top.bottom : 50) + 10}px`;
+    if (hint) {
+      // (on a phone it steps aside too while a lifted card has the screen)
+      hint.classList.toggle('hidden', narrow() && !!rectOf('#inspector'));
+      const hw = hint.offsetWidth;
+      bottoms[2] = null;
+      hint.style.bottom = `${clear((W - hw) / 2, (W + hw) / 2)}px`;
     }
+    // A Tip sits under the turn chip and everything stacked beneath it (its line of news, a notice waiting for an answer).
+    const tip = root.querySelector<HTMLElement>(':scope > .g-tip');
+    if (tip) tip.style.top = `${(rectOf('#tc')?.bottom ?? rectOf('#topbar')?.bottom ?? 50) + 10}px`;
     const cap = root.querySelector<HTMLElement>(':scope > .g-cap'), btn = document.getElementById('btnGuide');
     const br = btn?.getBoundingClientRect();
     if (cap && br) Object.assign(cap.style, { left: `${br.left}px`, top: `${br.top}px`, width: `${br.width}px`, height: `${br.height}px` });

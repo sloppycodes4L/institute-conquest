@@ -15,6 +15,36 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    v: '.010', title: 'The valley, rebuilt', date: '9 Oct 2026', open: true,
+    html: `<p>No rules changed, Golds. Everything you look at did. Wars in progress carry on where they stopped.</p>
+<h3>⛰ The valley</h3>
+<ul>
+<li>The board is a place now: real ground, a sea that moves, lakes with shores, a ridge of mountains, and Olympus hanging over it with rivers falling off its edge.</li>
+<li>The gaps between quadrants are <b>rifts</b>: pits of rock you cannot cross. Land bridges are the low walls with watch fires.</li>
+<li>From far out the map shows who holds what. Zoom in and it turns to terrain, with each House's colour along its borders.</li>
+</ul>
+<h3>⚔ Armies you can see</h3>
+<ul>
+<li>Every army is a <b>squad of soldiers</b> in its House's colours, with its number on a plate above it. The number never gets too small to read.</li>
+<li>A Primus stands at their Keep. Mars's wears the wolf pelt. Nobody else gets one.</li>
+<li>Squads march out to a fight. Across a sea lane a <b>ship</b> carries them, and stands off the shore if the first try fails.</li>
+<li>Your odds sit on the targets themselves while you choose.</li>
+</ul>
+<h3>◈ A screen that gets out of the way</h3>
+<ul>
+<li>The map has the screen. Houses, Regions and the War Log are drawers on the right (<b>H</b>, <b>R</b>, <b>L</b>). The top-left buttons are three menus: ☰ Menu, 👁 Map views, 🤝 War council.</li>
+<li>Your cards are a tray bottom-right. Tap one to lift it, then Play. No more playing a card by brushing it.</li>
+<li>Hold <b>Alt</b> for territory and region names, or switch them on under Map views.</li>
+<li><b>Phones:</b> bigger buttons, drawers as a sheet from the bottom, and you open on your own Keep. Hold a finger on a territory to read it.</li>
+<li><b>Graphics</b> under Map views: Auto steps down by itself if your device struggles.</li>
+</ul>
+<h3>🔊 Sound</h3>
+<ul>
+<li>Water near the sea and the lakes, Olympus's falls, oars when a ship crosses, and ice in the Frostfangs.</li>
+<li>The home screen finally has its rain.</li>
+</ul>`,
+  },
+  {
     v: '.0092', title: 'Two small fixes', date: '8 Oct 2026',
     html: `<ul>
 <li>Clicks on the map no longer die in the empty space around the bottom bar and the side panels. More of the valley is yours to poke.</li>
@@ -22,7 +52,7 @@ export const PATCH_NOTES: PatchNote[] = [
 </ul>`,
   },
   {
-    v: '.0091', title: 'A new front gate', date: '7 Oct 2026', open: true,
+    v: '.0091', title: 'A new front gate', date: '7 Oct 2026',
     html: `<p>No rules changed, Golds. We just stopped making you stare at an empty valley before the killing starts.</p>
 <h3>⛈ The home screen</h3>
 <ul>

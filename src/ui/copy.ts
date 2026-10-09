@@ -309,8 +309,12 @@ Up to <b>7 players</b>, one per House. The valley grows with the number of playe
 go to your front and the turn passes. House Ultimates need 3 or more Houses: with 2 they are off.</p>
 <h3>Controls</h3>
 <p><b>Scroll</b> to zoom (toward the cursor). <b>Left-drag</b> to pan the map. <b>Right-drag</b> to turn the camera. <b>Left-click</b> to select.
-<b>◐ My Lands</b> (or <b>G</b>) greys out everything you don't hold. Click a House in the roster to light up its land.
-<b>⚙ Settings</b>: the camera follows the action (on by default), and a war horn tells you it's your turn. <b>⛰</b> (or <b>O</b>) makes Olympus solid, see-through, or hidden.
+On a touch screen: drag to pan, pinch to zoom and turn, tap to select, hold a finger on a territory to read it.
+The map comes first; the rest waits behind three buttons in the top left corner.
+<b>☰ Menu</b>: these rules, the Codex, <b>⚙ Settings</b> (the camera follows the action, on by default, and a war horn tells you it's your turn), and the way out.
+<b>👁 Map views</b>: hold <b>Alt</b> to see the names of the territories, the regions and the land bridges; <b>My lands only</b> (or <b>G</b>) greys out everything you don't hold; <b>See through Olympus</b> (or <b>O</b>) makes it solid, see-through, or hidden.
+<b>🤝 War council</b>: diplomacy, the Proctors' Book and emotes.
+Three tabs (on the right edge, or along the top of a phone) open a drawer: the <b>Houses</b> (<b>H</b>), the <b>Regions</b> (<b>R</b>) and the <b>War Log</b> (<b>L</b>). Click a House there to light up its land.
 <b>🎓 The Proctor's Guide</b> (or <b>T</b>): step-by-step lessons on your first turn, then hints, and each new mechanic explained the first time you meet it. Set it to Full, Hints or Off, or replay any lesson.</p>
 <h3>Winning</h3>
 <p>Be the last House standing. You knock a House out by capturing its <b>Standard</b>: take the territory it stands on, or beat it when it charges you.
@@ -324,30 +328,30 @@ With <b>Random</b>, every House is dealt on <b>the Sorting</b> wheel instead.</p
 <p><b>Your Primus.</b> The host sets the <b>Primus Selection</b>. With <b>Pick</b>, every player chooses a <b>Primus</b> from the Characters of their own House (5 to choose from, 7 for Mars). Your Primus is your General:
 their <b>Passive</b> is always on, at the value printed on the card. Nobody dies for it: the Characters you pass over go into the deck.
 With <b>Random (Passage)</b>, you are dealt <b>two</b> of your House's Characters at random. Keep one as your Primus, with <b>+1</b> on its Passive. The other dies.
-Your Primus is always shown in the <b>Your Primus</b> panel; every rival Primus is in the roster.</p>
+Your Primus is always shown in the bottom left corner (click the medal to read their Passive); every rival Primus is in the <b>Houses</b> drawer.</p>
 <h3>The valley</h3>
 <p>You start holding the heart of your House slice: your Keep and the land around it. The rest of your slice, and every House nobody plays,
 is held by <b>neutral garrisons</b>, thickest on the fronts facing another player. The valley's slices keep their land from war to war, but the Houses are dealt onto them at random: players get slices as far apart as possible,
 so the first rounds are a land grab before the killing starts. You can attack <b>any territory touching yours</b>.
-The four quadrants are separate landmasses split by <b>chasms</b> (the glowing red cliffs can't be crossed). Every war rolls its own <b>land bridges</b> (marked 🌉) between neighbouring quadrants, and its own <b>⚓ ports</b>:
-a port's sea lane (the dashed line across the water) makes it border the port on the far shore, for attacks and marches alike. <b>Zoom in</b> to read the territory names.</p>
+The four quadrants are separate landmasses split by <b>rifts</b>: pits of rock that can't be crossed. Every war rolls its own <b>land bridges</b> (marked by low walls and watch fires) between neighbouring quadrants, and its own <b>⚓ ports</b>:
+a port's sea lane (a dashed gold line between two harbours; a ship sails it when an army crosses) makes it border the port on the far shore, for attacks and marches alike. Hold <b>Alt</b> to read the territory names.</p>
 <h3>Terrain</h3>
 <p><b>⛰ Mountains:</b> the high ground. Attacking <i>from</i> a mountain adds <b>+1</b> to your <b>lowest attack die that gets compared</b>
 (dice are sorted high to low; with 3 dice against 2, that's your middle die).
 <b>🌲 Forests:</b> cover. A House defending a forest adds <b>+1</b> to its <b>lowest defense die</b>.
-Terrain <b>never counts when the defender is neutral</b>: the wilds know their own ground. Water and marsh are just scenery. Hover any territory to see its terrain.</p>
+Terrain <b>never counts when the defender is neutral</b>: the wilds know their own ground. Water and marsh change nothing in a fight: a lake is held from its garrison's island. Hover any territory (or hold a finger on it) to see its terrain.</p>
 <h3>Your turn: Draft, Attack, Fortify</h3>
 <p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + region bonuses + Keep bonus (1 Keep: +2, 2: +5, 3: +9, 4: +14) + your Primus.
 Click a territory to add armies; use <b>−</b>/<b>+</b> to adjust it, or <b>Undo</b> to take back everything you placed this Draft (Shift-click also removes).
 Play cards now: trade any <b>3 for 10 armies</b>, or play one for its <b>Active</b>. Cards of a House you own get a bonus.
 A Proctor card only works if you own its House; otherwise discard it for 2 cards (locked until next turn). Holding 5+ cards? Trade before you attack.
 From round 4, a House in the bottom half can spend 3 cards on its <b>House Ultimate</b> instead (below).</p>
-<p><b>Cards.</b> Cards you can play right now <b>glow</b>. Hover a card (or hit its <b>🔍</b>) to see every territory it would hit. Click it to <b>preview</b> the outcome on the map
+<p><b>Cards.</b> Your hand waits in a tray in the bottom right corner, and the cards you can play right now <b>glow</b>. Click a card to lift it out: it lists what it would do, and every territory it would hit lights up. <b>Play</b> shows a <b>preview</b> of the outcome on the map
 (changed territories and armies; anything random shown as a range), then <b>Commit</b> or go <b>Back</b>.
 When anyone else plays a card, it's pinned on the map beside what it hit until you <b>Acknowledge</b> it.</p>
 <p><b>Attack.</b> Pick one of your territories and every target it can hit lights up (or just click an enemy territory, and your strongest neighbour attacks it). Attack as often as you like.
 If an attack isn't allowed, the reason pops up over the map.
-Every target shows your <b>odds to take it</b> if you blitz. Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
+Every target shows your <b>odds to take it</b> if you blitz, on the map beside its count. Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
 <b>Keeps have Walls:</b> whoever defends a Keep (a House or a neutral garrison) adds <b>+1 to its highest defense die</b>. A House's Keep also holds with its armies, its honor guard (if its Standard is there) and its Passives: its Primus's (and allies'), plus the Primus of any Keep it conquered.
 Conquer at least one territory to earn a card.</p>
 <p><b>Neutrals.</b> A neutral garrison (not a Keep) rolls only <b>1 defense die</b>, and if you attack with <b>twice its number or more</b> (armies that can march, one stays behind) it <b>yields</b>:
@@ -355,11 +359,11 @@ no dice, no losses, the land is yours. The odds show <b>Overwhelm</b> when it wi
 <p><b>Fortify.</b> One army move through your connected land, any distance, plus one Standard move.</p>
 <p><b>Watching.</b> Other players' moves (and the AI's) are replayed one at a time with their dice. Speed them up (2×, 4×) or <b>Skip</b> from the bar at the bottom.</p>
 <h3>Alliances</h3>
-<p>Once one House has attacked another, Houses can send each other <b>quiet invitations</b> (the 🤝 button). An alliance is either <b>Public</b> (announced to everyone) or <b>Secret</b> (only its members know).
+<p>Once one House has attacked another, Houses can send each other <b>quiet invitations</b> (<b>🤝 War council</b>, then Diplomacy). An alliance is either <b>Public</b> (announced to everyone) or <b>Secret</b> (only its members know).
 Alliances change nothing except this: <b>allies share their Primuses' Passives</b>. If an ally attacks an ally, the whole alliance is cancelled on the spot.
 <b>One alliance per House</b>: an offer can reach anyone (so secret pacts stay secret), but you can't accept one while you're sworn elsewhere. Members can still invite unsworn Houses in.
 You can <b>take back</b> an offer you sent, and <b>walk out</b> of your alliance (everyone hears; you can't join another for a full round).
-With House Ultimates on, leaving costs more: walk out, attack an ally, or leave to answer a Rally, and you are <b>Locked out</b> of every alliance for <b>2 of your own turns</b> (the broken-chain icon on your banner counts them down).</p>
+With House Ultimates on, leaving costs more: walk out, attack an ally, or leave to answer a Rally, and you are <b>Locked out</b> of every alliance for <b>2 of your own turns</b> (the broken-chain icon beside your Primus counts them down).</p>
 <p><b>📯 Rally Against Olympus.</b> The strongest House (the most armies, no ties) may call a public Rally: the first Houses to answer join its public alliance, up to half the living Houses (the rallier counts).
 Answering walks you out of your old alliance, and your old allies hear it as a betrayal. One Rally at a time; it closes when full, when the rallier calls it off, or when the rallier's next turn begins.</p>
 <h3>The end of the war: End Game, or the Siege on Olympus</h3>
@@ -374,7 +378,7 @@ It usually takes three Houses, or two very large ones, so mass your armies at th
 <h3>The Standard: high risk, high reward</h3>
 <p>Once per turn, from the territory holding your Standard, you can <b>Raise the Standard</b>: commit armies, add <b>+3 phantom soldiers</b> (they die last), and your Primus's Active fires for free.
 There is <b>no retreat</b>. Win, and the territory is yours <b>and every defender you killed joins you as a slave</b>. Lose, and your Standard is captured: <b>your whole House goes to the defender</b>.</p>
-<p>A defending Standard has an honor guard of <b>5 phantom defenders</b>, shown on its army count as a gold <b>+5</b> (restored each turn); it rolls the normal 2 defense dice. 10 armies against a lone soldier and the guard win about 80% of the time. Nobody may strike a player's Standard in the first round.
+<p>A defending Standard has an honor guard of <b>5 phantom defenders</b>, shown beside its army's count on the map as <b>⚑ +5</b> (restored each turn); it rolls the normal 2 defense dice. 10 armies against a lone soldier and the guard win about 80% of the time. Nobody may strike a player's Standard in the first round.
 A <b>REACTION</b> card can ambush a Standard's charge too (below).</p>
 <h3>Ambushes: REACTION cards</h3>
 <p>When a rival attacks one of your territories (a normal attack or a Standard's charge) and you hold a <b>REACTION</b> card, the attack <b>pauses</b> before the first die and your REACTION cards glow.
@@ -400,7 +404,7 @@ Lasting effects tick at the start of the <b>target's</b> turn; Solar Flare and T
 <tr><td><b>Apollo</b><br>Solar Flare</td><td>Until your next turn their highest defense die is −1 against you and your allies. This turn your highest attack die is +1 against them.</td><td>The same for every member.</td></tr>
 <tr><td><b>Diana</b><br>The Wild Hunt</td><td>Until your next turn, against you and your allies: their Standard has no honor guard and they spring no REACTION cards, and your party attacks 2 spaces away. On their next turn they can't Fortify or move their Standard.</td><td>The same for every member.</td></tr>
 </table>
-<p><b>Status icons.</b> Everything that lasts shows as an icon on a banner, with the turns it has left; click one to read it. Gold rings help their House: <b>Ultimate ready</b> (it glows on yours when you hold the cards), <b>Recharging</b>, <b>Long Strike</b>, <b>Radiant</b>, <b>Harvest</b>.
+<p><b>Status icons.</b> Everything that lasts shows as an icon under its House's name in the <b>Houses</b> drawer (your own sit beside your Primus), with the turns it has left; click one to read it. Gold rings help their House: <b>Ultimate ready</b> (it glows on yours when you hold the cards), <b>Recharging</b>, <b>Long Strike</b>, <b>Radiant</b>, <b>Harvest</b>.
 Red rings hurt it: <b>Glared</b>, <b>Rot</b>, <b>Storm-bound</b>, <b>Tithed</b>, <b>Hunted</b>, <b>Revealed</b>. Blue rings restrict it: <b>Blacked Out</b>, <b>Silenced</b>, <b>Pinned</b>, <b>Locked out</b>.
 On the map, a pennant marks each territory <b>Seized</b> and hatching covers a <b>Storm-struck</b> quadrant, until the caster's next turn.</p>
 <h3>Neutral Houses</h3>
@@ -409,9 +413,9 @@ On the map, a pennant marks each territory <b>Seized</b> and hatching covers a <
 <p>When you conquer a Keep that isn't your home Keep (a rival's or a neutral House's), you may swear in <b>one Character card</b> from your hand whose suit is <b>that Keep's House</b>
 as its <b>Primus</b> (the game asks on the spot; you can skip, and swear one in during any later Draft while the Keep has no Primus). The card leaves your hand.
 Its <b>Passive</b> works for you on top of your own Primus's (it isn't shared with allies). Lose the Keep and the Primus is <b>slain</b>: the card is discarded.
-A crown ♛ on the Keep's army count and in the roster shows every Primus.</p>
+A Primus stands at their Keep on the map (zoom in to see them), and a crown ♛ marks each one under its House's name in the <b>Houses</b> drawer.</p>
 <h3>The Proctors' Book</h3>
-<p>The <b>📖</b> button (or <b>B</b>) opens the Proctors' running odds on every House: territories, armies and <b>battles won</b> (only against other Houses: taking their land, breaking their blitz, winning a Standard charge),
+<p><b>📖</b> under <b>🤝 War council</b> (or <b>B</b>) opens the Proctors' running odds on every House: territories, armies and <b>battles won</b> (only against other Houses: taking their land, breaking their blitz, winning a Standard charge),
 and each House's chance to take the Institute, turn by turn on a line chart. The odds update between turns (45% armies, 40% territories, 15% battles won).
 Allies are booked as <b>one side</b>: their lines merge into one braided line and they share the odds, until the alliance breaks and each is booked alone again.</p>
 <h3>When your House falls</h3>
@@ -423,5 +427,5 @@ Open <b>Past wars</b> on the title screen to read it, filter it by turn or House
 The host can <b>kick</b> a player: in the lobby their seat is freed; mid-war an AI Primus takes over their House.</p>
 <h3>Regions</h3>
 <p>Each House slice is cut into bonus <b>regions</b>: its shore, its heart (around the Keep) and its marches. Hold every territory of a region at the start of your turn
-for its bonus, shown on the map (<b>+2</b>, <b>+3</b>…) inside the gold region borders. The <b>Regions</b> panel lists the ones you're closest to.</p>
+for its bonus. Hold <b>Alt</b> to see every region on the map, with its name, its bonus (<b>+2</b>, <b>+3</b>…) and its borders in gold. The <b>Regions</b> drawer (<b>R</b>) lists the ones you're closest to.</p>
 `;

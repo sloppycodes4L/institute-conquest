@@ -1,6 +1,6 @@
 // UI controller: menus, lobby, HUD, cards, modals, diplomacy, and board interaction.
 
-import { World, OLYMPUS, type OlympusMode } from '../render/scene.ts';
+import { World, OLYMPUS, type Graphics, type Odds, type OlympusMode } from '../render/scene.ts';
 import { DiceTray } from '../render/dice.ts';
 import { HOUSES, MAX_PLAYERS, QUADRANTS, TERRAIN_INFO, geoFor, layoutFor, mapGeo } from '../engine/data.ts';
 import { CARD, CARDS, EMOTES, OLYMPUS_POWER, fmt, isSiegeCard } from '../engine/cards.ts';
@@ -8,7 +8,7 @@ import {
   type Action, type Frame, type GameEvent, type GameState, type HouseDraft, type WarSettings, DEFAULT_SETTINGS, DRAFT_MS, EMOTE_COOLDOWN_MS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue, drainLog,
   draftPick, draftSeat, openDraft,
   allianceOf, allied, attackBlocker, attackTargets, connectedOwned, fortifyRoute, geo, housesOwned, inviteBlocker, joinRallyBlocker, mustTrade, olympusPreview,
-  ownsHouse, passive, passiveValue, primiOf, primusOptions, rallyBlocker, ULT, ULT_MIN_PLAYERS, marsPickBlocker, marsTargets, stormCut, stormSide,
+  ownsHouse, overwhelms, passive, passiveValue, primiOf, primusOptions, rallyBlocker, ULT, ULT_MIN_PLAYERS, marsPickBlocker, marsTargets, stormCut, stormSide,
   ULT_ROUND, lockoutLeft, ultBlocker, ultCards, ultCardsOk, ultFight, ultStandings, ultTargets, winScores, guardAgainst, huntsWith, reactionCards, reinforcementBreakdown, resolveSettings, siegeBlocker, standardAt, terrainMods, territoriesOf,
 } from '../engine/engine.ts';
 import { BOOK_W, bookChart, bookIndexAt, bookLines, bookX, roundOf, type Line } from './book.ts';
@@ -34,6 +34,11 @@ const store = {
 const sig = (h: number, cls = 'sig') => `<span class="${cls}" style="background:${HOUSES[h].color};${h === 5 ? 'color:#222;text-shadow:none' : ''}">${HOUSES[h].sigil}</span>`;
 const AI_NAMES = ['Proctor\'s Pet', 'Some Tall Bastard', 'A Very Angry Gold', 'The Draft Pick Nobody Wanted', 'Knife in a Nice Coat', 'Lord of Mud', 'The Quiet One'];
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** A phone held upright, or any screen too short for the desktop layout (the same test as the phone rules in style.css). */
+const phone = () => window.matchMedia('(max-width: 700px), (max-height: 480px)').matches;
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
+const DRAWERS = [['houses', 'Houses', '♜', 'H'], ['regions', 'Regions', '◈', 'R'], ['log', 'War Log', '✎', 'L']] as const;
+const GFX_NAMES: Record<Graphics, string> = { auto: 'Auto', high: 'High', medium: 'Medium', low: 'Low' };
 
 /** The order the House Draft lists them in. */
 const HOUSE_ORDER = ['mars', 'minerva', 'diana', 'apollo', 'jupiter', 'ceres', 'pluto'].map((id) => HOUSES.findIndex((h) => h.id === id));
@@ -50,7 +55,7 @@ interface UIState {
   target: number | null;
   trade: Set<string>;
   pending: { card: string; needs: 'territory' | 'seat' } | null;
-  /** A card open in the big inspector (🔍). */
+  /** A card lifted out of the tray: its tab was clicked, and the whole card is open above it. */
   inspect: string | null;
   /** A hand card under the mouse: its targets glow on the map. */
   hoverCard: string | null;
@@ -62,11 +67,12 @@ interface UIState {
   moveN: number;
   stdMode: boolean;
   follow: number | null;
-  mobileTab: 'none' | 'roster' | 'log';
-  rosterMin: boolean;
-  logMin: boolean;
-  genMin: boolean;
-  regionsMin: boolean;
+  /** The group of the top-left buttons whose rows are open in the popover. */
+  menu: 'menu' | 'views' | 'war' | null;
+  /** The drawer at the right edge: the Houses, the Regions or the War Log. */
+  drawer: 'houses' | 'regions' | 'log' | null;
+  /** Your Primus's card is open above its medal. */
+  medal: boolean;
   /** A House lit up on the map from the roster. */
   spot: number | null;
   /** A region row under the mouse: its land glows. */
@@ -134,6 +140,7 @@ export class App {
 
   constructor() {
     this.world = new World(document.getElementById('world')!, geoFor(4));
+    this.world.setSpeed(this.speed);
     document.body.appendChild(this.tip);
     // The Sound checkbox: always at the bottom of the screen (title and war alike). Sound starts off.
     const sw = el(`<label class="sound-toggle" title="Sound on or off (M)"><input type="checkbox"> <span>🔊 Sound</span></label>`);
@@ -145,20 +152,25 @@ export class App {
     document.body.appendChild(sw);
     this.world.onPick = (t) => this.pick(t);
     this.world.onHover = (t, x, y) => this.hover(t, x, y);
+    this.world.onSound = (name) => sound.play(name);
     this.world.controls.autoRotate = true;
     this.world.controls.autoRotateSpeed = 0.35;
     this.world.setOlympusMode((store.get('ic-olympus') as OlympusMode) || 'solid');
     this.world.idle();
     window.addEventListener('keydown', (e) => this.onKey(e));
-    // Panels collapse into tabs on narrow screens, so re-lay them out when the window changes.
+    // Names and regions show for as long as Alt is held.
+    window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { e.preventDefault(); this.holdReveal(false); } });
+    window.addEventListener('blur', () => this.holdReveal(false));
+    // The HUD lays itself out again when the window changes, and tells the map what it covers.
     let resizeT = 0;
-    window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = window.setTimeout(() => this.render(), 120); });
+    window.addEventListener('resize', () => { this.syncInsets(); clearTimeout(resizeT); resizeT = window.setTimeout(() => this.render(), 120); });
     // The turn clock in the top bar ticks on its own, without re-rendering the HUD.
     window.setInterval(() => { this.tickClock(); this.syncMood(); }, 250);
     // Every button answers with a soft click.
     document.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest?.('button:not(:disabled)')) sound.play('click'); }, true);
-    // Shift-click in the Draft takes armies back.
-    window.addEventListener('pointerdown', (e) => { this.lastShift = e.shiftKey; }, true);
+    // Shift-click in the Draft takes armies back. A press outside an open popover closes it.
+    window.addEventListener('pointerdown', (e) => { this.lastShift = e.shiftKey; this.touch = e.pointerType !== 'mouse'; this.pressOutside(e.target as HTMLElement); }, true);
+    window.addEventListener('pointermove', (e) => { this.touch = e.pointerType !== 'mouse'; }, { capture: true, passive: true });
     const q = new URLSearchParams(location.search);
     const join = q.get('join');
     if (join) {
@@ -169,7 +181,7 @@ export class App {
   }
 
   private freshUI(): UIState {
-    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, mobileTab: 'none', rosterMin: false, logMin: window.innerWidth < 1300, genMin: false, regionsMin: window.innerHeight < 760, spot: null, hoverRegion: null, primusOpen: null, emotes: false, cast: null, iconTip: null, reveal: null };
+    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, menu: null, drawer: null, medal: false, spot: null, hoverRegion: null, primusOpen: null, emotes: false, cast: null, iconTip: null, reveal: null };
   }
 
   // =========================================================================
@@ -730,7 +742,14 @@ export class App {
     document.getElementById('bloodflash')?.remove();
     this.guide.unmount();
     document.querySelectorAll('.showcase, .terr-err, .wheel-wrap, .ambush-fx, .fallen-wrap, .siege-slide').forEach((x) => x.remove());
-    document.body.classList.remove('sorting');
+    document.body.classList.remove('sorting', 'war-on');
+    cancelAnimationFrame(this.battleRaf);
+    this.tip.classList.add('hidden');
+    this.revealSticky = false;
+    this.world.setReveal(false);
+    this.world.setInsets(0, 0);
+    for (const k of ['--side', '--barh', '--above', '--tcb', '--dtop', '--sbtop']) document.documentElement.style.removeProperty(k);
+    this.vars = {};
     this.world.clearArrow();
     this.world.setGeo(geoFor(4));
     this.world.idle();
@@ -880,6 +899,7 @@ export class App {
         case 'overwhelm':
           cam([e.from, e.to]);
           this.world.arrow(e.from, e.to, '#f3d27a');
+          void this.world.sortie(e.from, e.to).then(() => this.world.settle(e.from, e.to, true));
           this.world.burst(e.to, HOUSES[d.players[e.seat].house].color);
           this.whisper(describe(d, e));
           await w(900); this.world.clearArrow(); shown = true;
@@ -896,7 +916,9 @@ export class App {
         case 'fortify':
           cam(e.path ?? [e.from, e.to]);
           this.world.route(e.path ?? [e.from, e.to], e.to);
-          await w(1300); this.world.clearArrow(); shown = true;
+          // (they walk it, and sail where the way is a sea lane: a long road is not waited on for ever)
+          await Promise.race([this.world.travel(e.path ?? [e.from, e.to], e.to), w(5200)]);
+          await w(300); this.world.clearArrow(); shown = true;
           break;
         case 'moveStd':
           cam([e.from, e.to]);
@@ -1003,10 +1025,19 @@ export class App {
   private bumpBattle() { this.battleUntil = Math.max(this.battleUntil, Date.now() + 45_000); }
 
   /** What the music should feel like right now (called every tick; the soundtrack only moves when this changes). */
+  private iceAt = 0;
   private syncMood() {
     const s = this.session;
     const v = s?.view;
     sound.ambience(!!v && s!.status !== 'lobby' && v.phase !== 'over');
+    // What can be heard from where the camera is: water lapping, Olympus's falls, a ship's oars, and now and then the
+    // ice of the Frostfangs' lakes.
+    const amb = v && s!.status !== 'lobby' && v.phase !== 'over' && v.phase !== 'passage' ? this.world.ambience() : { water: 0, falls: 0, oars: 0, frost: 0 };
+    sound.bed('water', amb.water); sound.bed('falls', amb.falls); sound.bed('oars', amb.oars);
+    if (amb.frost > 0.5 && Date.now() > this.iceAt) {
+      if (this.iceAt) sound.play('ice', { vol: 0.5 + Math.random() * 0.5 });
+      this.iceAt = Date.now() + 25_000 + Math.random() * 50_000;
+    }
     let m: Mood;
     if (!s || s.status === 'lobby' || !v) m = 'title';
     else if (v.phase === 'over') m = this.me == null || v.winners.includes(this.me) || !v.players[this.me] ? 'victory' : 'defeat';
@@ -1057,6 +1088,7 @@ export class App {
 
   private setSpeed(n: number) {
     this.speed = n;
+    this.world.setSpeed(n);
     store.set('ic-speed', String(n));
     this.render();
   }
@@ -1072,30 +1104,50 @@ export class App {
   private mountHUD() {
     this.setScreen(null);
     this.world.controls.autoRotate = false;
+    // The map comes first: three groups of buttons and the Guide, the turn chip, the drawer's tabs, your Primus, the bar and the hand.
+    // Everything else waits in a popover or the drawer until it is asked for.
+    const row = (a: string, icon: string, label: string, key = '', id = '', extra = '') => `<button data-a="${a}"${id ? ` id="${id}"` : ''}><i>${icon}</i><span>${label}</span>${extra}${key ? `<kbd>${key}</kbd>` : ''}</button>`;
     document.body.appendChild(el(`
       <div id="hud">
         <div class="corner left">
-          <button class="icon-btn" data-a="menu" title="Menu">☰</button>
-          <button class="icon-btn" data-a="rules" title="Rules">?</button>
-          <button class="icon-btn" data-a="codex" title="Card codex">⚜</button>
-          <button class="icon-btn" data-a="focus" id="btnFocus" title="My Lands: grey out everything you don't hold (G)">◐</button>
-          <button class="icon-btn" data-a="olympus" id="btnOly" title="Olympus: solid / see-through / hidden (O)">⛰</button>
-          <button class="icon-btn" data-a="diplo" id="btnDiplo" title="Diplomacy &amp; alliances">🤝<span class="dot hidden"></span></button>
-          <button class="icon-btn" data-a="book" title="The Proctors' Book: the odds on every House (B)">📖</button>
-          <button class="icon-btn" data-a="settings" title="Settings: camera and sound">⚙</button>
-          <button class="icon-btn" data-a="emotes" id="btnEmote" title="Emote: shout a line into the War Log">💬</button>
+          <button class="icon-btn" data-a="grp" data-m="menu" title="Menu: rules, the Codex, settings, leave">☰</button>
+          <button class="icon-btn" data-a="grp" data-m="views" title="Map views: names, Olympus, your lands, graphics">👁</button>
+          <button class="icon-btn" data-a="grp" data-m="war" id="btnWar" title="War council: diplomacy, the Proctors' Book, emotes">🤝<span class="dot hidden"></span></button>
           <button class="icon-btn guide-btn ${this.guide.level === 'off' ? 'off' : ''}" data-a="guide" id="btnGuide" title="The Proctor's Guide (T)">🎓<span class="g-pip">${this.guide.pip}</span></button>
         </div>
-        <div class="emotes hidden" id="emotes"></div>
-        <div class="corner right mobile-tabs">
-          <button class="icon-btn" data-a="tab-roster" title="Houses &amp; your Primus">♜</button>
-          <button class="icon-btn" data-a="tab-log" title="Regions &amp; war log">✎</button>
+        <div class="pop hidden" id="pop">
+          <div class="grp" data-m="menu"><h4>MENU</h4>
+            ${row('rules', '?', 'How to play')}
+            ${row('codex', '⚜', 'The Codex: every card')}
+            ${row('settings', '⚙', 'Settings: camera and sound')}
+            ${row('menu', '⏏', this.session instanceof OnlineSession ? 'The war: invite link, concede, quit' : 'Leave the war: concede or quit')}
+          </div>
+          <div class="grp" data-m="views"><h4>MAP VIEWS</h4>
+            ${row('names', '👁', 'Names and regions', 'hold Alt', 'btnNames')}
+            ${row('olympus', '⛰', 'See through Olympus', 'O', 'btnOly', '<em></em>')}
+            ${row('focus', '◐', 'My lands only', 'G', 'btnFocus')}
+            ${row('gfx', '✦', 'Graphics', '', 'btnGfx', '<em></em>')}
+            ${row('home', '⌂', 'Back to the whole valley')}
+          </div>
+          <div class="grp" data-m="war"><h4>WAR COUNCIL</h4>
+            ${row('diplo', '🤝', 'Diplomacy and alliances', '', 'btnDiplo', '<span class="dot hidden"></span>')}
+            ${row('book', '📖', "The Proctors' Book: the odds", 'B')}
+            ${row('emotes', '💬', 'Shout into the War Log', '', 'btnEmote')}
+          </div>
         </div>
-        <div class="topbar" id="topbar"></div>
+        <div class="emotes hidden" id="emotes"></div>
+        <div class="tc" id="tc">
+          <div class="topbar" id="topbar"></div>
+          <button class="lane hidden" id="lane" data-a="drawer" data-d="log" title="The newest line of the War Log. Open the Log (L)"></button>
+          <div class="notices" id="notices"></div>
+        </div>
+        <div class="tabs" id="tabs">${DRAWERS.map(([d, name, icon, key]) => `<button class="icon-btn" data-a="drawer" data-d="${d}" title="${name} (${key})">${icon}<small>${name.replace('War ', '')}</small></button>`).join('')}</div>
+        <aside class="drawer" id="drawer" aria-label="The Houses, the Regions and the War Log">
+          <div class="dhead"><div class="seg">${DRAWERS.map(([d, name]) => `<button data-a="drawer" data-d="${d}">${name}</button>`).join('')}</div><button class="btn sm" data-a="closeDrawer" title="Close (Esc)">✕</button></div>
+          <div class="dbody"><div class="pane roster" id="roster"></div><div class="pane regions" id="regions"></div><div class="pane log" id="log"></div></div>
+        </aside>
+        <div class="general hidden" id="general"></div>
         <div class="battle hidden" id="battle"><div class="vs"><span id="bA"></span><span id="bD"></span></div><canvas id="dice"></canvas><div class="res" id="bRes"></div></div>
-        <div class="leftcol" id="leftcol"><div class="general" id="general"></div><div class="side left" id="roster"></div></div>
-        <div class="rightcol" id="rightcol"><div class="side regions" id="regions"></div><div class="side log" id="log"></div></div>
-        <div class="notices" id="notices"></div>
         <div class="dock"><div class="actionbar" id="actionbar"></div><div class="hand" id="hand"></div></div>
       </div>`));
     document.body.appendChild(el('<div id="modal-root"></div>'));
@@ -1104,6 +1156,9 @@ export class App {
     const hud = document.getElementById('hud')!;
     hud.addEventListener('click', (e) => this.onHudClick(e));
     hud.addEventListener('input', (e) => this.onHudInput(e));
+    document.body.classList.add('war-on');
+    // The web fonts change the size of everything once they arrive.
+    void document.fonts?.ready.then(() => this.syncInsets());
     this.guide.hudMounted();
   }
 
@@ -1154,18 +1209,9 @@ export class App {
     this.renderHighlights();
     this.renderModals();
     this.renderEmotes();
-    const lc = document.getElementById('leftcol')!, r = document.getElementById('roster')!, l = document.getElementById('log')!;
-    const narrow = window.innerWidth <= 900;
-    lc.classList.toggle('collapsed', narrow && this.ui.mobileTab !== 'roster');
-    document.getElementById('rightcol')!.classList.toggle('collapsed', narrow && this.ui.mobileTab !== 'log');
-    r.classList.toggle('min', !narrow && this.ui.rosterMin);
-    l.classList.toggle('min', !narrow && this.ui.logMin);
-    document.getElementById('btnFocus')!.classList.toggle('on', this.focusMode);
-    document.getElementById('btnOly')!.classList.toggle('on', this.world.olympusMode !== 'solid');
-    document.getElementById('btnOly')!.textContent = this.world.olympusMode === 'hidden' ? '⛶' : '⛰';
-    const pending = this.me != null && (this.v.invites.some((i) => i.to === this.me) || this.voteOwed());
-    document.querySelector('#btnDiplo .dot')!.classList.toggle('hidden', !pending);
-    document.getElementById('btnDiplo')!.classList.toggle('hidden', this.v.opts?.alliances === false);
+    this.renderLane();
+    this.renderDrawer();
+    this.renderPop();
     const spot = this.ui.spot != null && this.v.players[this.ui.spot]?.alive ? this.ui.spot : null;
     this.world.setFocus(spot ?? (this.focusMode && this.me != null ? this.me : null));
     const root = document.getElementById('modal-root');
@@ -1173,7 +1219,120 @@ export class App {
     if (root?.dataset.key === 'info-book') this.modalBook(true);
     this.renderAmbush();
     this.renderSiege();
+    this.syncInsets();
     this.guide.update(this.guideCtx());
+  }
+
+  /** The rows under the three top-left buttons: which group is open, and what each switch stands at. */
+  private renderPop() {
+    const u = this.ui, pop = document.getElementById('pop');
+    if (!pop) return;
+    pop.classList.toggle('hidden', !u.menu);
+    for (const g of pop.querySelectorAll<HTMLElement>('.grp')) g.classList.toggle('hidden', g.dataset.m !== u.menu);
+    for (const b of document.querySelectorAll<HTMLElement>('#hud .corner [data-a=grp]')) { b.classList.toggle('on', b.dataset.m === u.menu); b.setAttribute('aria-expanded', String(b.dataset.m === u.menu)); }
+    const oly = this.world.olympusMode, gfx = this.world.graphics;
+    document.getElementById('btnNames')!.classList.toggle('on', this.revealSticky);
+    document.getElementById('btnFocus')!.classList.toggle('on', this.focusMode);
+    document.getElementById('btnOly')!.classList.toggle('on', oly !== 'solid');
+    document.querySelector('#btnOly em')!.textContent = { solid: 'solid', ghost: 'see-through', hidden: 'hidden' }[oly];
+    document.querySelector('#btnGfx em')!.textContent = gfx === 'auto' ? `Auto (${GFX_NAMES[this.world.graphicsLevel].toLowerCase()})` : GFX_NAMES[gfx];
+    // The red dot: an invitation or a vote waits for an answer. It shows on the War council button and on its Diplomacy row.
+    const pending = this.session != null && this.me != null && (this.v.invites.some((i) => i.to === this.me) || this.voteOwed());
+    document.querySelector('#btnWar .dot')!.classList.toggle('hidden', !pending);
+    document.querySelector('#btnDiplo .dot')!.classList.toggle('hidden', !pending);
+    document.getElementById('btnDiplo')!.classList.toggle('hidden', this.v.opts?.alliances === false);
+  }
+
+  /** A press that lands outside an open popover closes it. Only the popovers are touched: the control under the press must live to hear its click. */
+  private pressOutside(t: HTMLElement) {
+    const u = this.ui;
+    if (!this.session || !document.getElementById('hud') || !t?.closest) return;
+    if (u.menu && !t.closest('#pop, #hud .corner [data-a=grp]')) { u.menu = null; this.renderPop(); }
+    if (u.emotes && !t.closest('#emotes, [data-a=emotes]')) { u.emotes = false; this.renderEmotes(); }
+    // A press on the map folds your Primus's card away too, and the text of a status icon open beside it.
+    const tip = !!u.iconTip?.startsWith('general:');
+    if ((u.medal || tip) && t.closest('#world')) { u.medal = false; if (tip) u.iconTip = null; this.renderGeneral(); }
+  }
+
+  /** The newest line of the War Log, under the turn chip. A click opens the Log. */
+  private renderLane() {
+    const box = document.getElementById('lane')!;
+    const line = this.v.phase === 'passage' ? '' : this.logTop;
+    box.classList.toggle('hidden', !line);
+    if (line === box.dataset.line) return;
+    box.dataset.line = line;
+    box.innerHTML = line ? `<span class="txt">${line}</span><span class="more">Log</span>` : '';
+    box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash');
+  }
+  private logTop = '';
+
+  /** The drawer at the right edge: one of the Houses, the Regions and the War Log at a time. Its panes are always drawn; this only shows one. */
+  private renderDrawer() {
+    const d = this.ui.drawer, box = document.getElementById('drawer')!;
+    box.classList.toggle('open', !!d);
+    document.getElementById('hud')!.classList.toggle('drawer-open', !!d);
+    for (const b of document.querySelectorAll<HTMLElement>('#tabs [data-a=drawer], #drawer [data-a=drawer]')) b.classList.toggle('on', b.dataset.d === d);
+    // A closed drawer keeps its last pane while it slides away.
+    if (d) for (const [k] of DRAWERS) document.getElementById(k === 'houses' ? 'roster' : k)!.classList.toggle('hidden', k !== d);
+  }
+  private setDrawer(d: UIState['drawer']) {
+    if (!d && this.ui.hoverRegion != null) this.ui.hoverRegion = null;
+    this.ui.drawer = d; this.ui.menu = null;
+    this.render();
+  }
+
+  /**
+   * Tell the page and the map what the HUD covers. The bar keeps clear of the hand's tray (--side), the pieces stacked on the
+   * bar on a phone sit above it (--barh), and the view centres on the band between the turn chip and the bar.
+   */
+  private vars: Record<string, string> = {};
+  private syncInsets() {
+    const hud = document.getElementById('hud');
+    if (!hud || !this.session || this.session.status === 'lobby') return;
+    const H = window.innerHeight;
+    const $ = (id: string) => document.getElementById(id);
+    const box = (e: Element | null) => { const r = e?.getBoundingClientRect(); return r && r.width > 0 && r.height > 0 ? r : null; };
+    // (a property is only written when it changes: writing one on <html> restyles the page)
+    const css = {
+      setProperty: (k: string, v: string) => { if (this.vars[k] !== v) { this.vars[k] = v; document.documentElement.style.setProperty(k, v); } },
+      removeProperty: (k: string) => { if (this.vars[k] != null) { delete this.vars[k]; document.documentElement.style.removeProperty(k); } },
+    };
+    // The tray is measured first, then the bar in the room it leaves. The bar gives up its place in the middle of the
+    // screen (.tight: it may run to the left, as far as the Sound switch) before it wraps onto a second line.
+    css.setProperty('--side', `${Math.round((box($('hand'))?.width ?? 0) + 20)}px`);
+    const dockEl = hud.querySelector<HTMLElement>('.dock')!;
+    dockEl.classList.remove('tight');
+    const kids = ([...$('actionbar')!.children] as HTMLElement[]).filter((k) => k.offsetWidth > 0);
+    if (kids.length > 1 && kids[kids.length - 1].offsetTop >= kids[0].offsetTop + kids[0].offsetHeight) dockEl.classList.add('tight');
+    const dock = box(dockEl);
+    css.setProperty('--barh', `${Math.round(dock?.height ?? 0)}px`);
+    const tray = box($('hand'));
+    const low = Math.min(dock?.top ?? H, tray?.top ?? H);
+    css.setProperty('--above', `${Math.round(H - low)}px`);
+    // A phone stacks the tray on the bar: then the map gives way to both.
+    const stacked = !!tray && !!dock && tray.bottom <= dock.top + 4;
+    // The turn chip drops under the corner buttons (and, on a phone, the drawer's tabs) when it would meet them.
+    const corner = hud.querySelector('.corner')!.getBoundingClientRect(), tabs = box($('tabs'));
+    let chip = box($('topbar'));
+    if (chip) $('tc')!.classList.toggle('drop', chip.left < corner.right + 8 || (!!tabs && tabs.top < corner.bottom && chip.right > tabs.left - 8));
+    chip = box($('topbar'));
+    const lane = box($('lane'));
+    const under = Math.max(corner.bottom, chip?.bottom ?? 0, lane?.bottom ?? 0);
+    css.setProperty('--tcb', `${Math.round(under)}px`);
+    // The siege's card stands in the top right corner, lower when the turn chip reaches that far; the drawer opens under it.
+    const sb = $('siegebar');
+    if (sb && sb.parentElement === hud) {
+      css.removeProperty('--sbtop');
+      const r = sb.getBoundingClientRect();
+      const reach = (q: DOMRect | null) => (q && q.bottom > r.top ? q.right : 0);
+      if (Math.max(reach(chip), reach(lane)) > r.left - 8) css.setProperty('--sbtop', `${Math.round(under + 8)}px`);
+      css.setProperty('--dtop', `${Math.round(sb.getBoundingClientRect().bottom + 8)}px`);
+    } else css.removeProperty('--dtop');
+    // Your Primus stands above the Sound switch, and steps up when the bar reaches under it.
+    const gen = box($('general'));
+    hud.classList.toggle('bar-under', !!gen && !!dock && dock.left < gen.right + 8);
+    this.cover = { top: Math.round(under), bottom: Math.round(H - (stacked ? low : dock?.top ?? H)) };
+    this.world.setInsets(this.cover.top, this.cover.bottom);
   }
 
   private lastEmoteAt = 0;
@@ -1310,14 +1469,20 @@ export class App {
     if (v.phase === 'over') { top.innerHTML = `<span class="turn-who">THE WAR IS OVER</span>`; return; }
     if (v.vote?.final) { top.innerHTML = `<span class="turn-who">THE VALLEY IS WON</span><span class="reinf">End the war, or besiege Olympus?</span>`; return; }
     const sg = v.siege;
+    // The turn order: one sigil a seat, the House whose turn it is ringed. A click opens that House in the drawer.
+    const order = v.order.map((seat) => {
+      const o = v.players[seat], h = HOUSES[o.house];
+      return `<button class="sig sm ${seat === v.cur ? 'cur' : ''} ${o.alive ? '' : 'dead'}" data-a="house" data-seat="${seat}" title="${esc(o.name)}${seat === this.me ? ' (you)' : ''}${o.alive ? '' : ': fallen'}" style="background:${h.color};${o.house === 5 ? 'color:#222;text-shadow:none' : ''}">${h.sigil}</button>`;
+    }).join('');
     top.innerHTML = `
       ${sig(p.house)}
-      <span class="turn-who" style="color:${HOUSES[p.house].color}">${esc(p.name)}${this.me === v.cur ? ' <span class="you">YOU</span>' : ''}</span>
+      <span class="turn-who" style="color:${HOUSES[p.house].color}">${esc(p.name)}</span>${this.me === v.cur ? '<span class="you">YOU</span>' : p.ai ? '<span class="ai-tag">AI</span>' : ''}
       <div class="phases">${phases.map((ph) => `<span class="phase ${v.phase === ph ? 'on' : ''}">${ph}</span>`).join('')}</div>
       ${v.phase === 'draft' ? `<span class="reinf"><b>${v.ts.reinforcements}</b> to place</span>` : ''}
       ${sg ? `<span class="reinf siege-pill" title="Siege on Olympus: ${sg.turnsLeft} allied turns left">🏛 <b>${sg.garrison}</b> · ${sg.turnsLeft} left</span>` : ''}
       <span class="reinf" title="Round">R${Math.ceil(v.turn / Math.max(1, v.players.length))}</span>
-      ${v.opts?.timer ? '<span class="reinf tmr" id="tmr" title="Turn timer"></span>' : ''}`;
+      ${v.opts?.timer ? '<span class="reinf tmr" id="tmr" title="Turn timer"></span>' : ''}
+      <div class="order" title="Turn order">${order}</div>`;
     this.tickClock();
   }
 
@@ -1387,23 +1552,31 @@ export class App {
     return s instanceof OnlineSession && s.seat === s.hostSeat && seat !== s.seat && !this.v.players[seat].ai && this.v.phase !== 'over';
   }
 
+  /**
+   * Your Primus, bottom left: a medal with your sigil, their name, and the status icons on you (always in sight).
+   * A click opens their card above it: the Passive, the Primuses of your Keeps, and what your allies share.
+   */
   private renderGeneral() {
-    const v = this.v, box = document.getElementById('general')!;
+    const v = this.v, u = this.ui, box = document.getElementById('general')!;
     if (this.me == null || v.phase === 'passage' || !v.players[this.me]) { box.innerHTML = ''; box.classList.add('hidden'); return; }
     box.classList.remove('hidden');
-    const me = v.players[this.me];
+    const me = v.players[this.me], H = HOUSES[me.house];
     const al = allianceOf(v, this.me);
     const shared = (al?.members ?? []).filter((m) => m !== this.me).map((m) => {
       const p = v.players[m], c = p.general && p.general !== '?' ? CARD[p.general] : null;
       if (!c?.passive) return '';
       return `<div class="shared">${sig(p.house, 'sig sm')} <b>${esc(c.name)}</b> <span class="muted">(${esc(p.name)})</span>: ${esc(fmt(c.passive.text, passiveValue(c, p.house, !!v.opts?.pick)))}</div>`;
     }).join('');
-    box.innerHTML = `<h3 data-a="min-gen">YOUR PRIMUS <span>${this.ui.genMin ? '▸' : '▾'}</span></h3>
-      ${this.ui.genMin ? '' : `${this.primusHTML(this.me, true)}
+    const name = me.general && me.general !== '?' ? CARD[me.general].name : 'Still choosing…';
+    box.classList.toggle('open', u.medal);
+    box.classList.toggle('fallen', !me.alive);
+    box.innerHTML = `<button class="gmedal" data-a="medal" aria-expanded="${u.medal}" title="Your Primus: click to read their Passive" style="--hc:${H.color}">
+        <span class="ring" ${me.house === 5 ? 'style="color:#222;text-shadow:none"' : ''}>${H.sigil}</span><span class="gm-t"><small>YOUR PRIMUS</small><b>${esc(name)}</b></span></button>
       ${this.iconsHTML(this.me, 'general')}
-      ${this.primiHTML(this.me, true)}
-      ${shared ? `<div class="shared-h">🤝 SHARED BY ALLIES${al && !al.public ? ' (SECRET)' : ''}</div>${shared}` : ''}
-      ${!me.alive ? '<div class="muted">Your House has fallen.</div>' : ''}`}`;
+      ${u.medal ? `<div class="mpop">${this.primusHTML(this.me, true)}
+        ${this.primiHTML(this.me, true)}
+        ${shared ? `<div class="shared-h">🤝 SHARED BY ALLIES${al && !al.public ? ' (SECRET)' : ''}</div>${shared}` : ''}
+        ${!me.alive ? '<div class="muted">Your House has fallen.</div>' : ''}</div>` : ''}`;
   }
 
   private renderRoster() {
@@ -1417,7 +1590,7 @@ export class App {
       const owned = housesOwned(v, seat);
       const al = allianceOf(v, seat);
       const allyTag = al ? `<span class="ally-tag ${al.public ? '' : 'secret'}" title="${al.public ? 'Public alliance' : 'Secret alliance (only members can see it)'}">${al.public ? '🤝' : '🤫'} ${al.members.filter((m) => m !== seat).map((m) => HOUSES[v.players[m].house].sigil).join('')}</span>` : '';
-      return `<div class="player ${seat === v.cur && v.phase !== 'passage' ? 'cur' : ''} ${p.alive ? '' : 'dead'} ${myAl?.members.includes(seat) && seat !== this.me ? 'my-ally' : ''} ${this.ui.spot === seat ? 'spot' : ''}" ${p.alive ? `data-a="spot" data-seat="${seat}" title="Show ${esc(p.name)}'s land on the map"` : ''}>
+      return `<div class="player ${seat === v.cur && v.phase !== 'passage' ? 'cur' : ''} ${p.alive ? '' : 'dead'} ${myAl?.members.includes(seat) && seat !== this.me ? 'my-ally' : ''} ${this.ui.spot === seat ? 'spot' : ''}" data-row="${seat}" ${p.alive ? `data-a="spot" data-seat="${seat}" title="Show ${esc(p.name)}'s land on the map"` : ''}>
         <div class="pn">${sig(p.house)} <span style="color:${HOUSES[p.house].color}">${esc(p.name)}</span>
           ${seat === this.me ? '<span class="you">YOU</span>' : ''}${p.ai ? '<span class="ai-tag">AI</span>' : ''}${allyTag}</div>
         ${this.primusHTML(seat)}
@@ -1436,13 +1609,14 @@ export class App {
       return `<div class="player ${st.captured ? 'dead' : ''}"><div class="pn">${sig(h)} <span style="color:${HOUSES[h].color}">House ${HOUSES[h].name}</span> <span class="ai-tag">NEUTRAL</span></div>
         <div class="meta">${st.captured ? `Standard taken by ${st.by != null && st.by >= 0 ? esc(v.players[st.by].name) : '—'}` : `Garrison holds ${esc(this.g.territories[st.at].name)}`}</div></div>`;
     }).join('');
-    document.getElementById('roster')!.innerHTML = `<h3 data-a="min-roster">THE HOUSES &amp; THEIR PRIMUSES <span>${this.ui.rosterMin ? '▸' : '▾'}</span></h3>${rows}${nrows}`;
+    document.getElementById('roster')!.innerHTML = `<div class="dk">THE HOUSES, IN TURN ORDER</div>${rows}${nrows.length ? `<div class="dk">NEUTRAL HOUSES</div>${nrows}` : ''}`;
   }
 
   private renderLog() {
     const v = this.v;
     const lines = v.log.slice().reverse().map((e) => describe(v, e)).filter(Boolean).slice(0, 70);
-    document.getElementById('log')!.innerHTML = `<h3 data-a="min-log">WAR LOG <span>${this.ui.logMin ? '▸' : '▾'}</span></h3>${(this.ui.logMin ? lines.slice(0, 1) : lines).map((l) => `<div class="ev">${l}</div>`).join('')}`;
+    this.logTop = lines[0] ?? '';
+    document.getElementById('log')!.innerHTML = lines.length ? lines.map((l) => `<div class="ev">${l}</div>`).join('') : '<div class="dk">NOTHING HAS HAPPENED YET</div>';
   }
 
   /**
@@ -1454,7 +1628,7 @@ export class App {
     const box = document.getElementById('regions')!;
     const holder = (r: (typeof g.regions)[number]) => { const o = v.owner[r.terr[0]]; return o >= 0 && r.terr.every((t) => v.owner[t] === o) ? o : -1; };
     const row = (r: (typeof g.regions)[number], note: string, cls = '') =>
-      `<div class="rg ${cls}" data-region="${r.id}"><span class="rg-n">${esc(r.name.replace(/^The /, ''))}</span><span class="rg-b">+${r.bonus}</span><span class="rg-note">${note}</span></div>`;
+      `<div class="rg ${cls}" data-a="region" data-region="${r.id}" title="Show it on the map"><span class="rg-n">${esc(r.name.replace(/^The /, ''))}</span><span class="rg-b">+${r.bonus}</span><span class="rg-note">${note}</span></div>`;
     let body = '';
     if (me != null && v.players[me] && v.phase !== 'passage') {
       const mine = g.regions.filter((r) => holder(r) === me);
@@ -1471,8 +1645,8 @@ export class App {
     }
     const rivals = g.regions.map((r) => ({ r, o: holder(r) })).filter((x) => x.o >= 0 && x.o !== me);
     if (rivals.length) body += `<div class="rg-h">HELD BY RIVALS</div>${rivals.map(({ r, o }) => row(r, sig(v.players[o].house, 'sig sm'), 'rival')).join('')}`;
-    if (!body) body = '<div class="rg-note" style="padding:6px 12px">Hold every territory of a region (gold borders on the map) for its bonus each turn.</div>';
-    box.innerHTML = `<h3 data-a="min-regions">REGIONS <span>${this.ui.regionsMin ? '▸' : '▾'}</span></h3>${this.ui.regionsMin ? '' : body}`;
+    if (!body) body = '<div class="rg-note" style="padding:8px 12px">Hold every territory of a region for its bonus each turn. Hold Alt to see the regions on the map.</div>';
+    box.innerHTML = body;
     if (!box.dataset.hover) {
       box.dataset.hover = '1';
       box.addEventListener('mouseover', (e) => {
@@ -1533,8 +1707,19 @@ export class App {
     return this.sieging() && this.g.territories[t].foot && this.v.owner[t] === this.me && this.v.armies[t] >= 2;
   }
 
+  /** The chance to take each target, on its plate: while I have a source picked in my Attack and nothing else owns the map. */
+  private plateOdds(): Record<number, Odds> | null {
+    const v = this.v, u = this.ui, me = this.me;
+    if (me == null || this.showcaseOpen || u.confirm || u.cast || this.playing || !this.myTurn() || v.phase !== 'attack' || u.sel == null) return null;
+    const from = u.sel, odds: Record<number, Odds> = {};
+    for (const t of u.target != null ? (u.target === OLYMPUS ? [] : [u.target]) : attackTargets(v, me, from)) odds[t] = { p: winChance(attackFight(v, me, from, t)), overwhelm: overwhelms(v, from, t) };
+    return odds;
+  }
+
   private renderHighlights() {
     const v = this.v, u = this.ui;
+    this.world.setViewer(this.session ? this.me : null);
+    this.world.setOdds(this.plateOdds());
     if (this.showcaseOpen) return; // the card on the map owns the highlights
     if (u.confirm) { this.world.setHighlights(null, u.confirm.targets, 'target'); return; }
     if (u.cast && this.me != null) {
@@ -1583,6 +1768,8 @@ export class App {
 
   private renderActionBar() {
     const v = this.v, u = this.ui, bar = document.getElementById('actionbar')!;
+    // What the bar is for just now (the phone and tablet rules in style.css drop a hint the turn chip already gives).
+    bar.dataset.mode = this.playing ? 'watch' : this.myTurn() ? v.phase : 'wait';
     if (this.playing) {
       const p = v.players[v.cur];
       bar.classList.remove('hidden');
@@ -1623,22 +1810,24 @@ export class App {
         // Silenced: the Draft is placed, and that is the turn. The Standard may still move (unless Pinned too).
         const st = v.standards[v.players[this.me!].house];
         const canStd = !st.captured && !v.ts.ultPinned && connectedOwned(v, this.me!, st.at).size > 1;
-        bar.innerHTML = `<span class="hint">${v.ts.reinforcements > 0 ? 'Click your territories to place armies.' : 'Silenced: nothing more to do this turn.'}</span>
+        bar.innerHTML = `<span class="hint ${v.ts.reinforcements > 0 ? 'spare' : ''}">${v.ts.reinforcements > 0 ? 'Click your territories to place armies.' : 'Silenced: nothing more to do this turn.'}</span>
           <div class="seg" title="How many each click / + adds">${[1, 3, 5, 'all'].map((n) => `<button data-a="amt" data-n="${n}" class="${u.placeAmt === n ? 'on' : ''}">${n === 'all' ? 'All' : '+' + n}</button>`).join('')}</div>
-          <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶ Undo${placedTotal ? ` (${placedTotal})` : ''}</button>
+          <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶<span class="w"> Undo</span>${placedTotal ? ` (${placedTotal})` : ''}</button>
           <button class="btn" disabled title="Silenced: no cards this turn">Trade 3 → 10</button><button class="btn" disabled title="Silenced: no attacks this turn">Attack</button><button class="btn" disabled title="Silenced: no Fortify this turn">Fortify</button>
           ${canStd ? `<button class="btn" data-a="silStd" ${v.ts.reinforcements > 0 ? 'disabled' : ''} title="The Standard may still move">⚑ Move Standard</button>` : ''}
           <button class="btn primary" data-a="silEnd" ${v.ts.reinforcements > 0 ? 'disabled' : ''}>End Turn ▸</button>`;
         return;
       }
-      const sel = u.sel != null ? `<span class="selbox"><b>${esc(T[u.sel].name)}</b> ${v.armies[u.sel]}${v.ts.placed[u.sel] ? ` <span class="plus">(+${v.ts.placed[u.sel]})</span>` : ''}
+      // (on a phone the box keeps only its two buttons: the territory wears its own count, and what was placed, on the map)
+      const sel = u.sel != null ? `<span class="selbox"><span class="sb-t"><b>${esc(T[u.sel].name)}</b> ${v.armies[u.sel]}${v.ts.placed[u.sel] ? ` <span class="plus">(+${v.ts.placed[u.sel]})</span>` : ''}</span>
           <button class="btn sm" data-a="minus" ${v.ts.placed[u.sel] ? '' : 'disabled'} title="Take back (Shift-click the territory)">−</button>
           <button class="btn sm" data-a="plus" ${v.ts.reinforcements > 0 ? '' : 'disabled'}>+</button></span>` : '';
+      const hint = v.ts.reinforcements > 0 ? (u.sel == null ? 'Click your territories to place armies.' : '') : mt ? `You hold ${HAND_LIMIT}+ cards. Trade 3 before you march.` : 'Ready. Go to war.';
       bar.innerHTML = `
-        <span class="hint">${v.ts.reinforcements > 0 ? (u.sel == null ? 'Click your territories to place armies.' : '') : mt ? `You hold ${HAND_LIMIT}+ cards. Trade 3 before you march.` : 'Ready. Go to war.'}</span>
+        ${hint ? `<span class="hint ${mt && v.ts.reinforcements <= 0 ? '' : 'spare'}">${hint}</span>` : ''}
         ${sel}
         <div class="seg" title="How many each click / + adds">${[1, 3, 5, 'all'].map((n) => `<button data-a="amt" data-n="${n}" class="${u.placeAmt === n ? 'on' : ''}">${n === 'all' ? 'All' : '+' + n}</button>`).join('')}</div>
-        <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶ Undo${placedTotal ? ` (${placedTotal})` : ''}</button>
+        <button class="btn" data-a="undo" ${placedTotal ? '' : 'disabled'} title="Take back every army you placed this Draft">↶<span class="w"> Undo</span>${placedTotal ? ` (${placedTotal})` : ''}</button>
         ${u.trade.size === 3 ? `<button class="btn gold" data-a="trade">Trade 3 → 10 armies</button>` : u.trade.size ? `<span class="hint">${u.trade.size}/3 selected</span>` : ''}
         ${this.primusButton()}
         ${this.ultButtonHTML()}
@@ -1658,28 +1847,13 @@ export class App {
         return;
       }
       if (u.target == null) {
-        const tg = attackTargets(v, this.me!, u.sel).sort((a, b) => v.armies[a] - v.armies[b]);
-        const chips = tg.map((t) => {
-          const o = v.owner[t];
-          const ally = allied(v, this.me!, o);
-          const col = o >= 0 ? HOUSES[v.players[o].house].color : '#a39a88';
-          const sh = standardAt(v, t);
-          const uf = ultFight(v, this.me!, t);
-          const guard = sh >= 0 ? guardAgainst(v, this.me!, t) : 0;
-          const tm = terrainMods(v, u.sel!, t);
-          const icon = tm.def ? ' 🌲' : '';
-          const note = defenseNote(v, u.sel!, t);
-          const walls = keepWalls(v, t);
-          const p = winChance(attackFight(v, this.me!, u.sel!, t));
-          const tip = ally ? 'Your ally! Attacking ends the alliance. ' : note === 'Overwhelm' ? 'Twice their number: they yield without a fight. ' : note === '1 die' ? 'A lone neutral garrison rolls 1 defense die. ' : (walls ? `Keep Walls: +${walls} to their highest defense die. ` : '') + (tm.def ? 'Forest: +1 to their lowest defense die. ' : '')
-            + (uf.glared ? 'Glared: −1 on their highest defense die. ' : '') + (uf.radiant ? 'Radiant: +1 on your highest attack die. ' : '') + (uf.hunted ? 'Hunted: no honor guard, and no ambush. ' : '');
-          return `<button class="chip ${ally ? 'ally' : ''}" data-a="tgt" data-t="${t}" style="--c:${col}" title="${tip}${note === 'Overwhelm' ? 'Certain' : `${pct(p)} chance to take it if you blitz`}">${ally ? '⚠ ' : ''}${esc(T[t].name)}${icon} <b>${v.armies[t]}${guard ? `<span class="guard">+${guard}</span>` : ''}</b>${sh >= 0 ? ' ⚑' : ''} ${note === 'Overwhelm' ? '<span class="odds good">🏳 Overwhelm</span>' : `<span class="odds ${oddsClass(p)}">${pct(p)}</span>${note === '1 die' ? ' <span class="dnote">1🎲</span>' : walls ? ` <span class="dnote">♜+${walls}</span>` : ''}${uf.glared ? ' <span class="dnote">☉−1</span>' : ''}${uf.hunted ? ' <span class="dnote">☾</span>' : ''}`}</button>`;
-        }).join('');
+        // The targets wear their odds on their plates on the map. Only Olympus, which has no plate to pick, keeps a chip here.
+        const tg = attackTargets(v, this.me!, u.sel);
         const olyP = this.canAssaultFrom(u.sel) ? winChance(assaultFight(v, u.sel)) : 0;
-        const oly = this.canAssaultFrom(u.sel) ? `<button class="chip oly" data-a="tgt" data-t="${OLYMPUS}">🏛 Olympus <b>${v.siege!.garrison}</b> <span class="odds ${oddsClass(olyP)}">${pct(olyP)}</span></button>` : '';
-        bar.innerHTML = `<span class="hint">From <b>${esc(T[u.sel].name)}</b> (${v.armies[u.sel]}), ${tg.length + (oly ? 1 : 0)} target${tg.length + (oly ? 1 : 0) === 1 ? '' : 's'}:</span>
-          <div class="chips">${chips}${oly}${!chips && !oly ? '<span class="hint">nothing in reach</span>' : ''}</div>
-          <button class="btn sm" data-a="cancel">✕</button><button class="btn" data-a="endAttack">Fortify ▸</button>`;
+        const oly = this.canAssaultFrom(u.sel) ? `<button class="chip oly" data-a="tgt" data-t="${OLYMPUS}" title="Assault Olympus from here">🏛 Olympus <b>${v.siege!.garrison}</b> <span class="odds ${oddsClass(olyP)}">${pct(olyP)}</span></button>` : '';
+        bar.innerHTML = `<span class="hint">From <b>${esc(T[u.sel].name)}</b> (${v.armies[u.sel]}): ${tg.length ? `pick ${tg.length === 1 ? 'the target' : `one of ${tg.length} targets`} on the map${oly ? ', or storm Olympus' : ''}.` : oly ? 'storm Olympus.' : 'nothing in reach.'}</span>
+          ${oly ? `<div class="chips">${oly}</div>` : ''}
+          <button class="btn sm" data-a="cancel" title="Cancel">✕</button><button class="btn" data-a="endAttack">Fortify ▸</button>`;
         return;
       }
       const from = u.sel, to = u.target;
@@ -2008,7 +2182,7 @@ export class App {
     return `<button class="btn gold" data-a="primusOpen" data-keep="${opts[0].keep}" title="Swear a Character in as Primus of ${esc(this.g.territories[opts[0].keep].name)}">♛ Primus${opts.length > 1 ? ` (${opts.length})` : ''}</button>`;
   }
 
-  private cardHTML(id: string, o: { sel?: boolean; locked?: boolean; btns?: string; big?: boolean; forHouse?: number; ownsCheck?: boolean; an?: number; mag?: boolean; cls?: string } = {}) {
+  private cardHTML(id: string, o: { sel?: boolean; locked?: boolean; btns?: string; big?: boolean; forHouse?: number; ownsCheck?: boolean; an?: number; cls?: string } = {}) {
     const c = CARD[id];
     const v = this.session?.view ?? null;
     const me = this.session?.seat ?? null;
@@ -2027,7 +2201,6 @@ export class App {
         : `<div class="blk"><span class="k">REQUIRES</span>You must own House ${HOUSES[c.house].name}. Otherwise, discard it for 2 cards.</div>`;
     const oly = c.kind === 'proctor' && OLYMPUS_POWER[id] ? `<div class="blk oly"><span class="k">DEFENDING OLYMPUS</span>${esc(OLYMPUS_POWER[id].text)}</div>` : '';
     return `<div class="gcard ${o.sel ? 'sel' : ''} ${o.locked ? 'locked' : ''} ${o.big ? 'big' : ''} ${o.cls ?? ''}" data-card="${id}" style="--hc:${HOUSES[c.house].color}">
-      ${o.mag ? `<button class="mag" data-a="inspect" data-id="${id}" title="Enlarge, and show what it would hit">🔍</button>` : ''}
       ${c.kind === 'proctor' ? '<span class="badge">PROCTOR</span>' : c.kind === 'relic' ? '<span class="badge">RELIC</span>' : c.active.kind === 'counter' ? '<span class="badge">REACTION</span>' : ''}
       <div class="hdr">${sig(c.house)}<div><div class="nm">${esc(c.name)}</div><div class="tt">${esc(c.title)} · <span style="color:${HOUSES[c.house].color}">${HOUSES[c.house].name}</span></div></div></div>
       ${top}
@@ -2060,17 +2233,34 @@ export class App {
     return locked ? '<div class="btns"><span class="fine" style="margin:0">Locked until your next turn</span></div>' : '';
   }
 
+  /**
+   * A card in the tray: a small tab in its House's colour, with a name and one word for what it is.
+   * A click opens the card itself in the inspector; nothing is ever played from the tab.
+   */
+  private tabHTML(id: string, locked: boolean) {
+    const c = CARD[id], u = this.ui;
+    const react = c.active.kind === 'counter', open = u.inspect === id;
+    const ty = locked ? 'Locked' : u.trade.has(id) ? '✓ Trade' : react ? 'React' : c.kind === 'relic' ? 'Relic' : c.kind === 'proctor' ? 'Proctor' : 'Play';
+    const cls = `${u.trade.has(id) ? 'sel' : ''} ${locked ? 'locked' : ''} ${open ? 'inspecting' : ''} ${react ? 'react' : ''} ${this.playableNow(id, locked) ? `playable${this.v.reaction ? ' react-ready' : ''}` : ''}`;
+    // The tab has room for a short name: "Sevro" for Sevro au Barca, "Fitchner" for Proctor Fitchner (the word under it says Proctor).
+    const short = c.name.replace(/^(Proctor|Stolen|The Proctors') /, '').replace(/ (au|of) .*$/, '');
+    return `<button class="ctab ${cls}" data-a="inspect" data-id="${id}" data-card="${id}" style="--hc:${HOUSES[c.house].color}" title="${esc(c.name)}, ${esc(c.title)}" aria-pressed="${open}">${sig(c.house, 'sig sm')}<span class="nm">${esc(short)}</span><span class="ty">${ty}</span></button>`;
+  }
+
+  /** The hand, as a tray of card tabs in the corner. */
   private renderHand() {
-    const v = this.v, u = this.ui;
+    const v = this.v;
     const hand = v.me?.hand ?? [];
     const box = document.getElementById('hand')!;
-    if (v.phase === 'passage' || !hand.length) { box.innerHTML = ''; this.renderInspector(); return; }
-    box.innerHTML = hand.map((h) => this.cardHTML(h.id, { sel: u.trade.has(h.id), locked: h.locked, btns: this.cardButtons(h.id, h.locked), mag: true, cls: `${u.inspect === h.id ? 'inspecting' : ''} ${this.playableNow(h.id, h.locked) ? `playable${v.reaction ? ' react-ready' : ''}` : ''}` })).join('');
+    // Drawn again only when it changes, so a tab under the mouse keeps its lift while the rest of the HUD redraws.
+    const html = v.phase === 'passage' ? '' : hand.map((h) => this.tabHTML(h.id, h.locked)).join('');
+    if (html !== box.dataset.html) { box.dataset.html = html; box.innerHTML = html; }
+    if (!html) { this.renderInspector(); return; }
     if (!box.dataset.hover) {
       box.dataset.hover = '1';
-      // Hovering a card lights up what it would hit.
+      // Hovering a card lights up what it would hit (opening it does the same, for a finger).
       box.addEventListener('mouseover', (e) => {
-        const id = (e.target as HTMLElement).closest<HTMLElement>('.gcard')?.dataset.card ?? null;
+        const id = (e.target as HTMLElement).closest<HTMLElement>('.ctab')?.dataset.card ?? null;
         if (id !== this.ui.hoverCard) { this.ui.hoverCard = id; this.renderHighlights(); }
       });
       box.addEventListener('mouseleave', () => { if (this.ui.hoverCard) { this.ui.hoverCard = null; this.renderHighlights(); } });
@@ -2223,19 +2413,23 @@ export class App {
     if (this.session?.view) this.world.update(this.v);
   }
 
-  /** The 🔍 panel: the card, big, beside the map, with everything it would touch listed and lit up. */
+  /**
+   * The card lifted out of the tray: the whole card above its tab, with its Play / Discard / Trade buttons and everything it
+   * would touch listed and lit up on the map. The tab again, ✕, Esc or the map puts it back.
+   */
   private renderInspector() {
     const id = this.ui.inspect;
     let box = document.getElementById('inspector');
     const hand = this.v.me?.hand ?? [];
-    const h = hand.find((x) => x.id === id);
-    document.getElementById('leftcol')?.classList.toggle('under-inspector', !!h);
+    const h = this.v.phase === 'passage' ? undefined : hand.find((x) => x.id === id);
     if (!h) { box?.remove(); if (id) this.ui.inspect = null; return; }
     if (!box) { box = el('<div id="inspector" class="inspector"></div>'); document.getElementById('hud')!.appendChild(box); }
     const imp = this.cardImpact(h.id);
-    box.innerHTML = `<div class="ih"><span class="logo-sub" style="margin:0;letter-spacing:.3em">CARD</span><button class="btn sm" data-a="inspect-close" title="Close">✕</button></div>
-      ${this.cardHTML(h.id, { big: true, locked: h.locked, btns: this.cardButtons(h.id, h.locked), cls: `huge ${this.playableNow(h.id, h.locked) ? 'playable' : ''}` })}
+    const html = `<div class="ih"><span class="logo-sub" style="margin:0;letter-spacing:.3em">CARD</span><button class="btn sm" data-a="inspect-close" title="Close (Esc)">✕</button></div>
+      ${this.cardHTML(h.id, { big: true, locked: h.locked, btns: this.cardButtons(h.id, h.locked), cls: 'huge' })}
       <div class="impact"><div class="k">IF YOU PLAY IT NOW${imp.targets.length ? ` · <span style="color:#ff9b1f">${imp.targets.length} glowing</span>` : ''}</div>${imp.lines.map((l) => `<div>${l}</div>`).join('')}</div>`;
+    // Drawn again only when it changes: a card being read keeps its scroll.
+    if (html !== box.dataset.html) { box.dataset.html = html; box.innerHTML = html; }
   }
 
   // =========================================================================
@@ -2736,23 +2930,48 @@ export class App {
     this.render();
   }
 
+  private revealSticky = false;
+  /** Names of territories, regions and land bridges on the map: while Alt is held, or for as long as the Map views row is on. */
+  private holdReveal(on: boolean) {
+    if (!document.getElementById('hud')) return;
+    const want = on || this.revealSticky;
+    if (this.world.revealed !== want) this.world.setReveal(want);
+  }
+  private cycleGraphics() {
+    const next: Graphics = ({ auto: 'high', high: 'medium', medium: 'low', low: 'auto' } as const)[this.world.graphics];
+    this.world.setGraphics(next);
+    this.toast(next === 'auto' ? `Graphics: Auto (${this.world.graphicsLevel} on this device).` : `Graphics: ${GFX_NAMES[next]}.`);
+    this.renderPop();
+  }
+
   private onKey(e: KeyboardEvent) {
-    if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+    // Alt held: names and regions. The browser's own menu must not take the focus for it.
+    if (e.key === 'Alt') { if (document.getElementById('hud')) { e.preventDefault(); this.holdReveal(true); } return; }
+    // Nothing fires while typing (a slider or a checkbox is not typing).
+    const at = e.target as HTMLInputElement | null;
+    if (at?.isContentEditable || at?.tagName === 'TEXTAREA' || at?.tagName === 'SELECT' || (at?.tagName === 'INPUT' && !/^(range|checkbox|radio|button)$/.test(at.type))) return;
     if (this.guide.onKey(e)) return;
-    if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const k = e.key.toLowerCase(), plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat;
+    if (k === 'm' && plain) {
       sound.setMuted(!sound.muted);
       this.toast(sound.muted ? '🔇 Sound off (M to turn it back on)' : '🔊 Sound on');
       if (document.getElementById('modal-root')?.dataset.key === 'info-settings') this.modalSettings();
     }
     if (!this.session?.view) return;
-    if (e.key === 'g' || e.key === 'G') this.toggleFocus();
-    if (e.key === 'o' || e.key === 'O') this.cycleOlympus();
-    if ((e.key === 'b' || e.key === 'B') && document.getElementById('hud')) {
+    const u = this.ui, hud = !!document.getElementById('hud');
+    if (plain && k === 'g') this.toggleFocus();
+    if (plain && k === 'o') this.cycleOlympus();
+    if (plain && k === 'b' && hud) {
       if (document.getElementById('modal-root')?.dataset.key === 'info-book') this.modal(null);
       else this.modalBook();
     }
-    if (e.key === 'Escape') {
-      this.ui.sel = null; this.ui.target = null; this.ui.pending = null; this.ui.stdMode = false; this.ui.inspect = null; this.ui.spot = null; this.ui.emotes = false;
+    // The drawer: the Houses, the Regions, the War Log.
+    if (plain && hud && (k === 'h' || k === 'r' || k === 'l')) { const d = ({ h: 'houses', r: 'regions', l: 'log' } as const)[k]; this.setDrawer(u.drawer === d ? null : d); }
+    if (e.key === 'Escape' && hud) {
+      // Whatever lies on top goes first: a popover, your Primus's card, a lifted card. Then the drawer. Then the selection.
+      if (u.menu || u.medal || u.emotes || u.inspect || u.iconTip || u.reveal != null) { u.menu = null; u.medal = false; u.emotes = false; u.inspect = null; u.iconTip = null; u.reveal = null; this.render(); return; }
+      if (u.drawer) { this.setDrawer(null); return; }
+      u.sel = null; u.target = null; u.pending = null; u.stdMode = false; u.spot = null;
       this.endPreview();
       this.endCast();
       this.world.clearArrow(); this.render();
@@ -2761,23 +2980,43 @@ export class App {
 
   private async onHudClick(e: Event) {
     const b = (e.target as HTMLElement).closest('[data-a]') as HTMLElement | null;
-    if (!b) {
-      // Clicking a glowing card (not one of its buttons) plays it: straight into the preview.
-      const card = (e.target as HTMLElement).closest<HTMLElement>('#hand .gcard.playable, #inspector .gcard.playable');
-      if (card?.dataset.card) {
-        // Mid-ambush, a stray click never springs a card: the prompt's own buttons do that.
-        if (this.v.reaction) {
-          const b = document.querySelector<HTMLElement>(`#ambush [data-id="${card.dataset.card}"]`);
-          b?.classList.remove('nudge'); void b?.offsetWidth; b?.classList.add('nudge');
-          return;
-        }
-        return this.startPlay(card.dataset.card);
-      }
-      return;
-    }
-    if ((b as HTMLButtonElement).disabled) return;
+    if (!b || (b as HTMLButtonElement).disabled) return;
     const a = b.dataset.a!, u = this.ui, v = this.v;
+    // A row of the popover that opens something closes the popover behind it; a switch leaves it open to show its new state.
+    if (u.menu && b.closest('#pop') && !['names', 'olympus', 'focus', 'gfx'].includes(a)) { u.menu = null; this.renderPop(); }
     switch (a) {
+      case 'grp': {
+        const m = b.dataset.m as UIState['menu'];
+        u.menu = u.menu === m ? null : m;
+        if (u.menu) { u.medal = false; u.emotes = false; this.renderGeneral(); this.renderEmotes(); }
+        return this.renderPop();
+      }
+      case 'names': this.revealSticky = !this.revealSticky; this.world.setReveal(this.revealSticky); this.toast(this.revealSticky ? 'Names and regions: shown. Hold Alt for a quick look instead.' : 'Names and regions: hidden.'); return this.renderPop();
+      case 'gfx': return this.cycleGraphics();
+      case 'home': return this.world.home();
+      case 'drawer': { const d = b.dataset.d as UIState['drawer']; return this.setDrawer(u.drawer === d && !b.closest('.dhead, .lane') ? null : d); }
+      case 'closeDrawer': return this.setDrawer(null);
+      case 'house': {
+        // A sigil of the turn order: the Houses, with that one brought into view.
+        this.setDrawer('houses');
+        const r = document.querySelector<HTMLElement>(`#roster [data-row="${b.dataset.seat}"]`);
+        r?.scrollIntoView({ block: 'nearest' }); r?.classList.add('ping');
+        return;
+      }
+      case 'medal': {
+        u.medal = !u.medal;
+        if (u.medal) { u.menu = null; u.emotes = false; if (u.iconTip?.startsWith('general:')) u.iconTip = null; this.renderPop(); this.renderEmotes(); }
+        return this.renderGeneral();
+      }
+      case 'region': {
+        // Show a region on the map: the camera goes there and its land lights up. On a phone the sheet steps out of the way.
+        const r = this.g.regions[+b.dataset.region!];
+        if (!r) return;
+        this.world.follow(r.terr);
+        this.world.flash(r.terr, '#f3d27a', 1800);
+        if (phone()) this.setDrawer(null);
+        return;
+      }
       case 'menu': return this.modalMenu();
       case 'rules': return this.modalRules();
       case 'codex': return this.modalCodex();
@@ -2806,10 +3045,11 @@ export class App {
           const land = territoriesOf(v, seat);
           this.world.follow(land);
           this.toast(`${v.players[seat].name}: ${land.length} territories lit up. Click again to clear.`);
+          // On a phone the sheet covers the map it has just lit up.
+          if (phone()) u.drawer = null;
         }
         return this.render();
       }
-      case 'min-regions': u.regionsMin = !u.regionsMin; return this.render();
       case 'invite': case 'answer': case 'reveal': case 'proposeSiege': case 'vote': case 'joinRally': case 'ignoreRally': return this.diplo(b);
       case 'kick': {
         const seat = +b.dataset.seat!, s = this.session;
@@ -2824,6 +3064,7 @@ export class App {
         // The Minerva caster opens a Revealed hand from its icon; any other icon just reads itself out.
         if (b.dataset.reveal != null) { u.reveal = u.reveal === +b.dataset.reveal ? null : +b.dataset.reveal; u.iconTip = null; return this.render(); }
         u.iconTip = u.iconTip === b.dataset.key ? null : b.dataset.key!;
+        if (u.iconTip?.startsWith('general:')) u.medal = false;
         return this.render();
       }
       case 'ult': return this.openCast();
@@ -2847,11 +3088,6 @@ export class App {
       }
       case 'speed': return this.setSpeed(+b.dataset.n!);
       case 'skip': this.skipReplay(); return;
-      case 'tab-roster': u.mobileTab = u.mobileTab === 'roster' ? 'none' : 'roster'; return this.render();
-      case 'tab-log': u.mobileTab = u.mobileTab === 'log' ? 'none' : 'log'; return this.render();
-      case 'min-roster': if (window.innerWidth > 900) { u.rosterMin = !u.rosterMin; this.render(); } return;
-      case 'min-log': if (window.innerWidth > 900) { u.logMin = !u.logMin; this.render(); } return;
-      case 'min-gen': u.genMin = !u.genMin; return this.render();
       case 'amt': u.placeAmt = b.dataset.n === 'all' ? 'all' : +b.dataset.n!; return this.render();
       case 'plus': if (u.sel != null) return this.placeOn(u.sel, false); return;
       case 'minus': if (u.sel != null) return this.placeOn(u.sel, true); return;
@@ -2899,7 +3135,18 @@ export class App {
       case 'tsel': { const id = b.dataset.id!; if (u.trade.has(id)) u.trade.delete(id); else if (u.trade.size < 3) u.trade.add(id); return this.render(); }
       case 'dud': return void this.send({ type: 'discardProctor', card: b.dataset.id! });
       case 'play': return this.startPlay(b.dataset.id!);
-      case 'inspect': u.inspect = u.inspect === b.dataset.id ? null : b.dataset.id!; return this.render();
+      case 'inspect': {
+        // A tab of the tray lifts its card (the same tab again puts it back). Nothing is played from here.
+        const id = b.dataset.id!;
+        u.inspect = u.inspect === id ? null : id;
+        this.render();
+        // Mid-ambush the card springs nothing by itself: the prompt's own button does, so that is pointed out.
+        if (u.inspect && this.v.reaction) {
+          const p = document.querySelector<HTMLElement>(`#ambush [data-id="${id}"]`);
+          p?.classList.remove('nudge'); void p?.offsetWidth; p?.classList.add('nudge');
+        }
+        return;
+      }
       case 'inspect-close': u.inspect = null; return this.render();
     }
   }
@@ -2971,6 +3218,8 @@ export class App {
   private async pick(t: number | null) {
     if (!this.session || this.session.status === 'lobby' || !document.getElementById('hud')) return;
     const v = this.v, u = this.ui;
+    // A tap on the map puts a lifted card back in the tray. On empty ground it does only that.
+    if (u.inspect) { u.inspect = null; this.renderHand(); this.renderHighlights(); if (t == null) return; }
     if (t == null) { if (u.target != null) u.target = null; else u.sel = null; this.world.clearArrow(); this.render(); return; }
     if (!this.myTurn()) { this.world.focus(t); return; }
     if (t === OLYMPUS) {
@@ -3089,10 +3338,19 @@ export class App {
         ${td.port >= 0 ? `<div class="tt-terr">⚓ <b>Port.</b> Its sea lane borders ${esc(this.g.territories[td.port].name)} across the water.</div>` : ''}
         ${this.oddsTip(t)}`;
     }
-    this.tip.style.left = `${Math.min(x + 16, window.innerWidth - 270)}px`;
-    this.tip.style.top = `${y + 14}px`;
     this.tip.classList.remove('hidden');
+    // Measured at the corner (a card against the far edge is squeezed), then put by the pointer: beside a mouse, and above a
+    // finger where there is room, so the hand does not hide what it asked for. Always inside the screen.
+    this.tip.style.left = this.tip.style.top = '0px';
+    const W = window.innerWidth, H = window.innerHeight, w = this.tip.offsetWidth, h = this.tip.offsetHeight;
+    let left = x + 16, top = y + 18;
+    if (this.touch) { left = x - w / 2; top = y - h - 36; if (top < 6) top = y + 44; }
+    else { if (left + w > W - 6) left = x - w - 12; if (top + h > H - 6) top = y - h - 12; }
+    this.tip.style.left = `${clamp(left, 6, Math.max(6, W - w - 6))}px`;
+    this.tip.style.top = `${clamp(top, 6, Math.max(6, H - h - 6))}px`;
   }
+  /** The last pointer on the page was a finger (or a pen), not a mouse. */
+  private touch = false;
 
   private regionTip(t: number) {
     const v = this.v, g = this.g, r = g.regions[g.territories[t].region];
@@ -3122,9 +3380,15 @@ export class App {
     // After a jump (a skipped replay), only the last couple of battles are worth rolling dice for.
     const battles = fresh.filter((e) => e.k === 'battle' || e.k === 'stdBattle' || e.k === 'assault').slice(-2);
     const lastTurn = [...fresh].reverse().find((e) => e.k === 'turn');
+    // My own marches are seen on the map too (the last couple, after a jump). Nothing waits for them.
+    const moves = fresh.filter((e) => e.k === 'overwhelm' || e.k === 'fortify').slice(-2);
     this.regionWhisper(v, fresh);
     for (const e of fresh) {
       if (battles.includes(e)) this.animateBattle(v, e);
+      if (moves.includes(e)) {
+        if (e.k === 'overwhelm') void this.world.sortie(e.from, e.to).then(() => this.world.settle(e.from, e.to, true));
+        else void this.world.travel(e.path ?? [e.from, e.to], e.to);
+      }
       if (e.k === 'turn' && e.seat === this.me && this.session?.mode === 'online') this.flashTitle();
       if (e === lastTurn) this.turnBanner(v, e.seat);
       if (e.k === 'invite' && e.to === this.me) this.toast(`📜 ${v.players[e.from].name} whispers an alliance offer. Check 🤝.`);
@@ -3156,7 +3420,12 @@ export class App {
       document.getElementById('bA')!.innerHTML = `<span style="color:${HOUSES[v.players[e.seat].house].color}">${esc(aName)}</span>`;
       document.getElementById('bD')!.innerHTML = `<span style="color:${olympus ? '#f3d27a' : e.def >= 0 ? HOUSES[v.players[e.def].house].color : '#aaa'}">${esc(dName)}</span>`;
       document.getElementById('bRes')!.innerHTML = e.k === 'stdBattle' ? '⚑ Standard battle…' : `${esc(this.tname(e.from))} → ${esc(this.tname(to))}`;
+      this.placeBattle(box, to);
       this.world.arrow(e.from, to, e.k === 'battle' ? '#ff3b1f' : '#f3d27a');
+      // The garrison goes out to the fight. A crossing is worth waiting for; by land they march while the dice roll.
+      const sea = !olympus && this.world.bySea(e.from, to);
+      const out = olympus ? Promise.resolve() : this.world.sortie(e.from, to);
+      if (sea && !this.skipping) await out;
       // Skirmishes with neutral garrisons happen every turn; the battle music is for Houses meeting in the field.
       if (e.def >= 0 || e.k !== 'battle') this.bumpBattle();
       sound.play('dice');
@@ -3176,9 +3445,36 @@ export class App {
       const mineHit = (e.seat === this.me && (e.aLost ?? 0) >= 3) || (e.def === this.me && (e.dLost ?? 0) >= 2);
       if (mineHit || (e.won && (e.seat === this.me || e.def === this.me))) this.flashBlood(e.won && e.def === this.me ? 1 : 0.6);
       if (e.won) this.world.burst(to, HOUSES[v.players[e.seat].house].color, e.k !== 'battle');
+      // Then they go in, or fall back. By sea they stand off the shore while the attacker may still try again.
+      if (!olympus) {
+        const more = !e.won && v.cur === e.seat && v.phase === 'attack' && (v.armies[e.from] ?? 0) > 1;
+        void out.then(() => this.world.settle(e.from, to, !!e.won, more));
+      }
       this.battleHide = window.setTimeout(() => { box.classList.add('hidden'); if (this.ui.target == null) this.world.clearArrow(); }, 2600);
       await new Promise((r) => setTimeout(r, 350));
     }
+  }
+
+  private battleRaf = 0;
+  /** What the HUD covers at the top and the bottom of the screen, in pixels (as the map was last told). */
+  private cover = { top: 58, bottom: 70 };
+  /**
+   * The dice roll beside the fight, not across the top of the map: the panel stands to the right of the target (to its left
+   * where the screen ends), clear of the turn chip and the bar, and follows it while the camera moves.
+   */
+  private placeBattle(box: HTMLElement, to: number) {
+    cancelAnimationFrame(this.battleRaf);
+    const step = () => {
+      if (!box.isConnected || box.classList.contains('hidden')) return;
+      const W = window.innerWidth, H = window.innerHeight, bw = box.offsetWidth, bh = box.offsetHeight;
+      const p = this.world.screenPos(to);
+      const x = p.x + 30 + bw > W - 8 ? p.x - 30 - bw : p.x + 30;
+      const top = this.cover.top + 8;
+      box.style.left = `${Math.round(clamp(x, 8, Math.max(8, W - bw - 8)))}px`;
+      box.style.top = `${Math.round(clamp(p.y - 46, top, Math.max(top, H - this.cover.bottom - bh - 8)))}px`;
+      this.battleRaf = requestAnimationFrame(step);
+    };
+    step();
   }
 
   /** Steel as the dice land, a grunt per fallen soldier (up to three), and a cry if the ground was taken. */
@@ -3701,9 +3997,9 @@ export class App {
     const sg = v?.siege;
     if (!v || !sg || v.phase === 'over' || !document.getElementById('hud')) { box?.remove(); return; }
     box ??= el('<div id="siegebar" class="siegebar"></div>');
-    // Desktop: at the head of the right column, pushing the log down. Phones: a bar over the map.
-    const home = window.innerWidth > 900 ? document.getElementById('rightcol')! : document.getElementById('hud')!;
-    if (box.parentElement !== home) home.prepend(box);
+    // A card of its own in the top right corner (the drawer opens under it). On a phone that corner holds the drawer's tabs, so it sits under the turn chip.
+    const tc = document.getElementById('tc')!, home = phone() ? tc : document.getElementById('hud')!;
+    if (box.parentElement !== home) { if (home === tc) tc.insertBefore(box, document.getElementById('notices')); else home.appendChild(box); }
     const full = Math.max(sg.start, sg.garrison);
     box.innerHTML = `<div class="sb-h">🏛 THE SIEGE OF OLYMPUS <span>${sg.turnsLeft} allied turn${sg.turnsLeft === 1 ? '' : 's'} left</span></div>
       <div class="sb-bar" title="Olympus's garrison"><i style="width:${(100 * sg.garrison) / full}%"></i><span>${sg.garrison} / ${sg.start} on the walls</span></div>

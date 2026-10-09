@@ -378,8 +378,9 @@ describe('Proctor\'s Guide: just-in-time lessons', () => {
     expect(s.see(ctx({ turnKey: '7:1' })).tip!.html).toContain('Mars Heart');
   });
 
-  it('the alliances Tip pulses 🤝 and the timer Tip pulses the clock', () => {
-    expect(new Sim(hinted()).see(later({ alliancesOpen: true })).tip!.pulse).toEqual(['#btnDiplo']);
+  it('the alliances and Book Tips pulse 🤝 War council (where they live now) and the timer Tip pulses the clock', () => {
+    expect(new Sim(hinted()).see(later({ alliancesOpen: true })).tip!.pulse).toEqual(['#btnWar']);
+    expect(new Sim(hinted()).see(later({ round: 3 })).tip!.pulse).toEqual(['#btnWar']);
     expect(new Sim(hinted()).see(later({ timerSecs: 60 })).tip!.pulse).toEqual(['#tmr']);
   });
 

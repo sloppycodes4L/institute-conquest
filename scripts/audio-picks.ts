@@ -66,6 +66,14 @@ export const SFX: Record<string, SfxGroup> = {
   march: { eleven: { prompt: 'A column of soldiers marching on packed dirt, leather boots, light armor and scabbards rattling, outdoors, no music', duration: 2, takes: 1, influence: 0.45 } },
   card: { eleven: { prompt: 'A stiff parchment card flicked and slapped down onto a wooden table', duration: 0.6, takes: 2, influence: 0.5 } },
   wind: { eleven: { prompt: 'Cold steady wind across an empty highland valley, soft gusts, no birds, no music', duration: 20, takes: 1, loop: true, influence: 0.4 }, keepHead: true },
+  // The valley's water, the ships on it, and rain for the home screen. The loops are beds: the game loads one only
+  // when it is first wanted, and fades it with where the camera is.
+  rain: { eleven: { prompt: 'Steady heavy rain falling on stone castle walls and a flagstone courtyard, close and full, continuous and even, no thunder, no wind gusts, no voices, no music', duration: 22, takes: 1, loop: true, influence: 0.45 }, keepHead: true },
+  water: { eleven: { prompt: 'Small calm waves lapping gently against a rocky lake shore, soft and close, continuous and even, no birds, no wind, no voices, no music', duration: 20, takes: 1, loop: true, influence: 0.45 }, keepHead: true },
+  falls: { eleven: { prompt: 'A tall waterfall heard from a distance, a steady soft roar of falling water and spray, continuous and even, no birds, no voices, no music', duration: 15, takes: 1, loop: true, influence: 0.45 }, keepHead: true },
+  oars: { eleven: { prompt: 'A wooden war galley rowed at a steady pace, many oars dipping and pulling in unison, water rushing along the hull, timber creaking, no voices, no drums, no music', duration: 8, takes: 1, loop: true, influence: 0.45 }, keepHead: true },
+  sail: { eleven: { prompt: 'A heavy canvas sail snapping taut in the wind, with a creak of rope and ship timber, close, no voices, no music', duration: 2, takes: 2, influence: 0.5 } },
+  ice: { eleven: { prompt: 'Thick lake ice creaking and groaning with one deep slow crack, cold open air, distant, no voices, no music', duration: 3, takes: 1, influence: 0.45 } },
 };
 
 export type Mood = 'title' | 'calm' | 'tense' | 'battle' | 'victory' | 'defeat';

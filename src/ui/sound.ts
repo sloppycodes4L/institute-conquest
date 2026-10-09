@@ -20,11 +20,14 @@ const LEVEL: Record<string, number> = {
   click: 0.22, confirm: 0.45, cue: 0.5, dread: 0.55, thud: 0.4, grunt: 0.45, scream: 0.45, boom: 0.5, whoosh: 0.45,
   drum: 0.7, thunder: 0.55, rumble: 0.55, chaos: 0.4, nature: 0.2, clash: 0.55, dice: 0.5, horn: 0.5, warcry: 0.45,
   march: 0.5, card: 0.5, wind: 0.15, shout: 0.5,
+  rain: 0.42, water: 0.5, falls: 0.2, oars: 0.4, sail: 0.4, ice: 0.3,
 };
+/** Loops that lie under a scene (see bed()). Long, so each is fetched only when it is first wanted. */
+const BEDS = new Set(['rain', 'water', 'falls', 'oars']);
 /** A sound with no file borrows another. */
 const STAND_IN: Record<string, string> = { horn: 'drum', warcry: 'chaos', card: 'whoosh', shout: 'warcry' };
 /** Musical sounds keep their pitch; the rest vary a little each time so repeats don't sound canned. */
-const STEADY = new Set(['cue', 'dread', 'horn', 'drum', 'nature', 'wind', 'confirm']);
+const STEADY = new Set(['cue', 'dread', 'horn', 'drum', 'nature', 'wind', 'confirm', 'ice']);
 /** Below this the music swaps between calm and tense only after the current piece has had its say. */
 const SOFT_DWELL_MS = 40_000;
 const MUSIC_LEVEL = 0.5;
@@ -211,7 +214,7 @@ class Sound {
         this.sfxBus.connect(this.master);
         this.applyVolumes();
         // Effects are small (well under a megabyte): fetch them all now so the first battle isn't silent.
-        for (const [name, n] of Object.entries(SFX_TAKES)) for (let i = 1; i <= n; i++) void this.buffer(`${name}-${i}`);
+        for (const [name, n] of Object.entries(SFX_TAKES)) if (!BEDS.has(name)) for (let i = 1; i <= n; i++) void this.buffer(`${name}-${i}`);
         // Render the turn horn ahead of time, so the first one doesn't stutter.
         setTimeout(() => this.hornBuffer(c), 400);
         c.addEventListener('statechange', () => { if (c.state === 'running') { this.syncMusic(); this.syncAmbience(); } });
@@ -424,6 +427,50 @@ class Sound {
     if (on === this.stormOn) return;
     this.stormOn = on;
     this.applyVolumes();
+    this.bed('rain', on ? 1 : 0);
+  }
+
+  private beds = new Map<string, { want: number; src: AudioBufferSourceNode | null; gain: GainNode | null; loading: boolean; stop: number }>();
+  /**
+   * A looping bed under the scene (rain, water, a waterfall, oars): set how present it is, 0 to 1, as often as you
+   * like. It fades to that, loads itself the first time it is wanted, and stops once it has faded to nothing.
+   */
+  bed(name: string, level: number) {
+    let b = this.beds.get(name);
+    if (!b) this.beds.set(name, b = { want: 0, src: null, gain: null, loading: false, stop: 0 });
+    const want = Math.max(0, Math.min(1, level));
+    if (Math.abs(want - b.want) < 0.02 && (want > 0) === (b.want > 0)) return;
+    b.want = want;
+    this.syncBed(name);
+  }
+  private syncBed(name: string) {
+    const b = this.beds.get(name), c = this.running();
+    if (!b) return;
+    const end = () => { try { b.src?.stop(); } catch { /* not started */ } b.src = null; b.gain = null; };
+    if (!c || this.muted || !SFX_TAKES[name]) { clearTimeout(b.stop); b.stop = 0; end(); return; }
+    const level = b.want * (LEVEL[name] ?? 0.3);
+    if (b.want <= 0) {
+      if (!b.gain || b.stop) return;
+      b.gain.gain.setTargetAtTime(0, c.currentTime, 0.5);
+      b.stop = window.setTimeout(() => { b.stop = 0; if (b.want <= 0) end(); }, 2600);
+      return;
+    }
+    clearTimeout(b.stop); b.stop = 0;
+    if (b.gain) { b.gain.gain.setTargetAtTime(level, c.currentTime, 0.6); return; }
+    if (b.loading) return;
+    b.loading = true;
+    void this.buffer(`${name}-1`).then((buf) => {
+      b.loading = false;
+      const now = this.running();
+      if (!buf || !now || this.muted || b.src || b.want <= 0) return;
+      const src = now.createBufferSource(), g = now.createGain();
+      src.buffer = buf; src.loop = true;
+      g.gain.value = 0;
+      g.gain.setTargetAtTime(b.want * (LEVEL[name] ?? 0.3), now.currentTime, 0.9);
+      src.connect(g).connect(this.sfxBus);
+      src.start();
+      b.src = src; b.gain = g;
+    });
   }
 
   /** What thunder needs: noise to roll and to crack, the echo of a stone yard and the hills beyond, and a limiter. */
@@ -542,6 +589,7 @@ class Sound {
   }
 
   private syncAmbience() {
+    for (const name of this.beds.keys()) this.syncBed(name);
     const c = this.running();
     const live = this.amb.on && !!c && !this.muted;
     if (!live) {

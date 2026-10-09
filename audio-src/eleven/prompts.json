@@ -110,5 +110,61 @@
     "influence": 0.5,
     "model": "eleven_text_to_sound_v2",
     "made": "2026-10-01T23:11:08.134Z"
+  },
+  "ice-1.mp3": {
+    "prompt": "Thick lake ice creaking and groaning with one deep slow crack, cold open air, distant, no voices, no music",
+    "duration": 3,
+    "loop": false,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:25:41.528Z"
+  },
+  "rain-1.mp3": {
+    "prompt": "Steady heavy rain falling on stone castle walls and a flagstone courtyard, close and full, continuous and even, no thunder, no wind gusts, no voices, no music",
+    "duration": 22,
+    "loop": true,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:25:50.867Z"
+  },
+  "water-1.mp3": {
+    "prompt": "Small calm waves lapping gently against a rocky lake shore, soft and close, continuous and even, no birds, no wind, no voices, no music",
+    "duration": 20,
+    "loop": true,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:25:55.186Z"
+  },
+  "falls-1.mp3": {
+    "prompt": "A tall waterfall heard from a distance, a steady soft roar of falling water and spray, continuous and even, no birds, no voices, no music",
+    "duration": 15,
+    "loop": true,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:25:58.807Z"
+  },
+  "oars-1.mp3": {
+    "prompt": "A wooden war galley rowed at a steady pace, many oars dipping and pulling in unison, water rushing along the hull, timber creaking, no voices, no drums, no music",
+    "duration": 8,
+    "loop": true,
+    "influence": 0.45,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:26:01.570Z"
+  },
+  "sail-1.mp3": {
+    "prompt": "A heavy canvas sail snapping taut in the wind, with a creak of rope and ship timber, close, no voices, no music",
+    "duration": 2,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:26:02.848Z"
+  },
+  "sail-2.mp3": {
+    "prompt": "A heavy canvas sail snapping taut in the wind, with a creak of rope and ship timber, close, no voices, no music",
+    "duration": 2,
+    "loop": false,
+    "influence": 0.5,
+    "model": "eleven_text_to_sound_v2",
+    "made": "2026-10-09T07:26:04.593Z"
   }
 }

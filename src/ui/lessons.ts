@@ -25,7 +25,7 @@ export interface GuideCtx {
   sel: number | null;
   target: number | null;
   targetIsOlympus: boolean;
-  /** Target chips for the selected territory. */
+  /** Targets in reach of the selected territory (each wears its odds on the map). */
   targets: number;
   /** Territories that can attack right now. */
   sources: number;
@@ -265,7 +265,7 @@ const LESSONS: Lesson[] = [
       const n = c.reinforcements + c.placed;
       return {
         id: 'place', kind: 'do', step: lessonN(2), title: `Place ${n} armies`,
-        body: `<span>Click one of your <b>glowing territories</b> to add an army. Stack them where you plan to attack.</span>${whyFold(c, n)}<span class="g-fine">Shift-click takes one back.</span>`,
+        body: `<span>Click one of your <b>glowing territories</b> to add an army. Mass them where you plan to attack.</span>${whyFold(c, n)}<span class="g-fine">Shift-click, or <b>−</b> in the bar, takes one back.</span>`,
         prog: { n: c.placed, of: n, label: `Placed ${c.placed} / ${n}` },
         wait: c.reinforcements > 0 ? 'Click a glowing territory' : 'All placed',
       };
@@ -296,8 +296,8 @@ const LESSONS: Lesson[] = [
     when: (c) => inAttack(c) && c.sel != null && c.target == null && c.targets >= 1,
     alive: (c) => inAttack(c) && c.sel != null && c.target == null,
     card: () => ({
-      id: 'odds', kind: 'read', step: lessonN(5), title: 'Every target shows your odds', width: 420, spot: ['#actionbar .chips'],
-      body: `<span>It's your chance to take it if you Blitz. Read the colour; the math is done for you.</span>
+      id: 'odds', kind: 'read', step: lessonN(5), title: 'Every target shows your odds', width: 420, spot: ['#plates .plate.tgt, #plates .plate.ally'],
+      body: `<span>They are on the map, beside each target's count: your chance to take it if you Blitz. Read the colour; the math is done for you.</span>
         <div class="g-odds-key">
           <div><span class="odds good">65%+</span><span><b>Likely.</b> Go for it.</span></div>
           <div><span class="odds even">35–64%</span><span><b>Coin flip.</b> Bring more armies first.</span></div>
@@ -389,7 +389,7 @@ const LESSONS: Lesson[] = [
       id: 'cards', kind: 'read', step: 'New: cards', title: 'You earned a card', width: 340, spot: ['#hand'],
       body: `<span>A card does one of two things:</span>
         <div class="g-rd"><div><b>Play it</b><span>for its <b>Active</b> ability. Glowing cards can be played now.</span></div><div><b>Trade 3</b><span>for 10 armies during your Draft.</span></div></div>
-        <span class="g-fine">Hover a card to see which territories it would hit.</span>`,
+        <span class="g-fine">Your cards wait in this tray. Open one to read it and to see which territories it would hit.</span>`,
     }),
   },
   {
@@ -399,7 +399,7 @@ const LESSONS: Lesson[] = [
     done: (c) => !c.mustTrade,
     card: () => ({
       id: 'must-trade', kind: 'do', step: 'New: cards', title: 'Your hand is full', pulse: ['#hand'], wait: 'Pick 3 cards, then Trade',
-      body: '<span>Pick 3 cards and <b>Trade 3 → 10 armies</b> before you march.</span>',
+      body: '<span>Open a card and press <b>Trade</b> to pick it. Pick 3, then <b>Trade 3 → 10 armies</b> before you march.</span>',
     }),
   },
   {
@@ -455,7 +455,7 @@ const LESSONS: Lesson[] = [
   {
     id: 'alliances', kind: 'tip',
     when: (c) => c.alliancesOpen,
-    tip: () => ({ html: "Alliances are open. Press <b>🤝</b> to send a quiet invitation. Allies share their Primuses' Passives.", pinned: false, pulse: ['#btnDiplo'] }),
+    tip: () => ({ html: "Alliances are open. Under <b>🤝 War council</b>, Diplomacy sends a quiet invitation. Allies share their Primuses' Passives.", pinned: false, pulse: ['#btnWar'] }),
   },
   {
     id: 'invite', kind: 'tip',
@@ -480,7 +480,7 @@ const LESSONS: Lesson[] = [
   {
     id: 'book', kind: 'tip',
     when: (c) => c.myTurn && c.round >= 3,
-    tip: () => ({ html: "<b>📖 The Proctors' Book</b> shows every House's odds to win, turn by turn. (B)", pinned: false, pulse: ['#hud .corner [data-a=book]'] }),
+    tip: () => ({ html: "<b>📖 The Proctors' Book</b> shows every House's odds to win, turn by turn. It is under <b>🤝 War council</b>. (B)", pinned: false, pulse: ['#btnWar'] }),
   },
   {
     id: 'timer', kind: 'tip',
@@ -490,7 +490,7 @@ const LESSONS: Lesson[] = [
   {
     id: 'region', kind: 'tip',
     when: (c) => c.myTurn && c.regionTaken != null,
-    tip: (c) => ({ html: `You hold all of <b>${esc(c!.regionTaken?.name ?? '')}</b>: +${c!.regionTaken?.bonus ?? 0} armies every Draft. Gold outlines on the map mark each region.`, pinned: false }),
+    tip: (c) => ({ html: `You hold all of <b>${esc(c!.regionTaken?.name ?? '')}</b>: +${c!.regionTaken?.bonus ?? 0} armies every Draft. Hold <b>Alt</b> to see every region on the map.`, pinned: false }),
   },
   // ---- House Ultimates (.008) ----
   {
@@ -524,13 +524,13 @@ const LESSONS: Lesson[] = [
     alive: (c) => c.ultHit != null,
     card: (c) => ({
       id: 'ult-hit', kind: 'read', step: 'New: House Ultimates', title: `${esc(c.ultHit ?? 'An Ultimate')} hit you`, width: 380, spot: ['#general .icons'],
-      body: '<span>The icons on your banner show what is on you and for how many of your turns.</span><span><b>Hover one</b> to read it.</span>',
+      body: '<span>The icons beside your Primus show what is on you and for how many of your turns.</span><span><b>Click one</b> to read it.</span>',
     }),
   },
   {
     id: 'ult-status', kind: 'tip',
     when: (c) => c.rivalIcon,
-    tip: () => ({ html: 'Icons on a banner are lasting effects. The number is the turns left.', pinned: false }),
+    tip: () => ({ html: "Icons under a House's name are lasting effects. The number is the turns left. Every House is in the <b>Houses</b> drawer (H).", pinned: false }),
   },
   {
     id: 'lockout', kind: 'tip',
@@ -606,7 +606,7 @@ function recapCard(t: TurnLog): Card {
     body: `<div class="g-done">${t.placed ? row(true, 'DRAFT', `Placed ${t.placed} armies`) : row(false, 'DRAFT', 'Skipped')}${attack}${fortify}</div>
       <div class="g-quiz"><div class="q">One question to lock it in. You roll a 5, they roll a 5. Who loses an army?</div>
         <div class="opts"><button class="btn sm" data-g="quiz" data-v="you">I do</button><button class="btn sm" data-g="quiz" data-v="them">They do</button></div>
-        <div class="fb" data-ok="Right. Ties go to the defender, so attack with the bigger stack." data-no="Not quite. Ties go to the defender, which is why bigger stacks win."></div></div>
+        <div class="fb" data-ok="Right. Ties go to the defender, so attack with the bigger army." data-no="Not quite. Ties go to the defender, which is why bigger armies win."></div></div>
       <span>Next turn the Proctor steps back to <b>hints</b>. New lessons still appear the first time you meet cards, the Standard, alliances and ambushes.</span>`,
     cta: 'Continue the war ▸',
   };
