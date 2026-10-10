@@ -67,6 +67,9 @@ input, select { font: inherit; }
 #plates .pt b { font: 700 11px/1 var(--display); margin-left: 3px; letter-spacing: .04em; }
 #plates .pt.on { box-shadow: 0 0 0 2px var(--c, #fff1cf), 0 0 16px 5px var(--c, #fff1cf); z-index: 2500; font-size: 13px; }
 #plates:not(.reveal) .tn, #plates:not(.reveal) .rn, #plates:not(.reveal) .bn { display: none; }
+/* A Skirmish board prints its names like any board: once you are close enough to read them. */
+#plates.board .tn { font-size: 11px; background: rgba(10,6,5,.55); color: #f7efdf; }
+#plates.board.near:not(.reveal) .tn { display: block; }
 /* the one thing you are a territory short of */
 .goal { position: absolute; left: 0; top: 0; font: 800 12px/1 var(--ui); color: #2a1d05; background: linear-gradient(#ffe29a, #e6bb5c); border-radius: 999px; padding: 2px 7px; box-shadow: 0 0 0 1.5px rgba(14,8,7,.9), 0 0 12px rgba(243,210,122,.7); white-space: nowrap; will-change: transform; }
 .hidden { display: none !important; }
@@ -1433,3 +1436,15 @@ body.title-on .sound-toggle { display: none; }
   .ts-sky, .ts-sheets i, .ts-fog, .t-hint { animation: none; }
   .t-hint { opacity: 1; }
 }
+
+/* Skirmish: the mode switch and the board picker on the setup screens */
+.mode-set { margin-bottom: 10px; }
+.map-picks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.map-pick { display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 6px 7px; border: 1px solid var(--line-hi); border-radius: 8px; background: rgba(0,0,0,.28); color: inherit; cursor: pointer; text-align: left; font: inherit; }
+.map-pick img { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #1d465d; border-radius: 5px; display: block; }
+.map-pick b { font: 700 13px/1.15 var(--display); letter-spacing: .04em; color: var(--gold); margin-top: 3px; }
+.map-pick small { font-size: 11px; opacity: .75; }
+.map-pick:hover:not(:disabled) { border-color: var(--gold); }
+.map-pick.on { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 14px rgba(243,210,122,.25); background: rgba(243,210,122,.08); }
+.map-pick:disabled { cursor: default; opacity: .75; }
+@media (max-width: 560px) { .map-picks { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

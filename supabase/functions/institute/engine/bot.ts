@@ -5,9 +5,9 @@ import { CARD, isSiegeCard } from './cards.ts';
 import { HOUSES } from './data.ts';
 import {
   type Action, type GameState, type Mods, BALANCE, NEUTRAL, ULT, ULT_ROUND, activeValue, allianceOf, allied, armyTotal, attackBlocker, attackMods,
-  attackTargets, battleMods, connectedOwned, defenseMods, geo, guardAgainst, inviteBlocker, isWildGarrison, joinRallyBlocker, marsTargets, modifyDice,
+  attackTargets, battleMods, connectedOwned, defenseMods, geo, guardAgainst, inviteBlocker, isSkirmish, isWildGarrison, joinRallyBlocker, marsTargets, modifyDice,
   mustTrade, olympusPreview, overwhelms, ownsHouse, passive, primusOptions, rallyBlocker, reactionCards, reinforcementBreakdown, siegeBlocker,
-  standardAt, stormCut, terrainMods, territoriesOf, ultBlocker, ultCards, ultStandings,
+  quadCount, standardAt, stormCut, terrainMods, territoriesOf, ultBlocker, ultCards, ultStandings,
 } from './engine.ts';
 
 const armiesOf = (v: GameState, seat: number) => territoriesOf(v, seat).reduce((a, t) => a + v.armies[t], 0);
@@ -99,7 +99,7 @@ function directValue(v: GameState, seat: number, hid: string, target: number, ta
     // The whole stack swings: half dies, half joins Mars.
     return marsTargets(v, seat, targets).filter((t) => v.owner[t] >= 0).map((t) => v.armies[t]).sort((a, b) => b - a).slice(0, ULT.marsPicks).reduce((a, x) => a + x, 0);
   }
-  if (hid === 'jupiter') return Math.max(0, income(v, target) - ULT.stormCut) + Math.max(...[0, 1, 2, 3].map((q) => stormCut(v, target, q).cut));
+  if (hid === 'jupiter') return Math.max(0, income(v, target) - ULT.stormCut) + Math.max(...Array.from({ length: quadCount(v) }, (_, q) => stormCut(v, target, q).cut));
   let val = 0;
   for (const m of targets) {
     switch (hid) {
@@ -160,7 +160,7 @@ function ultChoice(v: GameState, seat: number, rng: () => number): Action | null
     const targets = best.alliance ? ultStandings(v).find((p) => p.members.includes(best!.target))!.members : [best.target];
     a.picks = marsTargets(v, seat, targets).sort((x, y) => (v.owner[x] < 0 ? 1 : 0) - (v.owner[y] < 0 ? 1 : 0) || v.armies[y] - v.armies[x] || x - y).slice(0, ULT.marsPicks);
   }
-  if (hid === 'jupiter') a.picks = [[0, 1, 2, 3].reduce((b, q) => (stormCut(v, best!.target, q).cut > stormCut(v, best!.target, b).cut ? q : b), 0)];
+  if (hid === 'jupiter') a.picks = [Array.from({ length: quadCount(v) }, (_, q) => q).reduce((b, q) => (stormCut(v, best!.target, q).cut > stormCut(v, best!.target, b).cut ? q : b), 0)];
   return a;
 }
 
@@ -209,7 +209,7 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
   const g = geo(v);
   const me = v.players[seat];
   // From the round before Ultimates open, one card of the birth House stays out of trades and plays: an Ultimate needs it.
-  const held = v.ult && v.ult.round >= ULT_ROUND - 1 ? (v.me?.hand ?? []).find((c) => !c.locked && CARD[c.id].house === me.house) : undefined;
+  const held = v.ult && (isSkirmish(v) || v.ult.round >= ULT_ROUND - 1) ? (v.me?.hand ?? []).find((c) => !c.locked && CARD[c.id].house === me.house) : undefined;
   const hand = (v.me?.hand ?? []).filter((c) => c !== held);
   // Silenced (no cards, attacks or Fortify) or Pinned (no Fortify, the Standard stays): never ask for what the engine will refuse.
   const muted = !!v.ts.ultMuted && v.cur === seat, pinned = !!v.ts.ultPinned && v.cur === seat;
@@ -339,8 +339,15 @@ export function botAction(v: GameState, seat: number, rng: () => number = Math.r
           if (tgt != null && v.armies[tgt] > 2) return { type: 'play', card: h.id, t: tgt };
           break;
         }
+        case 'moveStd': {
+          // (Only in a Skirmish, where the card is plain armies on one territory: the most threatened border.)
+          if (!isSkirmish(v)) break;
+          const tgt = [...borders].sort((a, b) => threat(b) - v.armies[b] - (threat(a) - v.armies[a]))[0];
+          if (tgt != null) return { type: 'play', card: h.id, t: tgt };
+          break;
+        }
         case 'parley': {
-          const tgt = [...new Set(mine.flatMap(enemyAdj))].find((t) => v.owner[t] === NEUTRAL && v.armies[t] <= n);
+          const tgt = [...new Set(mine.flatMap(enemyAdj))].find((t) => (isSkirmish(v) || v.owner[t] === NEUTRAL) && v.armies[t] <= n);
           if (tgt != null) return { type: 'play', card: h.id, t: tgt };
           break;
         }

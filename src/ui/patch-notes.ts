@@ -15,7 +15,19 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    v: '.011', title: 'You asked, we listened', date: '9 Oct 2026', open: true,
+    v: '.012', title: 'Skirmish', date: '10 Oct 2026', open: true,
+    html: `<p>A second way to go to war, Golds: quick, classic, and nobody to hide behind. The war for the valley is unchanged.</p>
+<ul>
+<li><b>Skirmish.</b> Pick it under <b>Mode</b> when you set up a war, local or online. 2 to 4 Houses on a small board, and every territory starts in somebody's hands.</li>
+<li><b>Four boards.</b> Earth (the classic 42), Mars, Westeros and the Four Nations. Dashed gold lines are sea lanes.</li>
+<li><b>One way to win.</b> Take every enemy territory. No Keeps, no Standards, no neutrals, no alliances, no Olympus.</li>
+<li><b>Your House still matters.</b> Primus, Passives and cards all work. The ones that spoke of Keeps or Standards say what they do on a board: read the card.</li>
+<li><b>Ultimates for everyone.</b> If the host leaves them on, any House can cast from round 1: 3 cards, in your Draft, then 3 turns to recharge. No underdog rule.</li>
+<li><b>How to play</b> inside a Skirmish has its own rules page.</li>
+</ul>`,
+  },
+  {
+    v: '.011', title: 'You asked, we listened', date: '9 Oct 2026',
     html: `<p>Five things from your first day in the new valley. No rules changed.</p>
 <ul>
 <li><b>Lands and regions read from far out.</b> Every land is outlined in ink, every region in a heavier line. Point at a land and it lights up white, with its whole region rimmed in gold.</li>

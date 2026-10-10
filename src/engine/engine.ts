@@ -2,6 +2,7 @@
 // Deterministic given the injected rng/now, so the server and local mode share it verbatim.
 
 import { HOUSES, MAX_PLAYERS, MIN_PLAYERS, QUADRANTS, layoutFor, mapGeo, type Geo } from './data.ts';
+import { SKIRMISH_MAPS, SKIRMISH_MAX, skirmishDef, skirmishGeo } from './skirmish.ts';
 import { CARD, CHARACTER_IDS, ALL_CARD_IDS, EMOTES, OLYMPUS_POWER, isSiegeCard, type CardDef, type PassiveKind } from './cards.ts';
 
 export const NEUTRAL = -1;
@@ -44,6 +45,12 @@ export const BALANCE = {
   sliceGarrison: 2,
   marchGarrison: 6,
   frontGarrison: 14,
+  /**
+   * Skirmish: extra starting armies for each place a House sits behind the first in the turn order, with 2, 3 and 4
+   * Houses. Moving first is worth a lot when the whole board starts full: bot trials without it gave the first House
+   * 3 wars in 4 with two Houses and 2 in 5 with three. With four, the odd territories (dealt to the last to move) are enough.
+   */
+  skirmishLate: [8, 3, 0],
 };
 export const TRADE_VALUE = 10;
 export const HAND_LIMIT = 5;
@@ -66,11 +73,18 @@ export interface WarSettings {
   houseSel: HouseSel;
   /** Primus Selection: `pick` (Choose your Primus, no Passage) or `random` (the Passage). */
   primusSel: PrimusSel;
+  /** `conquest`: the war for the valley. `skirmish`: a classic war on a small board (see skirmish.ts), 2 to 4 Houses. */
+  mode: WarMode;
+  /** Skirmish: which board (an id from SKIRMISH_MAPS). */
+  map: string;
 }
+export type WarMode = 'conquest' | 'skirmish';
 export type HouseSel = 'draft' | 'random';
 export type PrimusSel = 'pick' | 'random';
 export const TURN_TIMERS = [0, 60, 90, 120];
-export const DEFAULT_SETTINGS: WarSettings = { size: 0, troops: 0, alliances: true, siege: true, timer: 0, ultimates: true, houseSel: 'draft', primusSel: 'pick' };
+export const DEFAULT_SETTINGS: WarSettings = { size: 0, troops: 0, alliances: true, siege: true, timer: 0, ultimates: true, houseSel: 'draft', primusSel: 'pick', mode: 'conquest', map: SKIRMISH_MAPS[0].id };
+/** Most Houses a war of this mode seats. */
+export const maxPlayers = (mode: WarMode | undefined) => (mode === 'skirmish' ? SKIRMISH_MAX : MAX_PLAYERS);
 /** House Ultimates need this many Houses in the war. */
 export const ULT_MIN_PLAYERS = 3;
 export const TROOP_LEVELS: Record<string, number> = { '-2': 0.6, '-1': 0.8, '0': 1, '1': 1.3, '2': 1.6 };
@@ -97,16 +111,28 @@ export interface GameOpts {
   finale?: boolean;
   /** House Ultimates are on in this war (the setting is on and 3 or more Houses play). Missing on wars from before .008. */
   ultimates?: boolean;
+  /**
+   * A Skirmish, fought on this board (an id from SKIRMISH_MAPS): every territory starts in a player's hands, there are
+   * no Keeps, Standards, alliances or Olympus, and a House falls when it loses its last territory. Missing in a war
+   * for the valley.
+   */
+  map?: string;
 }
 
 /** Recommended starting armies, spread over a player's starting core. */
 export const recommendedTroops = (layout: number) => 20 + 2 * layout;
+/** A Skirmish's starting armies per House, as the classic board deals them (40, 35, 30 on 42 territories), scaled to the board. */
+export const skirmishTroops = (n: number, nt: number) => Math.round((50 - 5 * Math.max(2, Math.min(SKIRMISH_MAX, n))) * (nt / 42));
 
 export function resolveSettings(n: number, ws: Partial<WarSettings> = {}): GameOpts {
   const w = { ...DEFAULT_SETTINGS, ...ws };
   const layout = layoutFor(n, w.size);
   const level = TROOP_LEVELS[String(Math.max(-2, Math.min(2, Math.round(w.troops || 0))))] ?? 1;
   const timer = TURN_TIMERS.includes(+w.timer) ? +w.timer : 0;
+  if (w.mode === 'skirmish') {
+    const map = skirmishDef(w.map).id;
+    return { layout: 0, troops: Math.round(skirmishTroops(n, skirmishGeo(map).nt) * level), alliances: false, siege: false, timer, ultimates: w.ultimates !== false && n >= ULT_MIN_PLAYERS, map };
+  }
   return {
     layout, troops: Math.round(recommendedTroops(layout) * level), alliances: w.alliances !== false, siege: w.alliances !== false && w.siege !== false, timer,
     ultimates: w.ultimates !== false && n >= ULT_MIN_PLAYERS,
@@ -117,6 +143,7 @@ export function cleanSettings(x: any): WarSettings {
   return {
     size: num(x?.size), troops: num(x?.troops), alliances: x?.alliances !== false, siege: x?.siege !== false, timer: TURN_TIMERS.includes(+x?.timer) ? +x.timer : 0, ultimates: x?.ultimates !== false,
     houseSel: x?.houseSel === 'random' ? 'random' : 'draft', primusSel: x?.primusSel === 'random' ? 'random' : 'pick',
+    mode: x?.mode === 'skirmish' ? 'skirmish' : 'conquest', map: skirmishDef(x?.map).id,
   };
 }
 
@@ -140,6 +167,8 @@ export interface Battle {
   ph?: number;
   /** A REACTION card was sprung in this battle: +1 to every defense die. */
   amb?: boolean;
+  /** The attacker's first battle of the turn (a Skirmish Passive counts on it). */
+  first?: boolean;
 }
 export interface TurnState {
   reinforcements: number;
@@ -156,6 +185,8 @@ export interface TurnState {
   mustMove: { from: number; to: number; min: number; max: number } | null;
   /** Keeps conquered this turn (a Primus can be sworn in on the spot). */
   keepsTaken?: number[];
+  /** Battles begun this turn. */
+  fought?: number;
   /** Silenced this turn (Blackout on an alliance): no cards, no attacks, no Fortify. */
   ultMuted?: boolean;
   /** Pinned this turn (the Wild Hunt): no Fortify, and the Standard can't move. */
@@ -271,6 +302,11 @@ export interface GameState {
 
 /** Ultimates open in this round (a real round counter: +1 every time the turn order wraps). */
 export const ULT_ROUND = 4;
+/**
+ * Are Ultimates open in this war yet? In the valley, from round 4. In a Skirmish there is no waiting and no underdog
+ * rule: any House may cast in any of its Drafts, for the cards, with the cooldown between casts.
+ */
+export const ultOpen = (s: GameState) => !!s.ult && (isSkirmish(s) || s.ult.round >= ULT_ROUND);
 /** After a cast, the caster's next this-many own turns have no Ultimate. */
 export const ULT_COOLDOWN = 3;
 /** An Ultimate costs this many cards, at least one of them from the caster's birth House. */
@@ -408,7 +444,13 @@ let NOW = 0;
 // ---------------------------------------------------------------------------
 // helpers
 
-export const geo = (s: GameState): Geo => mapGeo(s.opts?.layout ?? layoutFor(s.players.length), s.opts?.seed, s.opts?.houses);
+export const geo = (s: GameState): Geo => (s.opts?.map ? skirmishGeo(s.opts.map) : mapGeo(s.opts?.layout ?? layoutFor(s.players.length), s.opts?.seed, s.opts?.houses));
+/** Is this war a Skirmish (a classic war on a small board)? */
+export const isSkirmish = (s: GameState) => !!s.opts?.map;
+/** The name of a quadrant of this war's map: one of the valley's four, or a region of a Skirmish board. */
+export const quadName = (s: GameState, q: number): string => (isSkirmish(s) ? geo(s).regions[q]?.name : QUADRANTS[q]?.name) ?? 'that quadrant';
+/** How many quadrants this war's map has (the regions of a Skirmish board). */
+export const quadCount = (s: GameState): number => (isSkirmish(s) ? geo(s).regions.length : QUADRANTS.length);
 
 /** Wars saved before settings and replays existed get the old defaults. */
 export function norm(s: GameState): GameState {
@@ -467,6 +509,8 @@ export const houseOf = (s: GameState, seat: number) => s.players[seat].house;
 
 export function housesOwned(s: GameState, seat: number): number[] {
   if (seat < 0) return [];
+  // A Skirmish has no Standards: a House is its own, and it takes the House of every rival it wipes out.
+  if (isSkirmish(s)) return [s.players[seat].house, ...s.players.filter((p) => !p.alive && p.dominatedBy === seat).map((p) => p.house)];
   const out: number[] = [];
   s.standards.forEach((st, h) => {
     if (h === s.players[seat].house && !st.captured) out.push(h);
@@ -515,7 +559,9 @@ export function passiveValue(card: CardDef, playerHouse: number, printed = false
   return card.passive ? card.passive.n + (!printed && card.house === playerHouse ? 1 : 0) : 0;
 }
 export function activeValue(s: GameState, seat: number, card: CardDef) {
-  return card.active.n + (card.kind !== 'proctor' && ownsHouse(s, seat, card.house) ? card.active.bonus : 0);
+  const n = card.active.n + (card.kind !== 'proctor' && ownsHouse(s, seat, card.house) ? card.active.bonus : 0);
+  // In a Skirmish the garrison talked down is a rival's, not a neutral's: half as many.
+  return isSkirmish(s) && card.active.kind === 'parley' ? Math.floor(n / 2) : n;
 }
 
 export const territoriesOf = (s: GameState, seat: number) => s.owner.flatMap((o, t) => (o === seat ? [t] : []));
@@ -572,7 +618,7 @@ export function attackBlocker(s: GameState, seat: number, from: number, to: numb
   if (s.owner[from] !== seat) return `You do not hold ${T[from].name}.`;
   if (s.owner[to] === seat) return 'You cannot attack yourself, gorydamn idiot.';
   if (!attackTargets(s, seat, from).includes(to)) {
-    if (T[from].quadrant !== T[to].quadrant) return `${T[to].name} is across the water from ${T[from].name}. Cross on a land bridge, or sail from a ⚓ port.`;
+    if (!g.skirmish && T[from].quadrant !== T[to].quadrant) return `${T[to].name} is across the water from ${T[from].name}. Cross on a land bridge, or sail from a ⚓ port.`;
     return `${T[to].name} doesn't border ${T[from].name}. Only territories that touch it can be attacked.`;
   }
   if (s.armies[from] < 2) return `${T[from].name} has only 1 army. You need 2+ to attack, because one always stays behind.`;
@@ -798,6 +844,7 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
   R = rng;
   const n = names.length;
   if (n < MIN_PLAYERS || n > MAX_PLAYERS) throw new Error(`${MIN_PLAYERS} to ${MAX_PLAYERS} players`);
+  if (opts.settings?.mode === 'skirmish') return createSkirmish(names, opts);
   const passageWar = opts.settings?.primusSel === 'random';
   const o: GameOpts = { ...resolveSettings(n, opts.settings), seed: 1 + Math.floor(rng() * 2 ** 30), ...(passageWar ? {} : { pick: true }), finale: true };
   const deal = dealHouses(mapGeo(o.layout, o.seed), n, rng, opts.houses);
@@ -868,6 +915,65 @@ export function createGame(names: string[], rng: () => number, opts: { ai?: bool
   return s;
 }
 
+/**
+ * A Skirmish: a classic war on a small board. Every territory is dealt out (the Houses that move last get the odd
+ * ones), each House's armies are spread over its own land, and there is nothing else on the map: no neutral garrisons,
+ * no Keeps, no Standards. The Relics, which only work against Olympus, stay out of the deck.
+ */
+function createSkirmish(names: string[], opts: { ai?: boolean[]; settings?: Partial<WarSettings>; houses?: (number | null)[] }): GameState {
+  const n = names.length;
+  if (n > SKIRMISH_MAX) throw new Error(`A Skirmish seats ${MIN_PLAYERS} to ${SKIRMISH_MAX} Houses`);
+  const passageWar = opts.settings?.primusSel === 'random';
+  const o: GameOpts = { ...resolveSettings(n, { ...opts.settings, mode: 'skirmish' }), ...(passageWar ? {} : { pick: true }) };
+  const g = skirmishGeo(o.map);
+
+  // Each player gets the House they picked (first come, first served), or a random one of those nobody picked.
+  const houses: number[] = new Array(n).fill(-1);
+  const taken = new Set<number>();
+  for (let i = 0; i < n; i++) {
+    const h = opts.houses?.[i];
+    if (typeof h === 'number' && Number.isInteger(h) && h >= 0 && h < HOUSES.length && !taken.has(h)) { houses[i] = h; taken.add(h); }
+  }
+  const picked = houses.map((h) => h >= 0);
+  const rest = shuffle(HOUSES.map((_, h) => h).filter((h) => !taken.has(h)));
+  for (let i = 0; i < n; i++) if (houses[i] < 0) houses[i] = rest.shift()!;
+  const players: Player[] = names.map((name, seat) => ({
+    seat, name: name.slice(0, 24) || `Gold ${seat + 1}`, house: houses[seat], general: null, alive: true, dominatedBy: null, ai: opts.ai?.[seat] || undefined,
+  }));
+
+  const passage = players.map((p) => {
+    const own = CHARACTER_IDS.filter((id) => CARD[id].house === p.house);
+    return passageWar ? shuffle(own).slice(0, 2) : own;
+  });
+  const offered = new Set(passage.flat());
+  const deck = shuffle(ALL_CARD_IDS.filter((id) => !offered.has(id) && CARD[id].kind !== 'relic'));
+
+  const order = shuffle(players.map((p) => p.seat));
+  const owner = new Array(g.nt).fill(NEUTRAL);
+  const armies: number[] = new Array(g.nt).fill(1);
+  shuffle(g.territories.map((t) => t.id)).forEach((t, i) => { owner[t] = order[n - 1 - (i % n)]; });
+  for (const p of players) {
+    const mine = owner.flatMap((x, t) => (x === p.seat ? [t] : []));
+    for (let left = Math.max(0, o.troops - mine.length) + (BALANCE.skirmishLate[n - 2] ?? 0) * order.indexOf(p.seat); left > 0; left--) armies[mine[Math.floor(R() * mine.length)]]++;
+  }
+
+  const s: GameState = {
+    v: 2, version: 0, opts: o, trail: [], phase: 'passage', players, order, cur: order[0], turn: 0,
+    owner, armies,
+    standards: HOUSES.map(() => ({ at: -1, captured: true, by: null, guard: 0 })),
+    killed: [], ts: freshTurn(), reaction: null, winner: null, winners: [], log: [], seq: 0, uid: 0,
+    warBegun: false, alliances: [], invites: [], vote: null, siege: null, siegeCooldown: 0,
+    primus: HOUSES.map(() => null), rally: null, allyBan: players.map(() => 0), lastEmote: players.map(() => -1e15),
+    reactHold: [], stats: { won: players.map(() => 0), hist: [] },
+    handCounts: [], deckCount: 0,
+    priv: { deck, discard: [], hands: players.map(() => []), passage },
+  };
+  if (o.ultimates) s.ult = newUlt(n);
+  for (const p of players) log(s, { k: 'sorted', seat: p.seat, house: p.house, picked: picked[p.seat] });
+  sync(s);
+  return s;
+}
+
 /** Choose your Primus is over (.008 wars): the Characters nobody chose are shuffled into the deck. */
 function returnUnchosen(s: GameState) {
   if (!s.opts.pick) return;
@@ -922,7 +1028,11 @@ function startTurn(s: GameState, seat: number) {
   }
   const extras: string[] = [];
   const kp = passive(s, seat, 'keep');
-  if (kp && s.owner[g.keepOf(p.house)] === seat) { s.armies[g.keepOf(p.house)] += kp; extras.push(`+${kp} on Keep`); }
+  if (kp && isSkirmish(s)) {
+    // No Keep on a Skirmish board: they join the House's largest army.
+    const t = territoriesOf(s, seat).reduce((b, x) => (b < 0 || s.armies[x] > s.armies[b] ? x : b), -1);
+    if (t >= 0) { s.armies[t] += kp; extras.push(`+${kp} on ${g.territories[t].name}`); }
+  } else if (kp && s.owner[g.keepOf(p.house)] === seat) { s.armies[g.keepOf(p.house)] += kp; extras.push(`+${kp} on Keep`); }
   const bp = passive(s, seat, 'border');
   if (bp) {
     const borders = territoriesOf(s, seat).filter((t) => g.adj[t].some((n) => s.owner[n] !== seat));
@@ -1122,7 +1232,7 @@ function ultStartTurn(s: GameState, seat: number): { skip: boolean; ticks: Omit<
     skip.skipped++; skip.denied += s.ts.reinforcements;
     ticks.unshift({ k: 'ultTick', kind: 'blackout', seat, n: s.ts.reinforcements, cast: skip.id, by: skip.caster, house: skip.house });
   }
-  u.eligible[seat] = u.round >= ULT_ROUND && u.cd[seat] === 0 && bottomHalfSeats(s).has(seat);
+  u.eligible[seat] = ultOpen(s) && u.cd[seat] === 0 && (isSkirmish(s) || bottomHalfSeats(s).has(seat));
   return { skip: !!skip, ticks };
 }
 
@@ -1190,11 +1300,11 @@ export function ultBlocker(s: GameState, seat: number): UltBlock | null {
   const u = s.ult, p = s.players[seat];
   if (!u) return { code: 'off', msg: 'House Ultimates are off in this war.' };
   if (!p?.alive) return { code: 'dead', msg: 'The fallen cast nothing.' };
-  if (u.round < ULT_ROUND) return { code: 'round', msg: `House Ultimates open in round ${ULT_ROUND}.`, n: ULT_ROUND };
+  if (!ultOpen(s)) return { code: 'round', msg: `House Ultimates open in round ${ULT_ROUND}.`, n: ULT_ROUND };
   if (u.cd[seat] > 0) return { code: 'cooldown', msg: `Your Ultimate is recharging: ${u.cd[seat]} more of your turns.`, n: u.cd[seat] };
   if (s.cur !== seat || s.phase === 'passage' || s.phase === 'over') return { code: 'turn', msg: 'An Ultimate is cast in your own Draft.' };
   if (s.ts.ultMuted) return { code: 'silenced', msg: 'Silenced by Blackout: no cards this turn.' };
-  if (!u.eligible[seat]) return { code: 'top', msg: 'Only Houses in the bottom half of the standings may cast an Ultimate.' };
+  if (!u.eligible[seat] && !isSkirmish(s)) return { code: 'top', msg: 'Only Houses in the bottom half of the standings may cast an Ultimate.' };
   if (s.phase !== 'draft') return { code: 'phase', msg: 'An Ultimate is cast during your Draft.' };
   if (!ultCards(s, seat)) return { code: 'cards', msg: `An Ultimate costs ${ULT_COST} unlocked cards, at least 1 from House ${HOUSES[p.house].name}.` };
   return null;
@@ -1218,7 +1328,7 @@ export function marsPickBlocker(s: GameState, seat: number, targets: number[], t
   if (o !== NEUTRAL && !targets.includes(o)) return `${T[t].name} belongs to another House. Seize land of your target, or of the neutrals.`;
   if (T[t].isKeep) return std ? 'A Keep, and it holds a Standard.' : 'A Keep is never seized.';
   if (std) return 'It holds a Standard.';
-  if (!s.owner.some((x, i) => x === seat && T[i].quadrant === T[t].quadrant)) return `Across the water: Mars holds no land in ${QUADRANTS[T[t].quadrant]?.name ?? 'that quadrant'}.`;
+  if (!s.owner.some((x, i) => x === seat && T[i].quadrant === T[t].quadrant)) return `Across the water: Mars holds no land in ${quadName(s, T[t].quadrant)}.`;
   return null;
 }
 /**
@@ -1263,9 +1373,9 @@ function castUlt(s: GameState, seat: number, a: Extract<Action, { type: 'ultimat
     for (const t of picks) { const why = marsPickBlocker(s, seat, targets, t); if (why) fail(why); }
     if (picks.length !== want) fail(`Pick ${want} territor${want === 1 ? 'y' : 'ies'} to seize.`);
   } else if (hid === 'jupiter') {
-    const qs = QUADRANTS.map((_, q) => q);
+    const qs = Array.from({ length: quadCount(s) }, (_, q) => q);
     const q = a.picks ? a.picks[0] : qs.reduce((b, x) => (stormCut(s, a.target, x).cut > stormCut(s, a.target, b).cut ? x : b), 0);
-    if (!qs.includes(q)) fail('Pick one of the four quadrants.');
+    if (!qs.includes(q)) fail(isSkirmish(s) ? 'Pick one of the regions.' : 'Pick one of the four quadrants.');
     picks = [q];
     // The storm spreads to the target's public allies by itself; only the targeted House's Draft is capped.
     targets = stormSide(s, a.target);
@@ -1334,6 +1444,8 @@ function castUlt(s: GameState, seat: number, a: Extract<Action, { type: 'ultimat
   }
   log(s, { k: 'ultimate', seat, house, cast: c.id, target: a.target, targets: [...targets], alliance: ally, cards: [...a.cards], round: u.round, removed: c.removed, gained: c.gained, hits, ...(picks ? { picks: [...picks] } : {}), ...(cut.length ? { cut } : {}) });
   for (const ev of after) log(s, ev);
+  // Where's Sevro? may have taken a House's last land.
+  for (const ev of after) if (ev.k === 'seized') fallen(s, ev.from, seat);
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,6 +1478,8 @@ function startBattle(s: GameState, key: string, longStrike: boolean): Battle {
   if (s.ts.battle?.key === key) return s.ts.battle;
   const b = s.ts.buffs;
   const battle: Battle = { key, atk: b.atk > 0, breakLine: b.breakLine > 0 };
+  if (!s.ts.fought) battle.first = true;
+  s.ts.fought = (s.ts.fought ?? 0) + 1;
   if (battle.atk) b.atk--;
   if (battle.breakLine) b.breakLine--;
   if (longStrike) b.longStrike--;
@@ -1380,6 +1494,18 @@ function startBattle(s: GameState, key: string, longStrike: boolean): Battle {
  */
 export function defenseMods(s: GameState, to: number, extraAll = 0): { defHigh: number; defLow: number; defAll: number } {
   const def = s.owner[to];
+  if (isSkirmish(s)) {
+    // No Keeps and no Standards on a Skirmish board. The Keep Passive (defKeep) guards every region its House holds
+    // whole, and the honor guard (stdGuard) stands wherever two or more of its House's own territories touch.
+    const g = geo(s);
+    const whole = def >= 0 && g.regions[g.territories[to].region].terr.every((t) => s.owner[t] === def);
+    const backed = def >= 0 && g.adj[to].filter((t) => s.owner[t] === def).length >= 2;
+    return {
+      defHigh: whole ? passive(s, def, 'defKeep') : 0,
+      defLow: terrainMods(s, -1, to).def + (backed && passive(s, def, 'stdGuard') > 0 ? 1 : 0),
+      defAll: extraAll,
+    };
+  }
   const keep = geo(s).territories[to].isKeep;
   return {
     defHigh: keep ? BALANCE.keepWall + (def >= 0 ? passive(s, def, 'defKeep') : 0) : 0,
@@ -1390,8 +1516,16 @@ export function defenseMods(s: GameState, to: number, extraAll = 0): { defHigh: 
 
 /** The attacker's side of the dice in a normal attack (the battle's card buffs, Passives vs neutrals, the high ground). */
 export function attackMods(s: GameState, seat: number, from: number, to: number, atkBuff: boolean): { atkHigh: number; atkLow: number; atkAll: number } {
+  let skirmish = 0;
+  if (isSkirmish(s)) {
+    // No neutral land and no Standards on a Skirmish board. The hunter's Passive (atkNeutral) counts against a House that
+    // holds less land than the attacker, and the Standard's (atkStd) on the attacker's first battle of the turn.
+    const def = s.owner[to];
+    if (def >= 0 && territoriesOf(s, def).length < territoriesOf(s, seat).length) skirmish += passive(s, seat, 'atkNeutral');
+    if (s.ts.battle?.key === `${from}>${to}` ? s.ts.battle.first : !s.ts.fought) skirmish += passive(s, seat, 'atkStd');
+  }
   return {
-    atkHigh: (atkBuff ? 1 : 0) + (s.owner[to] === NEUTRAL ? passive(s, seat, 'atkNeutral') : 0),
+    atkHigh: (atkBuff ? 1 : 0) + skirmish + (s.owner[to] === NEUTRAL ? passive(s, seat, 'atkNeutral') : 0),
     atkLow: terrainMods(s, from, to).atk,
     atkAll: s.ts.buffs.fury ? 1 : 0,
   };
@@ -1469,6 +1603,12 @@ function dominate(s: GameState, victim: number, captor: number) {
   }
 }
 
+/** A Skirmish has no Standards to capture: a House falls to whoever takes its last territory, cards and all. */
+function fallen(s: GameState, victim: number, captor: number) {
+  if (!isSkirmish(s) || victim < 0 || victim === captor || !s.players[victim]?.alive || s.owner.includes(victim)) return;
+  dominate(s, victim, captor);
+}
+
 /** A Keep changed hands this turn: its new holder may swear in a Primus on the spot. */
 function noteKeep(s: GameState, to: number) {
   if (!geo(s).territories[to].isKeep) return;
@@ -1481,7 +1621,8 @@ function conquer(s: GameState, seat: number, from: number, to: number, minMove: 
   s.armies[to] = 0;
   s.ts.conquered++;
   noteKeep(s, to);
-  const bonus = s.ts.conquered === 1 ? passive(s, seat, 'conquest') : 0;
+  // (In a Skirmish, with no Standard to enslave with, the slaver's Passive pays on the second conquest of the turn.)
+  const bonus = s.ts.conquered === 1 ? passive(s, seat, 'conquest') : s.ts.conquered === 2 && isSkirmish(s) ? passive(s, seat, 'slaver') : 0;
   s.armies[to] += bonus;
   log(s, { k: 'conquer', seat, from, to, prev, bonus });
   // Taking a House's territory is a battle won, for the Win %.
@@ -1492,6 +1633,7 @@ function conquer(s: GameState, seat: number, from: number, to: number, minMove: 
   if (max <= min) { s.armies[from] -= max; s.armies[to] += max; }
   else s.ts.mustMove = { from, to, min, max };
   if (h >= 0) captureStandard(s, h, seat);
+  fallen(s, prev, seat);
   if (s.phase === 'over' && s.ts.mustMove) {
     const mm = s.ts.mustMove; s.armies[mm.from] -= mm.max; s.armies[mm.to] += mm.max; s.ts.mustMove = null;
   }
@@ -2020,7 +2162,10 @@ function playCard(s: GameState, seat: number, a: Extract<Action, { type: 'play' 
     case 'fortifyAll': s.ts.buffs.fortifyAll = true; s.ts.reinforcements += n; break;
     case 'fury': s.ts.buffs.fury = true; break;
     case 'harvest': {
-      const k = g.territories.filter((t) => t.quadrant === 3 && s.owner[t.id] === seat).length;
+      // (On a Skirmish board there are no Lowlands: the region where the House holds the most land.)
+      const k = isSkirmish(s)
+        ? Math.max(...g.regions.map((r) => r.terr.filter((t) => s.owner[t] === seat).length))
+        : g.territories.filter((t) => t.quadrant === 3 && s.owner[t.id] === seat).length;
       s.ts.reinforcements += k + n; detail = { gained: k + n }; break;
     }
     case 'sabotage': {
@@ -2038,6 +2183,18 @@ function playCard(s: GameState, seat: number, a: Extract<Action, { type: 'play' 
     }
     case 'parley': {
       const t = a.t ?? -1;
+      if (isSkirmish(s)) {
+        // No neutral land to talk round: a rival's small garrison changes sides.
+        if (!valid(t) || s.owner[t] === seat || !adjToMine(t)) fail('Pick an enemy territory next to yours.');
+        if (s.armies[t] > n) fail(`That garrison is too big to talk down (max ${n}).`);
+        const prev = s.owner[t];
+        onHostility(s, seat, prev);
+        s.owner[t] = seat; s.ts.conquered++; detail = { t, prev };
+        takeFromHand(s, seat, a.card);
+        log(s, { k: 'play', seat, card: def.id, n, ...detail });
+        fallen(s, prev, seat);
+        return;
+      }
       if (!valid(t) || s.owner[t] !== NEUTRAL || !adjToMine(t)) fail('Pick a neutral territory next to yours.');
       if (s.armies[t] > n) fail(`That garrison is too big to talk down (max ${n}).`);
       s.owner[t] = seat; s.ts.conquered++; detail = { t };
@@ -2060,6 +2217,8 @@ function playCard(s: GameState, seat: number, a: Extract<Action, { type: 'play' 
     case 'moveStd': {
       const t = a.t ?? -1;
       if (!valid(t) || s.owner[t] !== seat) fail('Pick a territory you hold.');
+      // (A Skirmish has no Standard to move: the armies simply arrive.)
+      if (isSkirmish(s)) { s.armies[t] += n; detail = { t }; break; }
       if (s.standards[me.house].captured) fail('Your Standard is gone.');
       if (s.ts.ultPinned) fail(PINNED_STD);
       s.standards[me.house].at = t; s.armies[t] += n; detail = { t }; break;

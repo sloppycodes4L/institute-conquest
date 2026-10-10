@@ -3,9 +3,8 @@
 // then the new version is broadcast on Realtime so clients refetch their private view.
 // The engine lives in ./engine, copied verbatim from src/engine by scripts/sync-fn.mjs.
 
-import { act, actingSeat, aiDuty, cleanSettings, createGame, draftPick, draftSeat, drainLog, kickToAI, openDraft, viewFor, type Action, type GameEvent, type GameState, type HouseDraft, type WarSettings } from './engine/engine.ts';
+import { act, actingSeat, aiDuty, cleanSettings, createGame, draftPick, draftSeat, drainLog, kickToAI, maxPlayers, openDraft, viewFor, type Action, type GameEvent, type GameState, type HouseDraft, type WarSettings } from './engine/engine.ts';
 import { botAction, botFallback } from './engine/bot.ts';
-import { MAX_PLAYERS } from './engine/data.ts';
 
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -202,7 +201,8 @@ async function handle(body: any) {
       const g = await getGame(`code=eq.${String(body.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '')}`);
       if (g.status !== 'lobby') bad('That war already started. No latecomers.');
       if (draftOf(g)) bad('That war is drafting its Houses. No latecomers.');
-      if (g.lobby.length >= MAX_PLAYERS) bad('Seven Houses already. The valley is full.');
+      const skirmish = cleanSettings(g.opts ?? {}).mode === 'skirmish';
+      if (g.lobby.length >= maxPlayers(skirmish ? 'skirmish' : 'conquest')) bad(skirmish ? 'Four Houses already. The Skirmish is full.' : 'Seven Houses already. The valley is full.');
       const token = newToken();
       const seat = g.lobby.length;
       const name = cleanName(body.name);
@@ -220,7 +220,7 @@ async function handle(body: any) {
       if (draftOf(g)) bad('The House Draft is under way.');
       let lobby = g.lobby;
       if (body.op === 'addBot') {
-        if (lobby.length >= MAX_PLAYERS) bad('Lobby full.');
+        if (lobby.length >= maxPlayers(cleanSettings(g.opts ?? {}).mode)) bad('Lobby full.');
         const names = ['Proctor\'s Pet', 'Some Tall Bastard', 'A Very Angry Gold', 'The Draft Pick Nobody Wanted', 'Knife in a Nice Coat', 'Lord of Mud', 'The Quiet One'];
         lobby = [...lobby, { seat: lobby.length, name: names[lobby.length % names.length], ai: true }];
       } else {
@@ -269,7 +269,9 @@ async function handle(body: any) {
       if (seat !== g.host_seat) bad('Only the host sets the rules of the war.', 403);
       if (g.status !== 'lobby') bad('Too late, the war has started.');
       if (draftOf(g)) bad('The House Draft is under way.');
-      if (!(await saveGame(g, g.version, { opts: cleanSettings(body.settings), version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
+      const next = cleanSettings(body.settings);
+      if (g.lobby.length > maxPlayers(next.mode)) bad(`A Skirmish seats ${maxPlayers(next.mode)} Houses at most. Remove a seat first.`);
+      if (!(await saveGame(g, g.version, { opts: next, version: g.version + 1 }))) bad('Lobby changed, try again.', 409);
       await broadcast(g.code, g.version + 1);
       return payload(await getGame(`id=eq.${g.id}`), seat);
     }

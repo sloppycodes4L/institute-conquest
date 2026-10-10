@@ -200,6 +200,11 @@ export interface Geo {
   keepOfSlice(slice: number): number;
   /** The straits between quadrants: where their centre line runs, and where land bridges cross them. */
   straits: Strait[];
+  /**
+   * A Skirmish board (see skirmish.ts), not the valley: no Houses on the land, no Keeps, no Foot of Olympus. Its
+   * `quadrant`s are its regions, and `ports` are its sea lanes.
+   */
+  skirmish?: import('./skirmish.ts').SkirmishInfo;
 }
 export interface Strait {
   /** Angle of the strait's centre line (world, radians). */

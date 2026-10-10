@@ -1,9 +1,9 @@
 // All the words. Original fan copy in the voice of the Institute: brutal, profane,
 // and full of the setting's own slurs (Pixie, slag, lowColor, gorydamn, bloodydamn...).
 
-import { HOUSES, QUADRANTS, geoFor } from '../engine/data.ts';
-import { CARD, EMOTES } from '../engine/cards.ts';
-import { geo, type GameEvent, type GameState } from '../engine/engine.ts';
+import { HOUSES, geoFor } from '../engine/data.ts';
+import { CARD, EMOTES, activeText } from '../engine/cards.ts';
+import { geo, isSkirmish, quadName, type GameEvent, type GameState } from '../engine/engine.ts';
 import { ULTIMATE } from './ultimates.ts';
 
 // Territory names come from the current game's valley (it grows with the player count).
@@ -94,7 +94,7 @@ function ultimateLine(s: GameState, e: GameEvent): string {
   let tail = '.';
   switch (hid) {
     case 'mars': tail = `: ${e.removed} destroyed, ${e.gained} join ${house(e.house)}.`; break;
-    case 'jupiter': tail = `: ${e.removed} armies cut in ${QUADRANTS[e.picks?.[0]]?.name ?? 'one quadrant'}. ${who(s, e.target)}'s next Draft is capped at 5.`; break;
+    case 'jupiter': tail = `: ${e.removed} armies cut in ${e.picks?.[0] != null ? quadName(s, e.picks[0]) : 'one quadrant'}. ${who(s, e.target)}'s next Draft is capped at 5.`; break;
     case 'pluto': tail = `: ${e.removed} rot away at once, and their stacks and Drafts keep rotting for ${e.alliance ? 'a turn' : '2 turns'} more.`; break;
     case 'minerva': tail = e.alliance ? '. On their next turn: Draft −60%, and no cards, attacks or Fortify.' : `. Their next turn is skipped, and ${me} reads their hand.`; break;
     case 'ceres': tail = `. Their next Draft is cut ${e.alliance ? '30%, the one after 15%' : '50%, the one after 25%'}, and ${me} collects it.`; break;
@@ -204,7 +204,7 @@ export function describe(s: GameState, e: GameEvent): string {
       if (c.active.kind === 'moveStd') tail = ` The Standard now flies over ${terr(e.t)}.`;
       if (c.active.kind === 'draw') tail = ` Drew ${e.drew}.`;
       if (c.active.kind === 'siegeCut') tail = ` ${e.killed} of Olympus's defenders never wake up.`;
-      return `${who(s, e.seat)} plays ${card(e.card)}: <i>${esc(c.active.text.replace(/\{n\}/g, String(e.n)))}</i>${tail}`;
+      return `${who(s, e.seat)} plays ${card(e.card)}: <i>${esc(activeText(c, isSkirmish(s)).replace(/\{n\}/g, String(e.n)))}</i>${tail}`;
     }
     case 'discardProctor': return `${who(s, e.seat)} spits on ${card(e.card)} and draws ${e.drew} cards. A Proctor you don't own is a Proctor you don't need.`;
     case 'phase': return e.phase === 'attack'
@@ -298,6 +298,35 @@ export function headline(s: GameState, e: GameEvent): { title: string; sub: stri
 }
 
 export const ERRORS_FLAVOR = ['Nope.', 'Gorydamn no.', 'The Proctors laugh at you.', 'Try again, Pixie.'];
+
+export const SKIRMISH_RULES_HTML = `
+<h2>Skirmish</h2>
+<p>A classic war on a small board, for <b>2 to 4 Houses</b>. Every territory starts in a House's hands: the board is dealt out, and each House's armies are spread over its own land.
+There are <b>no Keeps, no Standards, no neutral garrisons, no alliances and no Olympus</b>.</p>
+<h3>Winning</h3>
+<p>Take <b>every enemy territory</b>. A House falls the moment it loses its last one, and whoever took it gets its cards, and its House: its Proctor answers to you and its cards carry their House bonus.</p>
+<h3>Your turn: Draft, Attack, Fortify</h3>
+<p><b>Draft.</b> Reinforcements = max(3, territories ÷ 3) + the bonus of every <b>region</b> you hold whole + your Primus. Click a territory to add armies.
+At 5 cards you must trade 3 for <b>+10 armies</b>.
+<b>Attack.</b> Pick one of your territories with 2 or more armies, then a neighbour: a land that touches it, or the far end of a <b>sea lane</b> (a dashed line across the water). <b>Roll!</b> fights on until the land falls or one army is left.
+Up to 3 attack dice against 2 defense dice; the highest are compared, then the next, and ties go to the defender. Take a land and you march in. Take at least one and you draw a card at the end of your turn.
+<b>Fortify.</b> One march between two of your territories that are joined by your own land.</p>
+<h3>Your House and Primus</h3>
+<p>You still fight as a House with a <b>Primus</b>, whose Passive is always on, and you still hold cards. A board has no Keeps, Standards or neutral land, so the Passives and cards that speak of them work on what it does have. The card always says what it does here:</p>
+<ul>
+<li>A Standard's attack bonus counts on your <b>first battle each turn</b>.</li>
+<li>A bonus against neutrals counts against any House that <b>holds fewer territories than you</b>.</li>
+<li>A Keep's defense bonus guards every <b>region you hold whole</b>; armies sent to your Keep join your <b>largest army</b>.</li>
+<li>An honor guard is +1 on your lowest defense die wherever <b>two or more of your own territories touch</b> the one attacked.</li>
+<li>A slaver's bonus lands on your <b>second conquest</b> each turn.</li>
+<li><b>Silver Tongue</b> and <b>Share the Loaf</b> talk round a small enemy garrison; a card that moved your Standard simply drops its armies on a territory of yours; <b>Bread Ovens</b> counts the region where you hold the most land.</li>
+</ul>
+<p>Relics, which only work against Olympus, are left out of the deck. Terrain plays no part.</p>
+<h3>House Ultimates</h3>
+<p>The host can leave them on (3 or more Houses). There is no underdog rule on a board and no waiting for round 4: <b>any House</b> can spend 3 cards (one from its own House) in any of its Drafts to strike a rival, then waits 3 of its own turns before the next. <b>Stormfall</b> strikes a region, and <b>Where's Sevro?</b> seizes land in any region where Mars already stands.</p>
+<h3>Controls</h3>
+<p><b>Scroll</b> to zoom, <b>left-drag</b> to pan, <b>right-drag</b> to turn. Names appear on the board as you come closer; hold <b>Alt</b> for all of them and the regions. Hover a territory (or hold a finger on it) to read it.</p>
+`;
 
 export const RULES_HTML = `
 <h2>How to Conquer the Institute</h2>
@@ -428,4 +457,7 @@ The host can <b>kick</b> a player: in the lobby their seat is freed; mid-war an 
 <h3>Regions</h3>
 <p>Each House slice is cut into bonus <b>regions</b>: its shore, its heart (around the Keep) and its marches. Hold every territory of a region at the start of your turn
 for its bonus. Hold <b>Alt</b> to see every region on the map, with its name, its bonus (<b>+2</b>, <b>+3</b>…) and its borders in gold. The <b>Regions</b> drawer (<b>R</b>) lists the ones you're closest to.</p>
+<h3>Skirmish</h3>
+<p>The other mode: a classic war on a small board (Earth, Mars, Westeros or the Four Nations) for 2 to 4 Houses. Every territory starts in a House's hands, and there are no Keeps, Standards, neutral garrisons, alliances or Olympus.
+Passives and cards still work, and House Ultimates are the host's choice. Take every enemy territory to win. Its own rules are under <b>How to play</b> once you are in one.</p>
 `;

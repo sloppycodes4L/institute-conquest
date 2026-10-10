@@ -206,6 +206,32 @@ export const ALL_CARD_IDS = CARDS.map((c) => c.id);
 
 export const fmt = (text: string, n: number) => text.replace(/\{n\}/g, String(n));
 
+// A Skirmish board has no Keeps, no Standards and no neutral land. The Passives and cards that lean on them keep
+// their numbers and work on what the board does have (the rules are in engine.ts, beside the valley's).
+const SKIRMISH_PASSIVE: Partial<Record<PassiveKind, string>> = {
+  atkStd: '+{n} to your highest attack die in your first battle each turn.',
+  atkNeutral: '+{n} to your highest attack die against a House that holds fewer territories than you.',
+  defKeep: '+{n} to your highest defense die in every region you hold whole.',
+  keep: '+{n} armies on your largest army each Draft.',
+  stdGuard: '+1 to your lowest defense die in any territory that touches 2 or more of your own.',
+  slaver: 'Your second conquest each turn drops +{n} on the new ground.',
+  perHouse: '+{n} reinforcement for every House you own: your own, and each rival you wipe out.',
+};
+const SKIRMISH_ACTIVE: Partial<Record<ActiveKind, string>> = {
+  parley: 'take a neighboring enemy territory with {n} or fewer armies, no fight.',
+  moveStd: '+{n} armies on any one territory you hold.',
+  harvest: '+1 army per territory you hold in the region where you hold the most land.',
+};
+/** A Passive's text, as it works in this kind of war. */
+export const passiveText = (c: CardDef, skirmish: boolean): string => (c.passive ? (skirmish && SKIRMISH_PASSIVE[c.passive.kind]) || c.passive.text : '');
+/** A card's Active text, as it works in this kind of war (a card keeps its own title in front). */
+export function activeText(c: CardDef, skirmish: boolean): string {
+  const alt = skirmish ? SKIRMISH_ACTIVE[c.active.kind] : undefined;
+  if (!alt) return c.active.text;
+  const title = /^([^:]{2,40}): /.exec(c.active.text)?.[1];
+  return title ? `${title}: ${alt}` : alt[0].toUpperCase() + alt.slice(1);
+}
+
 /** A few short lines of the Institute's own. */
 const CATCHPHRASES = [
   'Break the chains.',

@@ -3,7 +3,7 @@
 // sheet's (docs/house-ultimates-sheet.html).
 
 import { HOUSES } from '../engine/data.ts';
-import { ULT_ROUND, allied, bottomHalfSeats, lockoutLeft, ultBlocker, ultStandings, type GameState } from '../engine/engine.ts';
+import { ULT_ROUND, allied, bottomHalfSeats, isSkirmish, lockoutLeft, ultBlocker, ultStandings, type GameState } from '../engine/engine.ts';
 
 export interface UltInfo {
   name: string;
@@ -94,7 +94,7 @@ export function statusIcons(v: GameState, seat: number, viewer: number | null): 
   // The right to cast: decided at the start of a House's own turn, so on its turn the engine's word stands, and between
   // turns the standing as it is now.
   if (u.cd[seat] > 0) add('recharge', p.house, u.cd[seat]);
-  else if (u.round >= ULT_ROUND && (live && v.cur === seat ? u.eligible[seat] : bottomHalfSeats(v).has(seat))) {
+  else if (isSkirmish(v) || (u.round >= ULT_ROUND && (live && v.cur === seat ? u.eligible[seat] : bottomHalfSeats(v).has(seat)))) {
     add('ready', null);
     if (viewer === seat && !ultBlocker(v, seat)) out.get('ready')!.glow = true;
   }

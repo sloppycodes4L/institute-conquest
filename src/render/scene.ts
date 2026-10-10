@@ -8,6 +8,7 @@ import { HOUSES, type Geo } from '../engine/data.ts';
 import type { GameState } from '../engine/engine.ts';
 import { CARD } from '../engine/cards.ts';
 import { createValley, type GeneralView, type Odds, type Quality, type Valley, type WarView } from './valley.ts';
+import { createBoard } from './board.ts';
 
 export const NEUTRAL_COLOR = '#a39a88';
 /** Olympus, wherever a territory id is asked for: a pick, an arrow's end, a burst. */
@@ -159,7 +160,8 @@ export class World {
       this.container.dataset.stage = stage;
       await new Promise<void>((r) => { let done = false; const go = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(go); setTimeout(go, 60); });
     };
-    createValley({ renderer: this.renderer, camera: this.camera, controls: this.controls, host: this.container, layer: this.layer, geo, quality: LEVELS[this.level], pause, sound: (name) => this.onSound(name) })
+    // (a Skirmish is fought on a board, not in the valley)
+    (geo.skirmish ? createBoard : createValley)({ renderer: this.renderer, camera: this.camera, controls: this.controls, host: this.container, layer: this.layer, geo, quality: LEVELS[this.level], pause, sound: (name) => this.onSound(name) })
       .then((v) => {
         if (id !== this.build) { v.dispose(); return; }
         this.v = v;
