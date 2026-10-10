@@ -154,7 +154,7 @@ export function describe(s: GameState, e: GameEvent): string {
     case 'olympusTurn': return `🏛 Olympus regroups (+${e.regen})${e.killed ? ` and smites ${e.killed} of ${who(s, e.seat)}'s soldiers at the Foot` : ''}. <b>${e.garrison}</b> hold the walls; ${e.turnsLeft} allied turns left.`;
     case 'assault': return e.won
       ? `🏛 ${who(s, e.seat)} storms the last wall from ${terr(e.from)}!`
-      : `🏛 ${who(s, e.seat)} assaults Olympus from ${terr(e.from)}${e.blitz ? ' (blitz)' : ''}${e.walls ? '' : ' over the walls'}: ${e.aLost} lost, ${e.dLost} Proctors' soldiers dead. <b>${e.garrison}</b> remain.`;
+      : `🏛 ${who(s, e.seat)} assaults Olympus from ${terr(e.from)}${e.walls ? '' : ' over the walls'}: ${e.aLost} lost, ${e.dLost} Proctors' soldiers dead. <b>${e.garrison}</b> remain.`;
     case 'siegeFailed': return `🏛 The siege FAILS with ${e.garrison} still on the walls. The Proctors laugh, and the alliance of ${houses(e.members)} shatters.`;
     case 'siegeCollapsed': return `🏛 With the alliance broken, the siege of Olympus collapses.`;
     case 'olympusFalls': return `♛ OLYMPUS FALLS to ${houses(e.members)}. ${who(s, e.seat)} struck the last blow. The Proctors kneel.`;
@@ -211,7 +211,7 @@ export function describe(s: GameState, e: GameEvent): string {
       ? pick([`${who(s, e.seat)} draws steel.`, `${who(s, e.seat)} is done counting. Time to bleed.`, `${who(s, e.seat)} goes to war.`], sd)
       : `${who(s, e.seat)} regroups.`;
     case 'battle': {
-      const tag = e.blitz ? ' (blitz)' : '';
+      const tag = '';
       if (e.won) return pick([
         `${who(s, e.seat)} smashes into ${terr(e.to)}${tag}, loses ${e.aLost}, kills ${e.dLost}. ${who(s, e.def)} runs crying for their mothers.`,
         `${terr(e.to)} falls to ${who(s, e.seat)}${tag}. ${e.dLost} of ${who(s, e.def)}'s lot face down in the mud.`,
@@ -351,7 +351,7 @@ From round 4, a House in the bottom half can spend 3 cards on its <b>House Ultim
 When anyone else plays a card, it's pinned on the map beside what it hit until you <b>Acknowledge</b> it.</p>
 <p><b>Attack.</b> Pick one of your territories and every target it can hit lights up (or just click an enemy territory, and your strongest neighbour attacks it). Attack as often as you like.
 If an attack isn't allowed, the reason pops up over the map.
-Every target shows your <b>odds to take it</b> if you blitz, on the map beside its count. Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
+Every target shows your <b>odds to take it</b> on the map beside its count. Press <b>Roll!</b> and your army fights on, throw after throw, until the land is yours or one army is left. Risk dice: attacker rolls up to 3 (needs one more army than dice), defender up to 2, highest vs highest, <b>ties go to the defender</b>.
 <b>Keeps have Walls:</b> whoever defends a Keep (a House or a neutral garrison) adds <b>+1 to its highest defense die</b>. A House's Keep also holds with its armies, its honor guard (if its Standard is there) and its Passives: its Primus's (and allies'), plus the Primus of any Keep it conquered.
 Conquer at least one territory to earn a card.</p>
 <p><b>Neutrals.</b> A neutral garrison (not a Keep) rolls only <b>1 defense die</b>, and if you attack with <b>twice its number or more</b> (armies that can march, one stays behind) it <b>yields</b>:

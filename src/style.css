@@ -62,6 +62,10 @@ input, select { font: inherit; }
 #plates .rn b { font: 800 13px var(--ui); color: #f3d27a; margin-left: 4px; }
 #plates .rn.mine { border-color: var(--ok); } #plates .rn.mine b { color: var(--ok); }
 #plates .bn { font: 700 11px/1 var(--ui); letter-spacing: .12em; text-transform: uppercase; color: #f3d27a; background: rgba(20,12,6,.85); border: 1px solid #9c7a36; border-radius: 999px; padding: 3px 8px; }
+/* a port's mark: the same numeral stands at both ends of a sea lane */
+#plates .pt { position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none; will-change: transform; font: 700 11px/1 var(--ui); color: #2a1c0c; background: var(--c, #fff1cf); border: 1.5px solid #2a1c0c; border-radius: 999px; padding: 2px 6px 2px 4px; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
+#plates .pt b { font: 700 11px/1 var(--display); margin-left: 3px; letter-spacing: .04em; }
+#plates .pt.on { box-shadow: 0 0 0 2px var(--c, #fff1cf), 0 0 16px 5px var(--c, #fff1cf); z-index: 2500; font-size: 13px; }
 #plates:not(.reveal) .tn, #plates:not(.reveal) .rn, #plates:not(.reveal) .bn { display: none; }
 /* the one thing you are a territory short of */
 .goal { position: absolute; left: 0; top: 0; font: 800 12px/1 var(--ui); color: #2a1d05; background: linear-gradient(#ffe29a, #e6bb5c); border-radius: 999px; padding: 2px 7px; box-shadow: 0 0 0 1.5px rgba(14,8,7,.9), 0 0 12px rgba(243,210,122,.7); white-space: nowrap; will-change: transform; }
@@ -213,26 +217,38 @@ input, select { font: inherit; }
 .actionbar .hint b { font-style: normal; font-family: var(--ui); color: var(--ink); }
 .actionbar label { display: flex; align-items: center; gap: 6px; color: var(--ink-dim); font-size: 14px; white-space: nowrap; }
 .actionbar input[type=range] { width: 150px; accent-color: var(--blood-hi); }
+.actionbar .btn.roll { padding: 9px 26px; font-size: 18px; letter-spacing: .06em; }
 .seg { display: inline-flex; border: 1px solid var(--line-hi); border-radius: 8px; overflow: hidden; }
 .seg button { background: #1a0d0a; border: 0; padding: 6px 10px; font-weight: 700; }
 .seg button.on { background: var(--blood); }
-/* The hand: a tray of card tabs in the corner. A tab opens its card (the lifted card, below); nothing is played from a tab.
+/* The hand: your cards lie face up in the corner, each one a real card that can be read where it lies: its House's
+   colour across the top, its name, what it is, and its Active written out. The one under the pointer rises, grows and
+   comes to the front. A click opens it (the lifted card, below); nothing is played from the tray.
    (#hud outranks the guide's pulse, which would otherwise take the tray out of its corner.) */
-#hud .hand { position: fixed; right: calc(var(--edge) + var(--sar)); bottom: calc(var(--edge) + var(--sab)); display: flex; align-items: flex-end; border-radius: 9px; z-index: 3; }
-/* Each tab lies over the right edge of the one before it, so all but the last keep their words clear of that edge. */
-.ctab { --hc: #888; --lap: 9px; position: relative; width: 64px; height: 86px; margin-left: calc(0px - var(--lap)); border-radius: 9px; border: 2px solid var(--hc); background: linear-gradient(170deg, #241512, #120a09 60%); box-shadow: -4px 4px 12px rgba(0,0,0,.5); display: flex; flex-direction: column; align-items: center; padding: 5px 2px 4px; gap: 4px; color: var(--ink); transition: transform .12s; }
+#hud .hand { position: fixed; right: calc(var(--edge) + var(--sar)); bottom: calc(var(--edge) + var(--sab)); display: flex; align-items: flex-end; border-radius: 11px; z-index: 3; --lap: -6px; }
+/* Up to three lie side by side. More than that and each lies over the right edge of the one before it. */
+/* (a card being read stands over the drawer and the lifted card) */
+@media (hover: hover) { #hud .hand:hover { z-index: 6; } }
+#hud .hand[data-n="4"] { --lap: 26px; } #hud .hand[data-n="5"] { --lap: 52px; } #hud .hand[data-n="6"] { --lap: 66px; }
+.ctab { --hc: #888; position: relative; width: 138px; height: 190px; margin-left: calc(0px - var(--lap)); border-radius: 11px; border: 2px solid var(--hc); background: linear-gradient(172deg, #2b1a15, #150c0a 62%); box-shadow: -5px 5px 16px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.07);
+  display: flex; flex-direction: column; align-items: stretch; padding: 0 0 6px; gap: 0; color: var(--ink); text-align: left; overflow: hidden; transform-origin: 50% 100%; transition: transform .14s ease, box-shadow .14s ease; cursor: pointer; }
 .ctab:first-child { margin-left: 0; }
-.ctab:not(:last-child) { padding-right: calc(2px + var(--lap)); }
-.ctab .nm { font: 700 10.5px/1.12 var(--ui); text-align: center; overflow-wrap: anywhere; max-height: 3.3em; overflow: hidden; }
-.ctab .ty { margin-top: auto; font: 700 9.5px var(--ui); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); white-space: nowrap; }
-@media (hover: hover) { .ctab:hover { transform: translateY(-10px); z-index: 2; } }
-.ctab.inspecting { transform: translateY(-10px); z-index: 2; outline: 2px dashed var(--gold); outline-offset: 2px; }
-.ctab.sel { transform: translateY(-14px); z-index: 2; outline: 2px solid var(--gold); outline-offset: 1px; } .ctab.sel .ty { color: var(--gold); }
-.ctab.locked { filter: grayscale(.7); opacity: .7; }
-.ctab.react .ty { color: #ff7b6b; }
-.ctab.playable { box-shadow: 0 0 0 1px var(--gold), 0 0 14px rgba(243,210,122,.55); animation: tabglow 1.6s ease-in-out infinite; } .ctab.playable .ty { color: var(--gold); }
-@keyframes tabglow { 50% { box-shadow: 0 0 0 1px var(--gold), 0 0 22px 4px rgba(243,210,122,.8); } }
-.ctab.react-ready { box-shadow: 0 0 0 3px var(--blood-hi), 0 0 22px 6px rgba(224,38,44,.6); animation: reactglow 1s ease-in-out infinite; } .ctab.react-ready .ty { color: #ff7b6b; }
+.ctab:last-child { transform-origin: 100% 100%; }
+.ctab .ch { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 5px 7px; background: linear-gradient(180deg, color-mix(in srgb, var(--hc) 62%, #170d0a), color-mix(in srgb, var(--hc) 30%, #170d0a)); border-bottom: 1px solid rgba(0,0,0,.55); }
+.ctab .ch .sig { box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
+.ctab .nm { font: 700 14px/1.05 var(--display); color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.85); overflow-wrap: anywhere; max-height: 2.1em; overflow: hidden; }
+.ctab .ck { font: 700 9.5px/1 var(--ui); letter-spacing: .13em; text-transform: uppercase; color: var(--gold-dim); padding: 7px 8px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctab .cx { flex: 1; min-height: 0; overflow: hidden; margin: 0 6px; padding: 5px 6px; border-radius: 6px; background: rgba(255,255,255,.055); font: 500 12px/1.22 var(--ui); color: var(--ink); }
+.ctab .cx b { display: block; font: 700 12.5px/1.15 var(--display); color: #ffb3a6; margin-bottom: 2px; }
+.ctab .ty { align-self: center; margin-top: 6px; font: 700 10.5px/1 var(--ui); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-mute); white-space: nowrap; border: 1px solid var(--line-hi); border-radius: 999px; padding: 3px 10px; }
+@media (hover: hover) { .ctab:hover { transform: translateY(-8px) scale(1.42); z-index: 3; box-shadow: 0 14px 40px rgba(0,0,0,.8), 0 0 0 1px var(--hc); } }
+.ctab.inspecting { transform: translateY(-12px); z-index: 2; outline: 2px dashed var(--gold); outline-offset: 2px; }
+.ctab.sel { transform: translateY(-16px); z-index: 2; outline: 2px solid var(--gold); outline-offset: 1px; } .ctab.sel .ty { color: var(--gold); border-color: var(--gold); }
+.ctab.locked { filter: grayscale(.7); opacity: .75; }
+.ctab.react .ty { color: #ff7b6b; border-color: #7a2a22; }
+.ctab.playable { box-shadow: 0 0 0 2px var(--gold), 0 0 18px 2px rgba(243,210,122,.6); animation: tabglow 1.6s ease-in-out infinite; } .ctab.playable .ty { color: #1a0d05; background: var(--gold); border-color: var(--gold); }
+@keyframes tabglow { 50% { box-shadow: 0 0 0 2px var(--gold), 0 0 30px 7px rgba(243,210,122,.9); } }
+.ctab.react-ready { box-shadow: 0 0 0 3px var(--blood-hi), 0 0 22px 6px rgba(224,38,44,.6); animation: reactglow 1s ease-in-out infinite; } .ctab.react-ready .ty { color: #fff; background: var(--blood-hi); border-color: var(--blood-hi); }
 @media (prefers-reduced-motion: reduce) { .ctab, .ctab.playable, .ctab.react-ready { animation: none; transition: none; } }
 
 /* cards */
@@ -1240,7 +1256,9 @@ button.pchip:hover { border-color: var(--gold); }
   .general .icons { flex-wrap: wrap; max-width: 46vw; border-radius: 19px; padding: 6px 9px; }
   /* the hand: small tabs standing on the bar; the lifted card takes the width of the screen */
   #hud .hand { bottom: calc(var(--barh, 60px) + var(--edge) + 8px + var(--sab)); }
-  .ctab { --lap: 6px; width: 46px; height: 44px; padding: 3px 2px; gap: 0; } .ctab .nm { display: none; } .ctab .ty { font-size: 8.5px; letter-spacing: .04em; }
+  #hud .hand, #hud .hand[data-n] { --lap: 8px; } #hud .hand[data-n="5"], #hud .hand[data-n="6"] { --lap: 22px; }
+  .ctab { width: 66px; height: 78px; border-radius: 8px; padding: 0 0 4px; } .ctab .ch { min-height: 0; padding: 3px 4px; gap: 3px; } .ctab .ch .sig { width: 16px; height: 16px; font-size: 10px; }
+  .ctab .nm { font-size: 10px; max-height: 3.2em; } .ctab .ch { flex: 1; align-items: flex-start; } .ctab .ck, .ctab .cx { display: none; } .ctab .ty { font-size: 8.5px; letter-spacing: .06em; padding: 2px 6px; margin-top: 4px; }
   .ctab.inspecting { transform: translateY(-5px); } .ctab.sel { transform: translateY(-8px); }
   @media (hover: hover) { .ctab:hover { transform: translateY(-5px); } }
   .inspector, #hud.drawer-open > .inspector { left: calc(var(--edge) + var(--sal)); right: calc(var(--edge) + var(--sar)); width: auto; }

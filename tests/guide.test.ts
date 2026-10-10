@@ -87,7 +87,7 @@ describe('Proctor\'s Guide: pickStep', () => {
     expect(v.card!.body).toContain('rolls only 1 die');
     s.got();
     expect(s.id).toBe('roll');
-    expect(s.view.card!.body).toContain('At <b>84%</b>, Blitz is a safe bet');
+    expect(s.view.card!.body).toContain('At <b>84%</b>, this is a safe bet');
     // 8 · march in
     v = s.see(attack({ sel: 19, target: 20, fightsThisTurn: 1, taken: ['Bog of Sorrow'], mustMove: { from: 'Red Gully', to: 'Bog of Sorrow' } }));
     expect(s.id).toBe('march-in');
@@ -201,7 +201,7 @@ describe('Proctor\'s Guide: pickStep', () => {
     v = s.see(attack({ turnKey: '4:0', sel: 1, targets: 3 }));
     expect(v.hint!.text).toBe('Pick a target. Green odds are likely wins');
     v = s.see(attack({ turnKey: '4:0', sel: 1, target: 2 }));
-    expect(v.hint!.text).toBe('Roll or Blitz');
+    expect(v.hint!.text).toBe('Roll!');
     v = s.see(fortify({ turnKey: '4:0' }));
     expect(v.hint!.text).toBe('Move troops once, or End Turn ▸');
     // Not my turn: no hint.

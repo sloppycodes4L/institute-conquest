@@ -15,7 +15,18 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    v: '.010', title: 'The valley, rebuilt', date: '9 Oct 2026', open: true,
+    v: '.011', title: 'You asked, we listened', date: '9 Oct 2026', open: true,
+    html: `<p>Five things from your first day in the new valley. No rules changed.</p>
+<ul>
+<li><b>Lands and regions read from far out.</b> Every land is outlined in ink, every region in a heavier line. Point at a land and it lights up white, with its whole region rimmed in gold.</li>
+<li><b>Cards look like cards.</b> Your hand lies face up bottom-right, with each card's ability written on it. Point at one and it grows. Click it to lift it and play it, as before.</li>
+<li><b>Sea lanes, redrawn.</b> Each is one clean arc round Olympus in its own colour, with the same mark (⚓ I, II, III) at both ends. Point at a port and its lane and its far shore light up.</li>
+<li><b>One button: Roll!</b> No dice count, no choice between Roll and Blitz. Your army fights on until the land is yours or one soldier is left.</li>
+<li><b>The sideboard starts open</b> on the Houses. ✕ or Esc closes it; <b>H</b>, <b>R</b>, <b>L</b> bring it back.</li>
+</ul>`,
+  },
+  {
+    v: '.010', title: 'The valley, rebuilt', date: '9 Oct 2026',
     html: `<p>No rules changed, Golds. Everything you look at did. Wars in progress carry on where they stopped.</p>
 <h3>⛰ The valley</h3>
 <ul>

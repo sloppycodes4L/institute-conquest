@@ -62,7 +62,6 @@ interface UIState {
   /** A card play being previewed: the map shows `preview` (the outcome) until Back or Commit. */
   confirm: { action: Extract<Action, { type: 'play' }>; targets: number[]; preview: GameState | null } | null;
   placeAmt: number | 'all';
-  dice: number;
   commit: number;
   moveN: number;
   stdMode: boolean;
@@ -181,7 +180,7 @@ export class App {
   }
 
   private freshUI(): UIState {
-    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, dice: 3, commit: 1, moveN: 1, stdMode: false, follow: null, menu: null, drawer: null, medal: false, spot: null, hoverRegion: null, primusOpen: null, emotes: false, cast: null, iconTip: null, reveal: null };
+    return { sel: null, target: null, trade: new Set(), pending: null, inspect: null, hoverCard: null, confirm: null, placeAmt: 1, commit: 1, moveN: 1, stdMode: false, follow: null, menu: null, drawer: 'houses', medal: false, spot: null, hoverRegion: null, primusOpen: null, emotes: false, cast: null, iconTip: null, reveal: null };
   }
 
   // =========================================================================
@@ -1857,15 +1856,12 @@ export class App {
         return;
       }
       const from = u.sel, to = u.target;
-      const maxDice = Math.max(1, Math.min(3, v.armies[from] - 1));
-      const dice = Math.min(u.dice, maxDice);
-      const diceSeg = `<div class="seg">${[1, 2, 3].map((n) => `<button data-a="dice" data-n="${n}" class="${dice === n ? 'on' : ''}" ${n > maxDice ? 'disabled' : ''}>${n}🎲</button>`).join('')}</div>`;
       if (to === OLYMPUS) {
         const sg = v.siege!;
         const op = winChance(assaultFight(v, from));
         bar.innerHTML = `<span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>OLYMPUS</b> (${sg.garrison}${v.ts.buffs.siegeWalls ? ', walls bypassed' : ', walls +1'})</span>
-          <span class="odds big ${oddsClass(op)}" title="Chance a blitz breaks Olympus right now">Blitz breaks it: ${pct(op)}</span>
-          ${diceSeg}<button class="btn gold" data-a="roll">Assault</button><button class="btn gold" data-a="blitz">Blitz</button><button class="btn sm" data-a="cancel">✕</button>`;
+          <span class="odds big ${oddsClass(op)}" title="Chance this assault breaks Olympus right now">Breaks it: ${pct(op)}</span>
+          <button class="btn gold roll" data-a="roll">Roll!</button><button class="btn sm" data-a="cancel">✕</button>`;
         return;
       }
       const myStd = v.standards[v.players[this.me!].house];
@@ -1884,12 +1880,10 @@ export class App {
       bar.innerHTML = `
         <span class="hint"><b>${esc(T[from].name)}</b> (${v.armies[from]}) ⚔ <b>${esc(T[to].name)}</b> (${v.armies[to]}${defStd >= 0 && guardAgainst(v, this.me!, to) ? ` +${guardAgainst(v, this.me!, to)} honor guard` : ''})</span>
         ${note === 'Overwhelm' ? `<span class="odds big good" title="${v.armies[from] - 1} against ${v.armies[to]}: twice their number or more">🏳 Overwhelm: they yield, no dice</span>`
-          : `<span class="odds big ${oddsClass(bp)}" title="Chance to take it if you blitz with everything but one">Blitz wins: ${pct(bp)}</span>`}
+          : `<span class="odds big ${oddsClass(bp)}" title="Chance to take it. You fight on until it falls or one army is left">You win: ${pct(bp)}</span>`}
         ${terr ? `<span class="terr-chip">${terr}</span>` : ''}
         ${ally ? '<span class="warn">⚠ Your ally. This shatters the alliance.</span>' : ''}
-        ${diceSeg}
-        <button class="btn primary" data-a="roll" ${v.armies[from] < 2 ? 'disabled' : ''}>Roll</button>
-        <button class="btn primary" data-a="blitz" ${v.armies[from] < 2 ? 'disabled' : ''}>Blitz</button>
+        <button class="btn primary roll" data-a="roll" ${v.armies[from] < 2 ? 'disabled' : ''}>Roll!</button>
         ${canStd && !v.ts.stdRaised ? `<label>Commit <input type="range" data-a="commit" min="1" max="${v.armies[from] - 1}" value="${commit}"> <b id="commitN">${commit}</b>+3 <span class="odds ${oddsClass(sp)}" id="stdOdds" title="Chance the charge wins, before your Primus's war cry">≥${pct(sp)}</span></label>
           <button class="btn gold" data-a="std">⚑ Raise the Standard</button>` : ''}
         ${canStd && v.ts.stdRaised ? '<button class="btn gold" disabled title="The Standard can be raised once per turn">⚑ Raised this turn</button>' : ''}
@@ -2234,27 +2228,36 @@ export class App {
   }
 
   /**
-   * A card in the tray: a small tab in its House's colour, with a name and one word for what it is.
-   * A click opens the card itself in the inspector; nothing is ever played from the tab.
+   * A card in the tray: the card itself, face up in its House's colour, with its name, what it is, and its Active
+   * written out to be read where it lies. Under the pointer it rises and grows. A click opens it in the inspector,
+   * with its Passive and its buttons; nothing is ever played from the tray.
    */
   private tabHTML(id: string, locked: boolean) {
-    const c = CARD[id], u = this.ui;
+    const c = CARD[id], u = this.ui, v = this.v;
     const react = c.active.kind === 'counter', open = u.inspect === id;
     const ty = locked ? 'Locked' : u.trade.has(id) ? '✓ Trade' : react ? 'React' : c.kind === 'relic' ? 'Relic' : c.kind === 'proctor' ? 'Proctor' : 'Play';
     const cls = `${u.trade.has(id) ? 'sel' : ''} ${locked ? 'locked' : ''} ${open ? 'inspecting' : ''} ${react ? 'react' : ''} ${this.playableNow(id, locked) ? `playable${this.v.reaction ? ' react-ready' : ''}` : ''}`;
-    // The tab has room for a short name: "Sevro" for Sevro au Barca, "Fitchner" for Proctor Fitchner (the word under it says Proctor).
-    const short = c.name.replace(/^(Proctor|Stolen|The Proctors') /, '').replace(/ (au|of) .*$/, '');
-    return `<button class="ctab ${cls}" data-a="inspect" data-id="${id}" data-card="${id}" style="--hc:${HOUSES[c.house].color}" title="${esc(c.name)}, ${esc(c.title)}" aria-pressed="${open}">${sig(c.house, 'sig sm')}<span class="nm">${esc(short)}</span><span class="ty">${ty}</span></button>`;
+    // The Active as the card would fight for you: with your House's bonus when you hold its House.
+    const owns = this.me != null && v.phase !== 'passage' && ownsHouse(v, this.me, c.house);
+    const text = fmt(c.active.text, c.active.n + (c.kind !== 'proctor' && owns ? c.active.bonus : 0));
+    const cut = text.indexOf(': ');
+    const body = cut > 0 ? `<b>${esc(text.slice(0, cut).replace(/ \(REACTION\)$/, ''))}</b>${esc(text.slice(cut + 2))}` : esc(text);
+    const kind = c.kind === 'proctor' ? 'Proctor' : c.kind === 'relic' ? 'Siege relic' : react ? 'Reaction' : 'Character';
+    return `<button class="ctab ${cls}" data-a="inspect" data-id="${id}" data-card="${id}" style="--hc:${HOUSES[c.house].color}" aria-label="${esc(c.name)}, ${esc(c.title)}" aria-pressed="${open}">
+      <span class="ch">${sig(c.house, 'sig sm')}<span class="nm">${esc(c.name)}</span></span>
+      <span class="ck">${kind} · ${HOUSES[c.house].name}</span>
+      <span class="cx">${body}</span>
+      <span class="ty">${ty}</span></button>`;
   }
 
-  /** The hand, as a tray of card tabs in the corner. */
+  /** The hand, as a tray of cards lying face up in the corner. */
   private renderHand() {
     const v = this.v;
     const hand = v.me?.hand ?? [];
     const box = document.getElementById('hand')!;
     // Drawn again only when it changes, so a tab under the mouse keeps its lift while the rest of the HUD redraws.
     const html = v.phase === 'passage' ? '' : hand.map((h) => this.tabHTML(h.id, h.locked)).join('');
-    if (html !== box.dataset.html) { box.dataset.html = html; box.innerHTML = html; }
+    if (html !== box.dataset.html) { box.dataset.html = html; box.innerHTML = html; box.dataset.n = String(Math.min(6, hand.length)); }
     if (!html) { this.renderInspector(); return; }
     if (!box.dataset.hover) {
       box.dataset.hover = '1';
@@ -3103,13 +3106,13 @@ export class App {
       case 'endDraft': u.sel = null; u.primusOpen = null; return void this.send({ type: 'endDraft' });
       case 'endAttack': u.sel = null; u.target = null; this.world.clearArrow(); return void this.send({ type: 'endAttack' });
       case 'endTurn': u.sel = null; u.target = null; this.world.clearArrow(); return void this.send({ type: 'endTurn' });
-      case 'dice': u.dice = +b.dataset.n!; return this.render();
-      case 'roll': case 'blitz': {
+      // One button, Roll!: every fight is fought to the end (until the land falls or one army is left).
+      case 'roll': {
         if (u.sel == null || u.target == null) return;
         const from = u.sel, to = u.target;
-        if (to === OLYMPUS) { await this.send({ type: 'assault', from, dice: u.dice, blitz: a === 'blitz' }); return; }
+        if (to === OLYMPUS) { await this.send({ type: 'assault', from, blitz: true }); return; }
         if (allied(v, this.me!, v.owner[to]) && !confirm(`${v.players[v.owner[to]].name} is your ally. Attacking ends the alliance for everyone in it. Do it?`)) return;
-        const err = await this.send({ type: 'attack', from, to, dice: u.dice, blitz: a === 'blitz' });
+        const err = await this.send({ type: 'attack', from, to, blitz: true });
         if (!err && this.v.owner[to] === this.me && !this.v.ts.mustMove) this.followUp(to);
         return;
       }
@@ -3247,7 +3250,7 @@ export class App {
         if (u.sel != null && u.sel === t) { u.sel = null; u.target = null; this.world.clearArrow(); }
         else if (v.armies[t] < 2) this.territoryError([t], `${this.tname(t)} has only 1 army. You need 2+ to attack (one always stays behind).`);
         else if (!attackTargets(v, me, t).length) this.territoryError([t], `Nothing to attack from ${this.tname(t)}: all its neighbours are yours.`);
-        else { u.sel = t; u.target = null; u.dice = 3; u.commit = v.armies[t] - 1; this.world.clearArrow(); }
+        else { u.sel = t; u.target = null; u.commit = v.armies[t] - 1; this.world.clearArrow(); }
         this.render();
         return;
       }
@@ -3257,7 +3260,7 @@ export class App {
       const alt = this.bestSource(t);
       if (alt != null) {
         if (u.sel != null) this.whisper(`Attacking from <b>${esc(this.tname(alt))}</b> (${v.armies[alt]}) instead: ${esc(this.tname(u.sel))} can't reach.`);
-        u.sel = alt; u.target = t; u.dice = 3; u.commit = v.armies[alt] - 1;
+        u.sel = alt; u.target = t; u.commit = v.armies[alt] - 1;
         this.world.arrow(alt, t);
         this.render();
         return;
@@ -3821,7 +3824,7 @@ export class App {
     const panel = el(`<div id="ambush" class="ambush" style="--c:${HOUSES[att.house].color}">
       <div class="am-h">⚔ ${std ? 'THE STANDARD CHARGES' : 'YOU ARE ATTACKED'} <span>the attack waits on you</span></div>
       <div class="am-what">${sig(att.house)} <b>${esc(att.name)}</b> ${std ? 'raises the Standard against' : 'attacks'} <b>${esc(T[r.to].name)}</b> (${v.armies[r.to]}${guard ? ` +${guard} guard` : ''})
-        from <b>${esc(T[r.from].name)}</b> (${std ? `${r.commit} + 3 phantoms` : v.armies[r.from]})${r.blitz ? ', and they mean to blitz' : ''}.${std ? ' If the charge dies, their whole House is yours.' : ''}</div>
+        from <b>${esc(T[r.from].name)}</b> (${std ? `${r.commit} + 3 phantoms` : v.armies[r.from]}).${std ? ' If the charge dies, their whole House is yours.' : ''}</div>
       ${s.mode === 'online' ? '<div class="timer"><div id="atimer"></div></div>' : ''}
       <div class="am-cards">${cards.map((id) => {
         const c = CARD[id], n = activeValue(v, me, c), p1 = theirOdds(id);
@@ -3855,7 +3858,7 @@ export class App {
       : `The charge dies in the trap after ${b.n} rounds. ${att}'s whole House now kneels to ${def}.`;
     if (b.won) return `Not enough. ${att} takes ${t} anyway, losing ${b.aLost} to the ambush.`;
     return b.blitz
-      ? `The ambush holds! ${att}'s blitz breaks on ${t}: ${b.aLost} attackers dead, ${b.dLost} defenders and ghosts fallen.`
+      ? `The ambush holds! ${att}'s attack breaks on ${t}: ${b.aLost} attackers dead, ${b.dLost} defenders and ghosts fallen.`
       : `First blood to the ambush: ${att} loses ${b.aLost}, ${def} ${b.dLost}. The ghosts hold ${t} for the rest of this battle.`;
   }
 
@@ -3946,7 +3949,7 @@ export class App {
       <tr><th>${std ? '⚑ The charge' : '⚔ The attack'}</th><td>${att} from <b>${esc(T[f.from].name)}</b>: ${att0}</td></tr>
       <tr><th>🛡 The defense</th><td>${def} at <b>${esc(T[f.to].name)}</b>: ${def0}</td></tr>
       ${mods.length ? `<tr><th>🎲 Modifiers</th><td>${mods.join('<br>')}</td></tr>` : ''}
-      ${odds != null ? `<tr><th>⚖ The odds</th><td>${att} had a <b>${pct(odds)}</b> chance going in${std ? ' (before the war cry)' : ' to win a blitz'}.</td></tr>` : ''}
+      ${odds != null ? `<tr><th>⚖ The odds</th><td>${att} had a <b>${pct(odds)}</b> chance going in${std ? ' (before the war cry)' : ' to take it'}.</td></tr>` : ''}
       <tr><th>☠ The toll</th><td>${f.n} roll${f.n === 1 ? '' : 's'}: ${att} lost <b>${f.aLost}</b>, ${def} lost <b>${f.dLost}</b>.</td></tr>
       ${last ? `<tr><th>🎲 Last roll</th><td><span class="dice-l">${dice(last.raw.a, last.a)}</span> vs <span class="dice-l">${dice(last.raw.d, last.d)}</span> <span class="fine">(highest against highest, ties to the defender)</span></td></tr>` : ''}
     </table>`;

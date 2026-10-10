@@ -606,7 +606,7 @@ function plateMaterial(t, lake) {
   const def = BIOME[lake ? 'plain' : T[t].biome];
   const uni = {
     uTint: { value: new THREE.Color(colorOf(owner[t])) }, uOwn: { value: owner[t] >= 0 ? 1 : 0 }, uPol: U.pol, uReveal: U.reveal,
-    uHi: { value: new THREE.Color('#f3d27a') }, uHiAmt: { value: 0 }, uDim: { value: 0 }, uStorm: { value: 0 }, uFrost: { value: T[t].quadrant === 2 && !['snow', 'lake'].includes(T[t].biome) ? 0.5 : 0 },
+    uHi: { value: new THREE.Color('#f3d27a') }, uHiAmt: { value: 0 }, uHov: { value: 0 }, uHovR: { value: 0 }, uDim: { value: 0 }, uStorm: { value: 0 }, uFrost: { value: T[t].quadrant === 2 && !['snow', 'lake'].includes(T[t].biome) ? 0.5 : 0 },
   };
   if (lake) Object.assign(uni, { uShingle: { value: BIOME.lake.tex.map }, uWater: { value: lake.water }, uSnowy: { value: T[t].quadrant === 2 ? 1 : 0 } });
   const mat = new THREE.MeshStandardMaterial({ map: def.tex.map, bumpMap: def.tex.bump, bumpScale: def.bump * 0.35, roughness: def.rough, metalness: 0 });
@@ -615,7 +615,7 @@ function plateMaterial(t, lake) {
     Object.assign(sh.uniforms, uni);
     sh.vertexShader = 'attribute float aB;\nattribute float aR;\nattribute float aG;\nattribute float aF;\nvarying float vB;\nvarying float vR;\nvarying float vG;\nvarying float vF;\nvarying float vHigh;\nvarying float vSteep;\nvarying vec3 vBank;\n#ifdef LAKE_GROUND\nattribute vec3 aBank;\n#endif\n'
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vB = aB; vR = aR; vG = aG; vF = aF; vHigh = transformed.y; vSteep = 1.0 - objectNormal.y;\n#ifdef LAKE_GROUND\n  vBank = aBank;\n#endif');
-    sh.fragmentShader = 'uniform float uDim;\nuniform float uStorm;\nuniform vec3 uTint;\nuniform float uOwn;\nuniform float uPol;\nuniform float uReveal;\nuniform vec3 uHi;\nuniform float uHiAmt;\nuniform float uFrost;\nuniform sampler2D uShingle;\nuniform float uWater;\nuniform float uSnowy;\nvarying float vB;\nvarying float vR;\nvarying float vG;\nvarying float vF;\nvarying float vHigh;\nvarying float vSteep;\nvarying vec3 vBank;\n'
+    sh.fragmentShader = 'uniform float uDim;\nuniform float uStorm;\nuniform vec3 uTint;\nuniform float uOwn;\nuniform float uPol;\nuniform float uReveal;\nuniform vec3 uHi;\nuniform float uHiAmt;\nuniform float uHov;\nuniform float uHovR;\nuniform float uFrost;\nuniform sampler2D uShingle;\nuniform float uWater;\nuniform float uSnowy;\nvarying float vB;\nvarying float vR;\nvarying float vG;\nvarying float vF;\nvarying float vHigh;\nvarying float vSteep;\nvarying vec3 vBank;\n'
       + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
         #ifdef LAKE_GROUND
         {
@@ -650,15 +650,27 @@ function plateMaterial(t, lake) {
         float w0 = mix(0.52, 0.30, uPol);
         float band = clamp(smoothstep(w0, w0 + 0.26, vB) + smoothstep(0.0, 0.5, vB) * 0.16, 0.0, 1.0);
         diffuseColor.rgb = mix(diffuseColor.rgb, uTint, band * uOwn * mix(0.22, 1.0, vF) * mix(0.88, 0.5, far));
-        diffuseColor.rgb *= 1.0 - 0.55 * smoothstep(0.90, 1.0, vB);
+        // Every land is outlined in ink, and every region in a heavier line with a pale thread inside it: thin close in,
+        // and bold from far out, where the whole valley has to read as lands and regions at a glance.
+        diffuseColor.rgb *= 1.0 - mix(0.55, 0.92, far) * smoothstep(mix(0.90, 0.60, far), mix(1.0, 0.80, far), vB);
+        float rEdge = smoothstep(mix(0.84, 0.34, far), mix(0.98, 0.52, far), vG);
+        float rThread = smoothstep(mix(0.70, 0.10, far), mix(0.80, 0.22, far), vG) * (1.0 - rEdge);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.96, 0.86, 0.60), rThread * mix(0.25, 0.8, far));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03, 0.02, 0.015), rEdge * mix(0.6, 0.96, far));
         diffuseColor.rgb *= 1.0 - 0.08 * smoothstep(0.92, 1.0, vR) * (1.0 - uPol);
+        // Under the pointer: the land itself is lit and rimmed in white, and the rest of its region wears a warm rim.
+        // (its whole border band turns white, ink and all, against the dark ink of the lands around it; and the edge of
+        // its region turns gold the same way)
+        float hovRim = smoothstep(0.20, 0.40, vB), regRim = smoothstep(0.08, 0.24, vG);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 0.80, 0.30), uHovR * max(0.22, regRim));
+        diffuseColor.rgb = mix(diffuseColor.rgb * (1.0 + 0.35 * uHov), vec3(1.0), uHov * max(0.30, hovRim));
         float hiBand = smoothstep(0.20, 0.65, vB);
         diffuseColor.rgb = mix(diffuseColor.rgb, uHi, hiBand * uHiAmt * 0.85);
         // Land a storm has struck is hatched, and land outside "My Lands" goes grey.
         float hatch = smoothstep(0.30, 0.42, abs(fract((vMapUv.x + vMapUv.y) * 3.0) - 0.5));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.91, 0.89, 0.85), uStorm * (0.14 + 0.42 * hatch));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)) * 0.55 + 0.03), uDim);`)
-        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += uHi * uHiAmt * (0.02 + 0.5 * hiBand);');
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += uHi * uHiAmt * (0.02 + 0.5 * hiBand) + vec3(1.0) * uHov * (0.10 + 0.55 * hovRim) + vec3(1.0, 0.72, 0.22) * uHovR * (0.03 + 0.5 * regRim);');
   };
   mat.customProgramCacheKey = () => (lake ? 'plateLake' : 'plate');
   return { mat, uni };
@@ -2554,26 +2566,66 @@ await pause("the harbours");
 // crossings: the sea lanes between ports, the ships that sail them only while an army crosses, and the land bridges
 
 const lanes = [];
+/** The lane whose port is under the pointer. */
+let hoverLane = null;
 const bridgeSpots = [];
 /** Olympus's falls come down within this far of the middle of the sea: no lane runs inside it. */
 const CLEAR = 10.5;
-G.ports.forEach(([a, b]) => {
-  if (!harbour[a] || !harbour[b]) return;
-  // From one pier's berth to the other's, swinging as wide as it must to keep clear of Olympus.
-  const A = harbour[a].berth, B = harbour[b].berth, mid = A.clone().lerp(B, 0.5), out = new THREE.Vector3(B.z - A.z, 0, A.x - B.x).normalize(), y = SEA_Y + 0.06;
-  if (out.dot(mid) < 0) out.negate();
-  let curve;
-  for (let sag = 1.2; sag < 30; sag += 0.6) {
-    curve = new THREE.QuadraticBezierCurve3(A.clone().setY(y), mid.clone().addScaledVector(out, sag * 2).setY(y), B.clone().setY(y));
-    if (curve.getPoints(40).every((p) => Math.hypot(p.x, p.z) >= CLEAR)) break;
-  }
-  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(80)), new THREE.LineDashedMaterial({ color: '#f3d27a', dashSize: 0.55, gapSize: 0.6, transparent: true, opacity: 0.3, depthWrite: false }));
-  line.computeLineDistances();
-  scene.add(line);
-  lanes.push({ a, b, curve, line, len: curve.getLength() });
-});
+/** What a lane is called at both of its ends, so that a port can be matched to the one across the water. */
+const LANE_MARK = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+/** And its colour, on the water and on its two marks: none of them a House's. */
+const LANE_INK = ['#fff1cf', '#ffa6dd', '#9af2ff', '#d6ff8a', '#ffc9a0', '#d9c8ff'];
+{
+  const pairs = G.ports.filter(([a, b]) => harbour[a] && harbour[b]);
+  const turn = ([a, b]) => { const A = harbour[a].berth, B = harbour[b].berth, d = Math.atan2(B.z, B.x) - Math.atan2(A.z, A.x); return Math.abs(Math.atan2(Math.sin(d), Math.cos(d))); };
+  // (the longest way round takes the innermost ring, so a short crossing is not carried in across a long one)
+  const rank = pairs.map((p, k) => k).sort((x, y) => turn(pairs[y]) - turn(pairs[x]));
+  pairs.forEach(([a, b], k) => {
+    // Out from one pier, round Olympus on open water, and in to the other. Seen from above every lane is one clean
+    // arc: it turns about the middle of the sea the short way round, and keeps a ring of its own (no two lanes lie on
+    // top of each other) halfway between the falls and the shore. Two ports on the same shore barely leave it.
+    const A = harbour[a].berth, B = harbour[b].berth, y = SEA_Y + 0.06;
+    const ra = Math.hypot(A.x, A.z), rb = Math.hypot(B.x, B.z), aa = Math.atan2(A.z, A.x);
+    const sweep = Math.atan2(Math.sin(Math.atan2(B.z, B.x) - aa), Math.cos(Math.atan2(B.z, B.x) - aa));
+    const shore = Math.min(ra, rb), mid = (CLEAR + shore) / 2 + (rank.indexOf(k) - (pairs.length - 1) / 2) * 1.35;
+    const ring = Math.min(Math.max(mid, CLEAR + 0.7), Math.max(CLEAR + 0.7, shore - 0.6));
+    const reach = Math.min(1, Math.abs(sweep) / (Math.PI * 0.45));
+    const pts = [];
+    for (let i = 0; i <= 48; i++) {
+      const u = i / 48, along = ra + (rb - ra) * u, dip = Math.pow(Math.sin(Math.PI * u), 0.55) * reach;
+      const r = along + (Math.min(ring, along) - along) * dip, ang = aa + sweep * u;
+      pts.push(new THREE.Vector3(Math.cos(ang) * r, y, Math.sin(ang) * r));
+    }
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    curve.arcLengthDivisions = 400;
+    const len = curve.getLength();
+    // Drawn as a broad dashed ribbon lying on the water, from one pier's head to the other's: it has to read from the
+    // far view, where a hairline is lost, and it has to be seen to start and end at a port.
+    const drawn = new THREE.CatmullRomCurve3([harbour[a].head.clone().setY(y), ...pts, harbour[b].head.clone().setY(y)], false, 'centripetal');
+    drawn.arcLengthDivisions = 400;
+    const dl = drawn.getLength(), DASH = 0.8, GAP = 0.5, HALF = 0.16, pos = [], idx = [];
+    for (let d = 0.1; d + DASH < dl; d += DASH + GAP) {
+      const CUT = 4;
+      for (let j = 0; j <= CUT; j++) {
+        const u = (d + (DASH * j) / CUT) / dl, p = drawn.getPointAt(u), t = drawn.getTangentAt(u), nx = -t.z, nz = t.x, at = pos.length / 3;
+        pos.push(p.x + nx * HALF, y, p.z + nz * HALF, p.x - nx * HALF, y, p.z - nz * HALF);
+        if (j) idx.push(at - 2, at, at - 1, at - 1, at, at + 1);
+      }
+    }
+    const geoL = new THREE.BufferGeometry();
+    geoL.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geoL.setIndex(idx);
+    const line = new THREE.Mesh(geoL, new THREE.MeshBasicMaterial({ color: LANE_INK[k % LANE_INK.length], transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
+    line.renderOrder = 3;
+    scene.add(line);
+    lanes.push({ a, b, curve, line, len, mark: LANE_MARK[k] ?? String(k + 1), ink: LANE_INK[k % LANE_INK.length] });
+  });
+}
 const laneOf = (from, to) => (T[from].port === to ? lanes.find((l) => (l.a === from && l.b === to) || (l.b === from && l.a === to)) : null);
-tickers.push(() => { for (const l of lanes) l.line.material.opacity = 0.3 + 0.6 * U.reveal.value; });
+/** Which lane a port's ships sail, if it is a port. */
+const laneAt = (t) => lanes.find((l) => l.a === t || l.b === t) ?? null;
+// A lane is always there to be seen. The one whose port is under the pointer stands out: the others fall back.
+tickers.push(() => { for (const l of lanes) l.line.material.opacity = l === hoverLane ? 1 : hoverLane ? 0.3 : 0.7 + 0.25 * U.reveal.value; });
 
 /**
  * A war galley: a long, low hull rising to a post at either end, one mast with a square sail, a bank of oars each
@@ -2957,13 +3009,19 @@ function setHighlights(sel, targets, kind, opts = {}) {
   if (opts.fan && opts.olympus && from != null) addArc(fanG, from, -2, '#f3d27a');
   for (const t of opts.picked ?? []) if (ok(t)) setHi(t, '#f3d27a', 0.95);
   if (from != null) setHi(from, '#f3d27a', 0.95);
-  if (ok(hoverT) && !hi[hoverT].amt) setHi(hoverT, '#ffffff', 0.3);
 }
 function setHover(t) {
   t = ok(t) ? t : null;
   if (t === hoverT) return;
   hoverT = t;
-  setHighlights(glow.sel, glow.targets, glow.kind, glow.opts);
+  // The land under the pointer is lit, its region is rimmed, and a port shows where its ships land.
+  const region = t == null ? -1 : T[t].region, far = t == null ? -1 : T[t].port;
+  for (let i = 0; i < NT; i++) {
+    const u = plates[i].uni;
+    u.uHov.value = i === t ? 1 : i === far ? 0.55 : 0;
+    u.uHovR.value = i !== t && region >= 0 && T[i].region === region ? 1 : 0;
+  }
+  hoverLane = t == null ? null : laneAt(t);
 }
 function setOdds(odds) {
   const next = odds ?? {};
@@ -3271,7 +3329,7 @@ function setReveal(on) {
   if (on && !labels) {
     const mk = (cls, html) => { const e = document.createElement('div'); e.className = cls; e.innerHTML = html; platesEl.appendChild(e); return e; };
     labels = {
-      terr: T.map((t) => mk('tn', `${TERRAIN[t.terrain]?.[0] ?? ''}${t.name}${t.port >= 0 ? ' ⚓' : ''}`)),
+      terr: T.map((t) => mk('tn', `${TERRAIN[t.terrain]?.[0] ?? ''}${t.name}${laneAt(t.id) ? ` ⚓ ${laneAt(t.id).mark} → ${T[t.port].name}` : ''}`)),
       region: REGIONS.map((r) => mk('rn', `${r.name.replace(/^The /, '')}<b>+${r.bonus}</b>`)),
       bridge: bridgeSpots.map(() => mk('bn', '⇄ Land bridge')),
     };
@@ -3289,6 +3347,23 @@ tickers.push(() => {
     put(e, toScreen(w2v(r.at[0], r.at[1], 1.2), 0), near ? 26 : 0, 2000);
   });
   labels.bridge.forEach((e, i) => put(e, toScreen(bridgeSpots[i], 0), 0, 2000));
+});
+// Every port wears its lane's mark over its pier, always: the two ends of a crossing can be matched from any distance.
+const portEls = lanes.flatMap((l) => [l.a, l.b].map((t) => {
+  const e = document.createElement('div');
+  e.className = 'pt'; e.style.setProperty('--c', l.ink); e.innerHTML = `⚓<b>${l.mark}</b>`;
+  platesEl.appendChild(e);
+  return { e, t, l, key: '' };
+}));
+tickers.push(() => {
+  for (const p of portEls) {
+    const at = toScreen(harbour[p.t].head, 1.1), key = at ? `${at.x.toFixed(1)},${at.y.toFixed(1)},${p.l === hoverLane ? 1 : 0}` : '';
+    if (key === p.key) continue;
+    p.key = key;
+    p.e.style.display = at ? '' : 'none';
+    if (at) p.e.style.transform = `translate(${at.x.toFixed(1)}px,${at.y.toFixed(1)}px) translate(-50%,-50%)`;
+    p.e.classList.toggle('on', p.l === hoverLane);
+  }
 });
 const olyMats = [];
 olympus.traverse((o) => { if (o.isMesh && o.castShadow) o.userData.casts = true; });

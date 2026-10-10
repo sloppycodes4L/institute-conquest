@@ -297,7 +297,7 @@ const LESSONS: Lesson[] = [
     alive: (c) => inAttack(c) && c.sel != null && c.target == null,
     card: () => ({
       id: 'odds', kind: 'read', step: lessonN(5), title: 'Every target shows your odds', width: 420, spot: ['#plates .plate.tgt, #plates .plate.ally'],
-      body: `<span>They are on the map, beside each target's count: your chance to take it if you Blitz. Read the colour; the math is done for you.</span>
+      body: `<span>They are on the map, beside each target's count: your chance to take it. Read the colour; the math is done for you.</span>
         <div class="g-odds-key">
           <div><span class="odds good">65%+</span><span><b>Likely.</b> Go for it.</span></div>
           <div><span class="odds even">35–64%</span><span><b>Coin flip.</b> Bring more armies first.</span></div>
@@ -312,7 +312,7 @@ const LESSONS: Lesson[] = [
     alive: (c) => inAttack(c) && c.target != null,
     card: (c) => ({
       id: 'dice', kind: 'read', step: lessonN(6), title: 'How a fight works', width: 400, cta: 'Let me fight ▸',
-      spot: ['#actionbar .seg', '#actionbar [data-a=roll]', '#actionbar [data-a=blitz]'],
+      spot: ['#actionbar [data-a=roll]'],
       body: c.overwhelm
         ? '<span><b>🏳 Overwhelm.</b> Twice their number: neutrals give up, no dice.</span>'
         : `<span>You roll up to <b>3 dice</b>, they roll up to <b>2</b>. Highest against highest, then the next pair. <b>Ties go to the defender.</b></span>
@@ -321,7 +321,7 @@ const LESSONS: Lesson[] = [
           <span class="g-die a">4</span><span class="g-die d">4</span><span class="res lose">Tie: you lose 1</span>
           <span class="g-die a x">2</span><span></span><span class="res">No pair, no effect</span>
         </div>
-        <div class="g-rd"><div><b>Roll</b><span>One throw. Then you decide again.</span></div><div><b>Blitz</b><span>Keeps rolling until you win or 1 army is left.</span></div></div>
+        <div class="g-rd"><div><b>Roll!</b><span>Your army fights on, throw after throw, until the land is yours or 1 army is left.</span></div></div>
         ${c.oneDie ? '<span class="g-fine">This garrison is neutral and alone, so it rolls only 1 die.</span>' : ''}`,
     }),
   },
@@ -332,10 +332,10 @@ const LESSONS: Lesson[] = [
     done: (c, st) => c.fightsThisTurn > st.run.diceAt,
     card: (c) => {
       const p = c.overwhelm ? 1 : c.odds ?? 0;
-      const say = p >= 0.65 ? 'Blitz is a safe bet' : p >= 0.35 ? 'this is a gamble' : "you'll probably lose this";
+      const say = p >= 0.65 ? 'this is a safe bet' : p >= 0.35 ? 'this is a gamble' : "you'll probably lose this";
       return {
-        id: 'roll', kind: 'do', step: lessonN(7), title: 'Roll or Blitz', pulse: ['[data-a=roll]', '[data-a=blitz]'], wait: 'Press Roll or Blitz',
-        body: `<span>At <b>${pct(p)}</b>, ${say}. Roll if you want to be able to stop partway.</span>`,
+        id: 'roll', kind: 'do', step: lessonN(7), title: 'Roll!', pulse: ['[data-a=roll]'], wait: 'Press Roll!',
+        body: `<span>At <b>${pct(p)}</b>, ${say}. There is no stopping partway: pick another target if you do not like the odds.</span>`,
       };
     },
   },
@@ -620,7 +620,7 @@ function hintFor(c: GuideCtx): Hint | null {
   if (c.phase === 'attack') {
     if (c.sel == null) return { text: 'Attack from a glowing territory, or Fortify ▸', pulse: ['[data-a=endAttack]'] };
     if (c.target == null) return { text: 'Pick a target. Green odds are likely wins' };
-    return { text: 'Roll or Blitz', pulse: ['[data-a=roll]', '[data-a=blitz]'] };
+    return { text: 'Roll!', pulse: ['[data-a=roll]'] };
   }
   if (c.phase === 'fortify') return { text: 'Move troops once, or End Turn ▸', pulse: ['[data-a=endTurn]'] };
   return null;
