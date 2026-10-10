@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skirmish war-room maps (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Cinzel:wght@500;700;900&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js", "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/" } }</script>
+<style>
+:root {
+  --bg: #0b0707; --line: #4d2518; --gold: #e6bb5c; --gold-dim: #9c7a36; --ink: #f1e6d6; --ink-dim: #b8a48c; --ink-mute: #7d6b5a;
+  --display: 'Cinzel', 'Trajan Pro', serif; --ui: 'Barlow Condensed', 'Segoe UI', sans-serif; --prose: 'Crimson Pro', Georgia, serif;
+}
+html, body { margin: 0; height: 100%; background: #050302; color: var(--ink); font-family: var(--ui); font-size: 16px; overflow: hidden; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#gl.over { cursor: pointer; }
+#shade { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 52%, rgba(3,1,0,.72) 100%); }
+.panel { position: absolute; background: rgba(12,7,6,.86); border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+#top { top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 8px; max-width: calc(100% - 24px); box-sizing: border-box; }
+.seg { display: flex; gap: 2px; background: rgba(0,0,0,.35); border-radius: 7px; padding: 2px; }
+button { font: 600 16px var(--ui); letter-spacing: .02em; color: var(--ink-dim); background: none; border: 1px solid transparent; border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+button:hover { color: var(--ink); }
+button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+button[aria-pressed="true"] { color: #1a0e08; background: var(--gold); }
+#side { left: 12px; bottom: 12px; width: 232px; }
+#side p { margin: 2px 4px 6px; }
+#side .lead { font: 700 15px var(--display); letter-spacing: .06em; color: var(--gold); }
+#side .hint { font: italic 15.5px/1.3 var(--prose); color: var(--ink-dim); margin-top: 8px; }
+.house { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 5px 7px; border-color: transparent; }
+.house[aria-pressed="true"] { background: rgba(230,187,92,.1); border-color: var(--gold-dim); color: var(--ink); }
+.house .sig { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; font: 15px serif; color: #fff; text-shadow: 0 1px 2px #000; flex: none; }
+.house b { font: 700 15.5px var(--display); color: var(--ink); flex: 1; }
+.house span.n { font-size: 14.5px; color: var(--ink-dim); white-space: nowrap; }
+#tip { position: absolute; pointer-events: none; background: rgba(12,7,6,.92); border: 1px solid var(--gold-dim); border-radius: 8px; padding: 7px 11px 8px; max-width: 260px; transform: translate(16px, 16px); }
+#tip b { display: block; font: 700 16px var(--display); }
+#tip span { display: block; font-size: 15px; color: var(--ink-dim); line-height: 1.25; }
+#tip i { font-style: normal; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+#boot { position: absolute; inset: 0; display: grid; place-items: center; background: #050302; z-index: 5; text-align: center; font: italic 19px var(--prose); color: var(--ink-dim); }
+#boot b { display: block; font: 900 26px var(--display); letter-spacing: .1em; color: var(--gold); margin-bottom: 6px; font-style: normal; }
+[hidden] { display: none !important; }
+@media (max-width: 640px) { #side { width: auto; right: 12px; } #side .hint { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="shade"></div>
+<div id="top" class="panel">
+  <div class="seg" id="maps" aria-label="Board"></div>
+  <div class="seg" id="views" aria-label="View">
+    <button data-view="table">Table</button><button data-view="over">Overhead</button>
+  </div>
+</div>
+<div id="side" class="panel">
+  <p class="lead">Take land as</p>
+  <div id="houses"></div>
+  <p class="hint">Click a territory to take it. Click your own to add an army; right-click removes one.</p>
+</div>
+<div id="tip" hidden></div>
+<div id="boot"><div><b>Skirmish</b><span id="bootmsg">Drawing the map</span></div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+
+// The four boards: a copy of SKIRMISH_MAPS from src/engine/skirmish.ts (paintings, names, regions, sea lanes), unchanged.
+const MAPS = /*MAPS-BEGIN*/[{"id":"earth","name":"Earth","blurb":"The classic board: 42 territories on six continents.","cols":63,"art":{"2":"c20-24","3":"c19-25 B46-49 C50-54 D55-59","4":"b7-16 c19-25 o31-33 t35-40 B46-49 C50-54 D55-60","5":"a2-6 b7-16 c20-25 o30-33 t34-41 A42-45 B46-49 C50-54 D55-60","6":"a2-6 b7-16 c21-23 n26-27 o30-33 t34-41 A42-45 B46-49 E50-54 D55-59","7":"a3-6 d7-12 e13-17 n26-27 o30-33 t34-41 A42-45 B46-49 E50-54 D55-58","8":"d7-12 e13-17 f18-21 o31-33 t34-41 A42-45 B46-49 E50-54 D55-57","9":"d7-12 e13-17 f18-21 p24-26 o32-33 t34-41 A42-45 B46-49 E50-54 D55-57","10":"g8-12 e13-17 f18-21 p24-26 t34-41 A42-45 B46-49 E50-54 D55-56","11":"g8-12 h13-19 p24-26 q29-33 t34-41 A42-45 B46-49 F50-56 G59-60","12":"g8-12 h13-19 q29-33 t34-41 H42-44 A45 I46-49 F50-56 G59-60","13":"g8-12 h13-18 r27-29 s30-34 t35-41 H42-45 I46-49 F50-55 G59","14":"i9-12 h13-17 r26-29 s30-34 t35-40 J41 H42-45 I46-54 G58-59","15":"i9-12 h13-15 r25-29 s30-34 J35-41 K42-45 I46-54","16":"i10-13 r25-28 s31-33 J35-41 K42-46 I47-54","17":"i11-13 r25-27 J35-41 K42-47 I48-53","18":"j12-18 J36-41 K43-47 L48-52","19":"j13-18 u27-33 v34-37 J38-41 K43-46 L49-52","20":"k13-16 l17-22 u26-33 v34-37 K44-46 L50-51","21":"k13-16 l17-23 u26-34 w35-39 K44-45 L50","22":"k13-16 l17-23 u26-34 w35-40 N56-60","23":"k13-16 l17-22 u27-34 w35-40 M48-52 N56-60","24":"k14-16 l17-21 u28-34 w35-39 M49-53","25":"m14-20 x31-36 w37-39 M51-53","26":"m14-19 x31-36 w37-38 P57-59","27":"m14-18 y32-37 z40-41 O52-55 P56-60","28":"m15-18 y32-37 z40-41 O51-55 P56-60","29":"m15-17 y33-36 z40-41 O51-55 P56-60","30":"m15-17 y33-36 z40 O51-55 P56-59","31":"m16-17 y34-35 O53-55 P56-58"},"regions":[["North America",5,"sssFFFmpw"],["South America",2,"FmFp"],["Europe",5,"sFpffhp"],["Africa",3,"cfhFpF"],["Asia",7,"mssmFhFcfcpw"],["Australia",2,"Fwcp"]],"terr":{"a":["Alaska",0],"b":["Northwest Territory",0],"c":["Greenland",0],"d":["Alberta",0],"e":["Ontario",0],"f":["Quebec",0],"g":["Western United States",0],"h":["Eastern United States",0],"i":["Central America",0],"j":["Venezuela",1],"k":["Peru",1],"l":["Brazil",1],"m":["Argentina",1],"n":["Iceland",2],"o":["Scandinavia",2],"p":["Great Britain",2],"q":["Northern Europe",2],"r":["Western Europe",2],"s":["Southern Europe",2],"t":["Ukraine",2],"u":["North Africa",3],"v":["Egypt",3],"w":["East Africa",3],"x":["Congo",3],"y":["South Africa",3],"z":["Madagascar",3],"A":["Ural",4],"B":["Siberia",4],"C":["Yakutsk",4],"D":["Kamchatka",4],"E":["Irkutsk",4],"F":["Mongolia",4],"G":["Japan",4],"H":["Afghanistan",4],"I":["China",4],"J":["Middle East",4],"K":["India",4],"L":["Siam",4],"M":["Indonesia",5],"N":["New Guinea",5],"O":["Western Australia",5],"P":["Eastern Australia",5]},"lanes":["a~D","bc","ec","fc","cn","np","no","po","pq","pr","oq","ru","su","sv","lu","wJ","wz","yz","DG","FG","LM","MN","MO","NO","NP"]},{"id":"mars","name":"Mars","blurb":"The Red Planet, terraformed: Agea, Lykos, Olympus Mons, and both moons. 42 territories.","cols":63,"art":{"1":"a24-36","2":"d16-22 a23-37 b38-44 P53-55","3":"d15-22 a23-30 c31-37 b38-45 P53-55","4":"O6-8 d15-21 c30-37 b38-45","5":"O6-8 d16-20 c31-36 b39-44","6":"y50-56","7":"s37-42 y50-57","8":"g4-9 k12-17 s36-42 t43-47 y50-57","9":"g3-9 e10-13 k14-18 o25-31 s36-41 t42-47 z50-53 x54-59","10":"g3-8 e9-13 k14-18 n21-24 o25-32 r36-41 t42-47 z50-53 x54-59","11":"g3-8 e9-13 f14-18 n21-24 o25-32 r36-41 t42-46 z50-53 x54-59","12":"g4-8 e9-12 f13-18 n21-25 o26-31 r36-41 u42-46 A50-54 x55-59","13":"j4-8 h9-12 f13-18 m19-27 l28-33 r37-41 u42-46 A50-54 C55-59","14":"j4-8 h9-12 f13-17 m20-27 l28-33 w36-40 v41-45 u46 A50-54 C55-59","15":"j4-8 h9-12 i13-17 p21-25 m26-27 l28-33 w36-40 v41-46 B50-54 C55-58","16":"j5-8 h9-11 i12-17 p21-26 q27-33 w36-40 v41-45 B50-54 D55-58","17":"j5-9 i10-16 p21-26 q27-33 w37-39 v40-44 B50-54 D55-58","18":"j6-9 i10-15 p22-26 q27-32 B51-54 D55-57","19":"i10-14 p23-25 D53-56","21":"F31-37 E40-46","22":"G24-29 F30-38 E39-47","23":"M6-11 G23-29 F30-38 E39-47 I48-52","24":"M5-11 N12-18 G23-29 F30-37 E38-46 I47-53","25":"M6-10 N12-18 G24-29 H30-37 E38-45 I46-53","26":"L8-13 N14-17 H30-38 J39-46 I47-52","27":"L8-14 K15-20 H31-38 J39-46","28":"L9-13 K14-20 H32-37 J39-45","29":"K14-20"},"regions":[["The Boreal Cap",2,"sssh"],["Tharsis",5,"mcpchdh"],["Agea",4,"fchphF"],["Attica",3,"hcfphp"],["Elysium",5,"mpwfhcF"],["Hellas",3,"wcpfhs"],["The Austral Isles",2,"sshd"],["The Moons",1,"cc"]],"terr":{"a":["Planum Boreum",0],"b":["Vastitas",0],"c":["Acidalia",0],"d":["Arcadia",0],"e":["Olympus Mons",1],"f":["Tharsis",1],"g":["Amazonis",1],"h":["Lykos",1],"i":["Daedalia",1],"j":["Memnonia",1],"k":["Tempe",1],"l":["Agea",2],"m":["Valles Marineris",2],"n":["Lunae",2],"o":["Chryse",2],"p":["Solis",2],"q":["Margaritifer",2],"r":["Arabia",3],"s":["Cydonia",3],"t":["Attica",3],"u":["Syrtis",3],"v":["Sabaea",3],"w":["Meridiani",3],"x":["Elysium",4],"y":["Utopia",4],"z":["Isidis",4],"A":["Thessalonica",4],"B":["Hesperia",4],"C":["Aeolis",4],"D":["Cimmeria",4],"E":["Hellas",5],"F":["Noachis",5],"G":["Argyre",5],"H":["Olympia",5],"I":["Promethei",5],"J":["Malea",5],"K":["Planum Australe",6],"L":["Aonia",6],"M":["Sirenum",6],"N":["Icaria",6],"O":["Phobos",7],"P":["Deimos",7]},"lanes":["dk","dg","co","cs","by","bt","kn","or","lw","ty","uz","vE","qF","pG","iN","jM","KG","BI","DI","g~x","Oe","Od","Py","Pb","Px"]},{"id":"westeros","name":"Westeros","blurb":"From the Lands of Always Winter to Sunspear: 52 territories, and the Neck is the only road south.","cols":31,"art":{"1":"a6-13","2":"a5-13 c14-16 d17-21","3":"a5-13 c14-16 d17-21","4":"b7-13 c14-16 d17-21 f25-26","5":"b7-13 c14-16 d17-21 f25-26","6":"e14-22 f25-26","7":"k9-10 e14-22 f25-26","8":"k9-10 e15-22","9":"m14-17 h18-20 g21-26","10":"l9-13 m14-17 h18-21 g22-26","11":"n5-8 l9-13 m14-17 h18-21 g22-26","12":"n5-8 l9-13 m14-17 h18-22 g23-25","13":"n5-8 l9-13 m14-17 h18-22 i23-24","14":"n5-8 l9-12 m13-17 h18-22 i23-24","15":"n5-8 l9-12 m13-17 i18-24","16":"n5-8 o9-15 m16-17 i18-24","17":"n5-8 o9-15 m16-17 i18-24","18":"n5-8 o9-15 m16-17 i18-23","19":"n5-8 o9-15 j16-21 i22-23","20":"n5-8 o9-15 j16-22","21":"n6-8 o9-15 j16-22","22":"n6-8 o9-15 j16-21","23":"q11-17 j18-21","24":"p5-10 q11-17","25":"p5-10 q11-17","26":"p5-9 q11-17","27":"p6-8 q12-17 z22-26","28":"q13-15 z21-26","29":"t12-15 y16-21 z22-26","30":"t12-15 y16-21 A22-26","31":"r8-9 t12-13 u14-17 y18-22 A23-26","32":"r8-9 u13-18 y19-22 A23-26","33":"s4-5 v12-15 u16-18 y19-22 A23-26","34":"s4-5 C8-11 v12-15 u16-18 y19-22 B23-27","35":"C8-11 v12-15 u16-18 y19-21 B23-27","36":"C8-11 v12-15 x16-19 y20-21 B24-26","37":"C8-9 D10-12 w13-15 x16-19","38":"E6-9 D10-12 w13-15 x16-19 H20-25","39":"E6-10 D11 w12-15 x16-19 H20-25","40":"E6-10 F11 w12-15 x16-18 I19-22 K27-28","41":"E6-10 F11-13 P14-16 I17-22 K27-28","42":"G6-10 F11-13 P14-16 I17-21","43":"G6-10 F11-13 P14-16 I17-21","44":"G6-10 P11-16 J17-24","45":"G6-9 P10-16 J17-24","46":"Q6-12 P13-16 J17-24","47":"Q6-12 R13-16 L17-24 O27-28","48":"Q6-12 R13-16 L17-24 O27-28","49":"S8-13 R14-16 L17-24","50":"S8-13 R14-15 N16-20 M21-26","51":"S8-13 R14-15 N16-20 M21-26","52":"T5-7 S8-13 N14-20 M21-25","53":"T5-8 S9-13 W14-19","54":"T5-8 W10-19","55":"T5-8 W10-19","56":"U6-10 W11-18","57":"U6-10 X12-15 Y16-21 Z22-26","58":"U6-9 X12-15 Y16-21 Z22-26","59":"U7-9 X12-15 Y16-21","60":"V4-5 X13-15 Y16-20","61":"V4-5"},"regions":[["Beyond the Wall",2,"sssF"],["Winterfell",3,"FFhcpww"],["The Dreadfort",2,"scmdhp"],["The Iron Islands",1,"cc"],["The Riverlands",2,"wpfpd"],["The Vale of Arryn",1,"mcmp"],["The Westerlands",2,"cmmhF"],["The Crownlands",2,"FfFc"],["The Stormlands",1,"hFhp"],["The Reach",4,"pwfffpf"],["Dorne",1,"mcfc"]],"terr":{"a":["The Lands of Always Winter",0],"b":["Frozen Shore",0],"c":["Fist of the First Men",0],"d":["The Haunted Forest",0],"e":["The Gift",2],"f":["Skagos",2],"g":["Karhold",2],"h":["The Dreadfort",2],"i":["Widow's Watch",2],"j":["White Harbor",2],"k":["Bear Island",1],"l":["Wolfswood",1],"m":["Winterfell",1],"n":["Stoney Shore",1],"o":["Barrowlands",1],"p":["Cape Kraken",1],"q":["The Neck",1],"r":["Harlaw",3],"s":["Pyke",3],"t":["The Twins",4],"u":["The Trident",4],"v":["Riverrun",4],"w":["Stoney Sept",4],"x":["Harrenhal",4],"y":["Mountains of the Moon",5],"z":["The Fingers",5],"A":["The Eyrie",5],"B":["Gulltown",5],"C":["The Crag",6],"D":["Golden Tooth",6],"E":["Casterly Rock",6],"F":["Silverhill",6],"G":["Crakehall",6],"H":["Crackclaw Point",7],"I":["King's Landing",7],"J":["Kingswood",7],"K":["Dragonstone",7],"L":["Storm's End",8],"M":["Rainwood",8],"N":["Dornish Marches",8],"O":["Tarth",8],"P":["Blackwater Rush",9],"Q":["Searoad Marshes",9],"R":["The Mander",9],"S":["Highgarden",9],"T":["Oldtown",9],"U":["Three Towers",9],"V":["The Arbor",9],"W":["Red Mountains",10],"X":["Sandstone",10],"Y":["Greenblood",10],"Z":["Sunspear",10]},"lanes":["kb","kl","kn","fd","fe","fg","rp","rs","rt","sC","sE","KH","KI","OL","OM","VU","VT","jB","BK","ZO"]},{"id":"nations","name":"The Four Nations","blurb":"Water, Earth, Fire, Air: 39 territories from Agna Qel'a to the South Pole.","cols":46,"art":{"1":"c19-27","2":"a19-22 c23-27","3":"a19-22 b23-27","4":"a20-22 b23-26","6":"d29-31","7":"d29-31","8":"e12-17 g18-21","9":"I5-7 e12-17 g18-21 k24-31","10":"I5-7 e12-16 g17-21 k22-31 l32-37","11":"f11-15 h16-21 k22-30 l31-38","12":"f11-15 h16-21 p22-27 l28-38","13":"f11-15 h16-20 p21-27 l28-38","14":"f12-15 i16-20 p21-27 m28-33 l34-38","15":"j12-15 i16-20 p21-27 m28-34 l35-38","16":"j12-15 i16-21 p22-27 m28-35","17":"j13-16 i17-21 n22-27 m28-35","18":"j14-16 n23-28 o29-34","19":"G3-6 n24-28 o29-34","20":"G2-6 A7-10 F17-18 r24-33 w34-37","21":"G2-5 A6-11 F17-18 q21-23 r24-33 w34-37","22":"H2-5 A6-11 D12-15 q21-24 r25-33 w34-37","23":"H2-5 A6-10 D11-15 q21-24 r25-32 s33-36","24":"H3-6 B7-11 D12-15 q21-24 t25-30 s31-36 z40-42","25":"H4-6 B7-11 D12-14 v21-24 t25-30 s31-35 z40-42","26":"B7-11 v21-24 t25-30 u31-35 z40-42","27":"B8-10 v22-25 t26-29 u30-35","28":"C13-15 v23-26 u27-34","29":"E4-6 C13-15 v24-26 u27-33","30":"E4-6 u28-31","32":"y22-24","33":"y22-24 x30-32","34":"J14-16 x30-32","35":"J14-16","38":"K15-20 L21-27","39":"K14-20 L21-28","40":"K14-19 M20-25 L26-28","41":"M17-25","42":"M18-24"},"regions":[["The Northern Water Tribe",2,"sss"],["The Air Temples",2,"mmmm"],["The Western Earth Kingdom",3,"hfpmFF"],["The Northern Earth Kingdom",4,"mffcpc"],["The Southern Earth Kingdom",5,"mccwFphFp"],["The Fire Nation",5,"mpphccFc"],["The Southern Water Tribe",2,"sss"]],"terr":{"a":["Agna Qel'a",0],"b":["The Spirit Oasis",0],"c":["The Northern Ice Fields",0],"d":["The Northern Air Temple",1],"I":["The Western Air Temple",1],"J":["The Southern Air Temple",1],"z":["The Eastern Air Temple",1],"e":["Pohuai Stronghold",2],"f":["Yu Dao",2],"g":["Taku",2],"h":["Makapu",2],"i":["Gaipan",2],"j":["Senlin",2],"k":["The Northern Mountains",3],"l":["Ba Sing Se",3],"m":["The Agrarian Zone",3],"n":["Serpent's Pass",3],"o":["Full Moon Bay",3],"p":["The Great Divide",3],"q":["Omashu",4],"r":["Si Wong Desert",4],"s":["Misty Palms Oasis",4],"t":["Foggy Swamp",4],"u":["Gaoling",4],"v":["Chin Village",4],"w":["Zaofu",4],"x":["Kyoshi Island",4],"y":["Whaletail Island",4],"A":["Caldera City",5],"B":["Fire Fountain City",5],"C":["Ember Island",5],"D":["Shu Jing",5],"E":["The Boiling Rock",5],"F":["Crescent Island",5],"G":["The Sun Warrior Ruins",5],"H":["The Black Cliffs",5],"K":["Wolf Cove",6],"L":["The Southern Tundra",6],"M":["The South Pole",6]},"lanes":["ae","bk","dk","dl","Ie","IG","If","FD","Fq","Fj","CB","CD","Cy","EH","EB","yv","yJ","xu","xL","JK","JC","zw","zs","dz"]}]/*MAPS-END*/;
+
+const HOUSES = [
+  { id: 'mars', name: 'Mars', color: '#d42a2a', sigil: '♂' },
+  { id: 'minerva', name: 'Minerva', color: '#3f86e0', sigil: '⌘' },
+  { id: 'diana', name: 'Diana', color: '#2fa36b', sigil: '☾' },
+  { id: 'apollo', name: 'Apollo', color: '#e8b21e', sigil: '☉' },
+];
+// Where the compass rose sits on each sheet: column, row (painting cells) and radius (world units).
+const LOOK = {
+  earth: { rose: [6.3, 25.5, 8] },
+  mars: { rose: [58.4, 25.6, 7.6] },
+  westeros: { rose: [2.3, 46, 5.2] },
+  nations: { rose: [5.6, 3.9, 7.4] },
+};
+
+const params = new URLSearchParams(location.search);
+const TEX = +params.get('tex') || 5120;
+const CALM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const INK = '#2b190e', BLOOD = '#7a1b14', GOLD = '#b08a2e';
+const SQ3 = Math.sqrt(3), CW = 2 * SQ3, CH = 3;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------------------------------------------------------------- noise
+const hash = (x, y) => { let n = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263); n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+const vn = (x, y) => {
+  const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+};
+const fbm = (x, y) => vn(x, y) * .5 + vn(x * 2.1 + 9, y * 2.1 + 4) * .27 + vn(x * 4.3 + 2, y * 4.3 + 7) * .15 + vn(x * 8.9, y * 8.9) * .08;
+const rng = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+// ---------------------------------------------------------------- geometry: painting -> drawn outlines
+function chaikin(p, closed, it) {
+  for (; it--;) {
+    const out = [], n = p.length;
+    if (!closed) out.push(p[0]);
+    for (let i = 0; i < (closed ? n : n - 1); i++) {
+      const a = p[i], b = p[(i + 1) % n];
+      out.push([a[0] * .75 + b[0] * .25, a[1] * .75 + b[1] * .25], [a[0] * .25 + b[0] * .75, a[1] * .25 + b[1] * .75]);
+    }
+    if (!closed) out.push(p[n - 1]);
+    p = out;
+  }
+  return p;
+}
+function resample(p, step, closed) {
+  const q = closed ? [...p, p[0]] : p, seg = [];
+  let L = 0;
+  for (let i = 0; i < q.length - 1; i++) { const d = Math.hypot(q[i + 1][0] - q[i][0], q[i + 1][1] - q[i][1]); seg.push(d); L += d; }
+  const n = Math.max(closed ? 8 : 1, Math.round(L / step)), out = [];
+  let i = 0, acc = 0;
+  for (let k = 0; k < (closed ? n : n + 1); k++) {
+    const s = (L * k) / n;
+    while (i < seg.length - 1 && acc + seg[i] < s) { acc += seg[i]; i++; }
+    const f = seg[i] ? clamp((s - acc) / seg[i], 0, 1) : 0;
+    out.push([q[i][0] + (q[i + 1][0] - q[i][0]) * f, q[i][1] + (q[i + 1][1] - q[i][1]) * f]);
+  }
+  if (!closed) { out[0] = p[0]; out[out.length - 1] = p[p.length - 1]; }
+  return out;
+}
+
+function buildGeo(def, mi) {
+  const rows = Math.max(...Object.keys(def.art).map(Number)) + 2, cols = def.cols;
+  const letters = Object.keys(def.terr), idOf = new Map(letters.map((l, i) => [l, i])), nt = letters.length;
+  const g = Array.from({ length: rows }, () => new Int16Array(cols).fill(-1));
+  for (const [row, runs] of Object.entries(def.art)) for (const run of runs.split(/\s+/).filter(Boolean)) {
+    const m = /^([A-Za-z])(\d+)(?:-(\d+))?$/.exec(run), a = +m[2], b = m[3] ? +m[3] : a;
+    for (let c = a; c <= b; c++) g[+row][c] = idOf.get(m[1]);
+  }
+  const L = (r, c) => (r < 0 || r >= rows || c < 0 || c >= cols ? -1 : g[r][c]);
+  const region = letters.map((l) => def.terr[l][1]), names = letters.map((l) => def.terr[l][0]);
+
+  // The sheet: a frame, the map window, and a register (title, regions, key) under it.
+  const MW = cols * CW, MH = rows * CH, OX = 6.8, OY = 6.8, portrait = MW + 13.6 < MH + 30;
+  const RH = portrait ? 22 : 13, SW = MW + 13.6, SH = MH + 13.6 + RH;
+  const so = mi * 137.3;
+  const warp = (x, y) => [
+    x + (vn(x * .09 + 3.1 + so, y * .09 + 9.7) - .5) * 2.6 + (vn(x * .3 + 50.3, y * .3 + 1.2 + so) - .5) * .8,
+    y + (vn(x * .09 + 70.2, y * .09 - 20.4 + so) - .5) * 2.6 + (vn(x * .3 + 7.7 + so, y * .3 + 40.9) - .5) * .8,
+  ];
+
+  // Every side of a cell that parts two different owners (or land from sea) is an edge between two grid corners.
+  const VW = cols + 1, edges = [], nb = new Map();
+  const addE = (v0, v1, a, b) => { const e = edges.length; edges.push({ v0, v1, a, b }); for (const v of [v0, v1]) { let l = nb.get(v); if (!l) nb.set(v, (l = [])); l.push(e); } };
+  for (let r = 0; r < rows; r++) for (let c = 0; c <= cols; c++) { const a = L(r, c - 1), b = L(r, c); if (a !== b) addE(r * VW + c, (r + 1) * VW + c, a, b); }
+  for (let r = 0; r <= rows; r++) for (let c = 0; c < cols; c++) { const a = L(r - 1, c), b = L(r, c); if (a !== b) addE(r * VW + c, r * VW + c + 1, a, b); }
+  const P = (v) => [OX + (v % VW) * CW, OY + Math.floor(v / VW) * CH];
+  const isNode = (v) => nb.get(v).length !== 2;
+  const used = new Uint8Array(edges.length), chains = [];
+  const walk = (start, e) => {
+    const vs = [start];
+    let v = start;
+    for (;;) {
+      used[e] = 1;
+      v = edges[e].v0 === v ? edges[e].v1 : edges[e].v0;
+      vs.push(v);
+      if (isNode(v) || v === start) break;
+      const [e1, e2] = nb.get(v);
+      e = e1 === e ? e2 : e1;
+    }
+    return vs;
+  };
+  // A border is drawn once and shared by both sides: corners cut, smoothed, then pushed about like a pen line.
+  const draw = (vs, closed, sea) => {
+    let p = vs.map(P);
+    if (closed) { p = p.slice(0, -1); p = p.map((a, i) => { const b = p[(i + 1) % p.length]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }); }
+    else if (p.length > 2) { const m = [p[0]]; for (let i = 0; i < p.length - 1; i++) m.push([(p[i][0] + p[i + 1][0]) / 2, (p[i][1] + p[i + 1][1]) / 2]); m.push(p[p.length - 1]); p = m; }
+    const step = sea ? .3 : .45;
+    p = resample(chaikin(p, closed, 2), step, closed);
+    const n = p.length;
+    return p.map(([x, y], i) => {
+      let [X, Y] = warp(x, y);
+      if (sea) {
+        const w = closed ? 1 : Math.min(1, (i * step) / 1.4, ((n - 1 - i) * step) / 1.4);
+        X += (vn(x * 1.25 + 11 + so, y * 1.25 + 5) - .5) * .62 * w;
+        Y += (vn(x * 1.25 + 31, y * 1.25 + 77 + so) - .5) * .62 * w;
+      }
+      return [X, Y];
+    });
+  };
+  for (const [v, list] of nb) if (isNode(v)) for (const e of list) if (!used[e]) {
+    const vs = walk(v, e), { a, b } = edges[e];
+    chains.push({ a, b, v0: vs[0], v1: vs[vs.length - 1], closed: false, pts: draw(vs, false, a < 0 || b < 0) });
+  }
+  edges.forEach((ed, e) => { if (!used[e]) { const vs = walk(ed.v0, e); chains.push({ a: ed.a, b: ed.b, v0: -1, v1: -1, closed: true, pts: draw(vs, true, ed.a < 0 || ed.b < 0) }); } });
+
+  const rings = [], path = [], bbox = [];
+  for (let t = 0; t < nt; t++) {
+    const cs = chains.filter((c) => c.a === t || c.b === t), done = new Set(), byV = new Map(), out = [];
+    for (const c of cs) if (!c.closed) for (const v of [c.v0, c.v1]) { let l = byV.get(v); if (!l) byV.set(v, (l = [])); l.push(c); }
+    for (const c of cs) {
+      if (done.has(c)) continue;
+      done.add(c);
+      if (c.closed) { out.push(c.pts); continue; }
+      const ring = [...c.pts];
+      let end = c.v1;
+      while (end !== c.v0) {
+        const nx = byV.get(end).find((k) => !done.has(k));
+        if (!nx) break;
+        done.add(nx);
+        if (nx.v0 === end) { ring.push(...nx.pts.slice(1)); end = nx.v1; } else { ring.push(...nx.pts.slice(0, -1).reverse()); end = nx.v0; }
+      }
+      out.push(ring);
+    }
+    const area = (r) => Math.abs(r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0));
+    out.sort((a, b) => area(b) - area(a));
+    rings.push(out);
+    const pa = new Path2D();
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const r of out) { r.forEach(([x, y], i) => { i ? pa.lineTo(x, y) : pa.moveTo(x, y); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }); pa.closePath(); }
+    path.push(pa);
+    bbox.push([x0, y0, x1 - x0, y1 - y0]);
+  }
+  const line = (pa, c) => { c.pts.forEach(([x, y], i) => (i ? pa.lineTo(x, y) : pa.moveTo(x, y))); if (c.closed) pa.closePath(); };
+  const coast = new Path2D(), inner = new Path2D(), march = new Path2D();
+  for (const c of chains) line(c.a < 0 || c.b < 0 ? coast : region[c.a] !== region[c.b] ? march : inner, c);
+
+  // Where the pieces stand: the cell deepest inside each territory.
+  const depth = g.map((row) => new Int16Array(row.length).fill(-1)), queue = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (g[r][c] >= 0 && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dr, dc]) => L(r + dr, c + dc) !== g[r][c])) { depth[r][c] = 0; queue.push([r, c]); }
+  for (let i = 0; i < queue.length; i++) { const [r, c] = queue[i]; for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (L(r + dr, c + dc) >= 0 && depth[r + dr][c + dc] < 0) { depth[r + dr][c + dc] = depth[r][c] + 1; queue.push([r + dr, c + dc]); } }
+  const cellsOf = Array.from({ length: nt }, () => []);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (g[r][c] >= 0) cellsOf[g[r][c]].push([r, c]);
+  const heart = cellsOf.map((cs) => {
+    const mr = cs.reduce((s, x) => s + x[0], 0) / cs.length, mc = cs.reduce((s, x) => s + x[1], 0) / cs.length;
+    const score = ([r, c]) => depth[r][c] * 2.2 - Math.hypot(r - mr, (c - mc) * 1.15);
+    const best = Math.max(...cs.map(score)), top = cs.filter((x) => score(x) >= best - .7);
+    const r = top.reduce((s, x) => s + x[0], 0) / top.length, c = top.reduce((s, x) => s + x[1], 0) / top.length;
+    return warp(OX + (c + .5) * CW, OY + (r + .5) * CH);
+  });
+  const regions = def.regions.map(([name, bonus, ground], id) => {
+    const cs = cellsOf.flatMap((list, t) => (region[t] === id ? list : []));
+    const r0 = Math.min(...cs.map((x) => x[0])), r1 = Math.max(...cs.map((x) => x[0])), c0 = Math.min(...cs.map((x) => x[1])), c1 = Math.max(...cs.map((x) => x[1]));
+    const at = warp(OX + (cs.reduce((s, x) => s + x[1], 0) / cs.length + .5) * CW, OY + (cs.reduce((s, x) => s + x[0], 0) / cs.length + .5) * CH);
+    return { id, name, bonus, at, w: (c1 - c0 + 1) * CW, h: (r1 - r0 + 1) * CH };
+  });
+  const nth = new Array(def.regions.length).fill(0);
+  const ground = letters.map((l) => def.regions[def.terr[l][1]][2][nth[def.terr[l][1]]++] || 'p');
+
+  const adj = Array.from({ length: nt }, () => new Set());
+  for (const c of chains) if (c.a >= 0 && c.b >= 0) { adj[c.a].add(c.b); adj[c.b].add(c.a); }
+  const lanes = def.lanes.map((s) => { const m = /^([A-Za-z])(~?)([A-Za-z])$/.exec(s); return { a: idOf.get(m[1]), b: idOf.get(m[3]), wrap: !!m[2] }; });
+  for (const l of lanes) { adj[l.a].add(l.b); adj[l.b].add(l.a); }
+  const dist = adj.map((_, from) => { const d = new Array(nt).fill(99); d[from] = 0; const q = [from]; for (let i = 0; i < q.length; i++) for (const x of adj[q[i]]) if (d[x] === 99) { d[x] = d[q[i]] + 1; q.push(x); } return d; });
+
+  return { def, mi, rows, cols, nt, names, region, regions, ground, cells: cellsOf.map((c) => c.length), chains, rings, path, bbox, coast, inner, march, heart, adj: adj.map((s) => [...s]), dist, lanes, MW, MH, OX, OY, SW, SH, RH, portrait };
+}
+
+// ---------------------------------------------------------------- the painted sheet
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const mctx = mk(4, 4).getContext('2d');
+const hit = mk(4, 4).getContext('2d');
+const fontOf = (px, o) => `${o.style || ''} ${o.weight || 700} ${px}px ${o.family || 'Cinzel'}`;
+function measure(str, size, o = {}) { mctx.font = fontOf(100, o); mctx.letterSpacing = `${(o.track || 0) * 100}px`; return (mctx.measureText(str).width / 100) * size; }
+const inLand = (geo, x, y) => { for (let t = 0; t < geo.nt; t++) { const b = geo.bbox[t]; if (x >= b[0] && y >= b[1] && x <= b[0] + b[2] && y <= b[1] + b[3] && hit.isPointInPath(geo.path[t], x, y, 'evenodd')) return t; } return -1; };
+
+function layoutLabels(geo) {
+  geo.label = geo.names.map((name, t) => {
+    const cells = geo.cells[t], size = clamp(.98 + cells * .011, 1, 1.4), maxW = clamp(Math.sqrt(cells) * CW * .9, 6.5, 15), lines = [];
+    let cur = '';
+    for (const w of name.split(' ')) { const next = cur ? cur + ' ' + w : w; if (cur && measure(next, size) > maxW) { lines.push(cur); cur = w; } else cur = next; }
+    lines.push(cur);
+    const lh = size * 1.06, [hx, hy] = geo.heart[t], y = hy + 3, w = Math.max(...lines.map((l) => measure(l, size)));
+    return { lines, size, lh, x: hx, y, rect: [hx - w / 2 - .4, y - size * .7, w + .8, lh * (lines.length - 1) + size * 1.4] };
+  });
+}
+
+const GLYPH = {
+  m(c, x, y, s) {
+    c.beginPath(); c.moveTo(x - .8 * s, y + .4 * s); c.lineTo(x - .05 * s, y - .6 * s); c.lineTo(x + .85 * s, y + .4 * s);
+    for (let i = 1; i <= 3; i++) { const k = i / 4.2, ax = x - .05 * s + .9 * s * k, ay = y - .6 * s + s * k; c.moveTo(ax, ay); c.lineTo(ax - .34 * s * (1 - k), ay + .46 * s * (1 - k)); }
+    c.stroke();
+  },
+  h(c, x, y, s) { c.beginPath(); c.moveTo(x - .75 * s, y + .3 * s); c.quadraticCurveTo(x - .1 * s, y - .75 * s, x + .75 * s, y + .3 * s); c.moveTo(x + .2 * s, y - .06 * s); c.lineTo(x + .06 * s, y + .24 * s); c.moveTo(x + .44 * s, y + .06 * s); c.lineTo(x + .32 * s, y + .28 * s); c.stroke(); },
+  c(c, x, y, s) { c.beginPath(); c.moveTo(x - .6 * s, y + .3 * s); c.lineTo(x - .3 * s, y - .3 * s); c.lineTo(x - .05 * s, y + .05 * s); c.lineTo(x + .25 * s, y - .45 * s); c.lineTo(x + .6 * s, y + .3 * s); c.moveTo(x + .25 * s, y - .45 * s); c.lineTo(x + .18 * s, y + .12 * s); c.stroke(); },
+  F(c, x, y, s) { c.beginPath(); c.arc(x, y - .28 * s, .34 * s, 0, 6.3); c.moveTo(x, y + .06 * s); c.lineTo(x, y + .44 * s); c.moveTo(x + .16 * s, y - .28 * s); c.arc(x, y - .28 * s, .16 * s, 0, 1.7); c.stroke(); },
+  d(c, x, y, s) { c.beginPath(); c.moveTo(x, y + .45 * s); c.lineTo(x, y - .35 * s); c.moveTo(x, y - .05 * s); c.lineTo(x - .3 * s, y - .4 * s); c.moveTo(x, y + .1 * s); c.lineTo(x + .32 * s, y - .25 * s); c.moveTo(x, y - .2 * s); c.lineTo(x + .18 * s, y - .52 * s); c.stroke(); },
+  w(c, x, y, s) { c.beginPath(); c.moveTo(x - .5 * s, y + .25 * s); c.lineTo(x + .5 * s, y + .25 * s); c.moveTo(x - .28 * s, y + .45 * s); c.lineTo(x + .28 * s, y + .45 * s); for (const k of [-.26, 0, .26]) { c.moveTo(x + k * s, y + .25 * s); c.lineTo(x + k * 1.5 * s, y - .28 * s); } c.stroke(); },
+  f(c, x, y, s) { c.beginPath(); for (let i = 0; i < 4; i++) { c.moveTo(x - .6 * s + i * .3 * s, y + .32 * s); c.lineTo(x - .3 * s + i * .3 * s, y - .32 * s); } c.stroke(); },
+  p(c, x, y, s) { c.beginPath(); c.moveTo(x - .32 * s, y - .05 * s); c.lineTo(x - .2 * s, y + .18 * s); c.lineTo(x - .08 * s, y - .05 * s); c.moveTo(x + .16 * s, y + .12 * s); c.lineTo(x + .28 * s, y + .34 * s); c.lineTo(x + .4 * s, y + .12 * s); c.stroke(); },
+  s(c, x, y, s) { c.beginPath(); for (const [dx, dy] of [[-.3, .1], [.05, -.22], [.34, .2]]) { c.moveTo(x + dx * s + .07 * s, y + dy * s); c.arc(x + dx * s, y + dy * s, .07 * s, 0, 6.3); } c.fill(); },
+};
+const GLYPH_SIZE = { m: 1.55, h: 1.3, c: 1.2, F: 1, d: 1, w: 1, f: 1, p: .9, s: 1 }, GLYPH_PER_CELL = { m: .5, h: .45, c: .5, F: .85, d: .55, w: .55, f: .5, p: .35, s: .45 };
+
+function paintStatic(geo) {
+  const S = TEX / Math.max(geo.SW, geo.SH), W = Math.round(geo.SW * S), H = Math.round(geo.SH * S);
+  const { SW, SH, OX, OY, MW, MH, def } = geo;
+  const base = mk(W, H), ink = mk(W, H), out = mk(W, H);
+  const seaRect = [5.2, 5.2, SW - 10.4, OY + MH + 1.6 - 5.2];
+  const unit = (c) => c.setTransform(S, 0, 0, S, 0, 0), px = (c) => c.setTransform(1, 0, 0, 1, 0, 0);
+
+  // --- the vellum
+  const c = base.getContext('2d');
+  unit(c);
+  const sheet = new Path2D();
+  { const pts = []; const side = (x0, y0, x1, y1) => { const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 1.3); for (let i = 0; i < n; i++) { const x = x0 + ((x1 - x0) * i) / n, y = y0 + ((y1 - y0) * i) / n; pts.push([x + (vn(x * .7, y * .7 + 3) - .5) * .5, y + (vn(x * .7 + 9, y * .7) - .5) * .5]); } };
+    side(.5, .5, SW - .5, .5); side(SW - .5, .5, SW - .5, SH - .5); side(SW - .5, SH - .5, .5, SH - .5); side(.5, SH - .5, .5, .5);
+    pts.forEach(([x, y], i) => (i ? sheet.lineTo(x, y) : sheet.moveTo(x, y))); sheet.closePath(); }
+  c.clip(sheet);
+  c.fillStyle = '#dfcba1'; c.fillRect(0, 0, SW, SH);
+  { const mw = 512, mh = Math.round((512 * H) / W), m = mk(mw, mh), mc = m.getContext('2d'), im = mc.createImageData(mw, mh);
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      const v = 1 - fbm(x * .018 + geo.mi * 31, y * .018) * .9 - fbm(x * .09, y * .09 + 50) * .22, k = clamp(v + .35, 0, 1), i = (y * mw + x) * 4;
+      im.data[i] = 255 - (1 - k) * 70; im.data[i + 1] = 255 - (1 - k) * 86; im.data[i + 2] = 255 - (1 - k) * 112; im.data[i + 3] = 255;
+    }
+    mc.putImageData(im, 0, 0);
+    c.globalCompositeOperation = 'multiply'; c.imageSmoothingQuality = 'high'; c.drawImage(m, 0, 0, SW, SH); geo.mottle = m; }
+  { const gr = mk(256, 256), gc = gr.getContext('2d'), im = gc.createImageData(256, 256), r = rng(5);
+    for (let i = 0; i < 256 * 256 * 4; i += 4) { const d = r() < .5; im.data[i] = d ? 70 : 255; im.data[i + 1] = d ? 45 : 245; im.data[i + 2] = d ? 20 : 220; im.data[i + 3] = r() * 26; }
+    gc.putImageData(im, 0, 0);
+    c.globalCompositeOperation = 'source-over'; px(c); c.fillStyle = c.createPattern(gr, 'repeat'); c.fillRect(0, 0, W, H); unit(c); }
+  { const r = rng(40 + geo.mi);
+    for (let i = 0; i < 7; i++) { const x = r() * SW, y = r() * SH, rad = 7 + r() * 20, gd = c.createRadialGradient(x, y, rad * .2, x, y, rad); gd.addColorStop(0, 'rgba(120,78,36,.09)'); gd.addColorStop(.8, 'rgba(120,78,36,.05)'); gd.addColorStop(1, 'rgba(120,78,36,0)'); c.fillStyle = gd; c.fillRect(x - rad, y - rad, rad * 2, rad * 2); }
+    for (const [x0, y0, x1, y1] of [[0, 0, 9, 0], [SW, 0, SW - 9, 0], [0, 0, 0, 9], [0, SH, 0, SH - 9]]) { const gd = c.createLinearGradient(x0, y0, x1, y1); gd.addColorStop(0, 'rgba(78,46,18,.4)'); gd.addColorStop(.35, 'rgba(78,46,18,.12)'); gd.addColorStop(1, 'rgba(78,46,18,0)'); c.fillStyle = gd; c.fillRect(0, 0, SW, SH); }
+    // Folds: the sheet was carried folded before it was hung.
+    const fold = (x0, y0, x1, y1) => { c.lineWidth = 1.6; c.strokeStyle = 'rgba(70,42,18,.05)'; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke(); c.lineWidth = .16; c.strokeStyle = 'rgba(255,246,222,.3)'; c.stroke(); c.strokeStyle = 'rgba(70,42,18,.16)'; c.beginPath(); c.moveTo(x0 + .2, y0 + .2); c.lineTo(x1 + .2, y1 + .2); c.stroke(); };
+    if (geo.portrait) { fold(0, SH / 3, SW, SH / 3 + .6); fold(0, (SH * 2) / 3, SW, (SH * 2) / 3 - .4); fold(SW / 2, 0, SW / 2 + .5, SH); }
+    else { fold(SW / 3, 0, SW / 3 + .6, SH); fold((SW * 2) / 3, 0, (SW * 2) / 3 - .4, SH); fold(0, SH / 2, SW, SH / 2 + .5); } }
+
+  // --- the sea: a thin wash, paler in the shallows, then the water-lining along every coast
+  const s = out.getContext('2d');
+  const land = () => { s.globalCompositeOperation = 'destination-out'; s.fillStyle = s.strokeStyle = '#000'; s.setLineDash([]); s.lineWidth = .1; for (const p of geo.path) { s.fill(p, 'evenodd'); s.stroke(p); } s.globalCompositeOperation = 'source-over'; };
+  unit(s); s.lineJoin = s.lineCap = 'round';
+  s.fillStyle = 'rgb(150,176,170)'; s.fillRect(...seaRect);
+  s.globalCompositeOperation = 'destination-out'; s.filter = `blur(${(1.4 * S).toFixed(1)}px)`; s.strokeStyle = 'rgba(0,0,0,.4)'; s.lineWidth = 3.6; s.stroke(geo.coast); s.filter = 'none';
+  land();
+  px(c); c.globalCompositeOperation = 'multiply'; c.globalAlpha = .74; c.drawImage(out, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+  px(s); s.clearRect(0, 0, W, H); unit(s);
+  s.save(); s.beginPath(); s.rect(...seaRect); s.clip();
+  { const d = [.5, 1.15, 1.95, 2.95], al = [.5, .34, .22, .13];
+    for (let k = 3; k >= 0; k--) {
+      s.globalCompositeOperation = 'source-over'; s.strokeStyle = `rgba(58,40,24,${al[k]})`; s.lineWidth = 2 * d[k] + .1; s.setLineDash(k >= 2 ? [1.7, .45, .5, .45] : []); s.stroke(geo.coast);
+      s.globalCompositeOperation = 'destination-out'; s.setLineDash([]); s.strokeStyle = '#000'; s.lineWidth = 2 * d[k]; s.stroke(geo.coast);
+    }
+    s.globalCompositeOperation = 'source-over';
+    const [rc, rr] = LOOK[def.id].rose, rx = OX + rc * CW, ry = OY + rr * CH;
+    geo.rose = [rx, ry, LOOK[def.id].rose[2]];
+    s.strokeStyle = 'rgba(58,40,24,.15)'; s.lineWidth = .07; s.beginPath();
+    for (let i = 0; i < 32; i++) { const a = (i / 32) * Math.PI * 2; s.moveTo(rx + Math.cos(a) * geo.rose[2] * 1.1, ry + Math.sin(a) * geo.rose[2] * 1.1); s.lineTo(rx + Math.cos(a) * 600, ry + Math.sin(a) * 600); }
+    s.stroke(); }
+  s.restore();
+  land();
+  px(c); c.drawImage(out, 0, 0);
+  px(s); s.clearRect(0, 0, W, H);
+
+  // --- the ink
+  const k = ink.getContext('2d');
+  unit(k); k.lineJoin = k.lineCap = 'round';
+  const txt = (str, x, y, size, o = {}) => {
+    k.save(); px(k);
+    k.font = fontOf(size * S, o); k.letterSpacing = `${(o.track || 0) * size * S}px`; k.textAlign = o.align || 'center'; k.textBaseline = 'middle';
+    const X = (x + (o.track && !o.align ? (o.track * size) / 2 : 0)) * S;
+    if (o.halo) { k.strokeStyle = o.halo; k.lineWidth = (o.haloW || .3) * S; k.lineJoin = 'round'; k.strokeText(str, X, y * S); }
+    k.fillStyle = o.fill || INK; k.fillText(str, X, y * S);
+    k.restore();
+  };
+  // Region names, written large and faint under everything else.
+  for (const r of geo.regions) {
+    // A region of scattered islands has no middle to write across: the register and the plate name it instead.
+    const on = inLand(geo, r.at[0], r.at[1]);
+    if (on >= 0 ? geo.region[on] !== r.id : !geo.heart.some((h, t) => geo.region[t] === r.id && Math.hypot(h[0] - r.at[0], h[1] - r.at[1]) < 14)) continue;
+    const o = { weight: 900, track: .24 }, words = r.name.replace(/^The /, '').split(' '), join = (a, b) => words.slice(a, b).join(' ');
+    const fit = (ls) => Math.min((r.w * .84) / Math.max(...ls.map((l) => measure(l, 1, o))), (r.h * .6) / (ls.length * 1.25));
+    let lines = [join(0)];
+    for (let i = 1; i < words.length; i++) {
+      if (fit([join(0, i), join(i)]) > fit(lines) * 1.15) lines = [join(0, i), join(i)];
+      for (let j = i + 1; j < words.length; j++) if (fit([join(0, i), join(i, j), join(j)]) > fit(lines) * 1.15) lines = [join(0, i), join(i, j), join(j)];
+    }
+    const size = clamp(fit(lines), 1.5, 4.8);
+    lines.forEach((l, i) => txt(l.toUpperCase(), r.at[0], r.at[1] + (i - (lines.length - 1) / 2) * size * 1.25, size, { ...o, fill: 'rgba(74,16,10,.36)' }));
+  }
+  // Ground: mountains, woods, fens, drawn in the old way.
+  k.strokeStyle = k.fillStyle = 'rgba(52,32,18,.5)';
+  for (let t = 0; t < geo.nt; t++) {
+    const gch = geo.ground[t], draw = GLYPH[gch] || GLYPH.p, r = rng(900 + t * 31 + geo.mi * 7), [bx, by, bw, bh] = geo.bbox[t], [hx, hy] = geo.heart[t], lr = geo.label[t].rect;
+    const want = clamp(Math.round(geo.cells[t] * (GLYPH_PER_CELL[gch] || .4)), 2, 22), put = [];
+    for (let tries = want * 14; tries-- && put.length < want;) {
+      const x = bx + r() * bw, y = by + r() * bh, sz = (GLYPH_SIZE[gch] || 1) * (.82 + r() * .32), m = sz * .75;
+      if (Math.hypot(x - hx, (y - hy) * 1.3) < 4.3) continue;
+      if (x > lr[0] - m && x < lr[0] + lr[2] + m && y > lr[1] - m && y < lr[1] + lr[3] + m) continue;
+      if (put.some((q) => Math.hypot(q[0] - x, q[1] - y) < (sz + q[2]) * .8)) continue;
+      if (![[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]].every(([dx, dy]) => hit.isPointInPath(geo.path[t], x + dx, y + dy, 'evenodd'))) continue;
+      put.push([x, y, sz]);
+    }
+    put.sort((a, b) => a[1] - b[1]);
+    for (const [x, y, sz] of put) { k.lineWidth = .085 * Math.sqrt(sz); draw(k, x, y, sz); }
+  }
+  // Borders: thin between territories, heavy with a gold thread where two regions meet, and the coast.
+  k.strokeStyle = 'rgba(43,25,14,.9)'; k.lineWidth = .17; k.stroke(geo.inner);
+  k.strokeStyle = INK; k.lineWidth = .52; k.stroke(geo.march);
+  k.strokeStyle = GOLD; k.lineWidth = .13; k.stroke(geo.march);
+  k.strokeStyle = INK; k.lineWidth = .24; k.stroke(geo.coast);
+
+  // Sea lanes.
+  const ringPts = (t) => geo.rings[t].flatMap((r) => r.filter((_, i) => i % 3 === 0));
+  k.fillStyle = k.strokeStyle = BLOOD;
+  for (const l of geo.lanes) {
+    const A = ringPts(l.a), B = ringPts(l.b);
+    if (l.wrap) {
+      for (const [mine, other] of [[A, l.b], [B, l.a]]) {
+        const left = mine.reduce((s, p) => s + p[0], 0) / mine.length < SW / 2, p = mine.reduce((b, q) => ((left ? q[0] < b[0] : q[0] > b[0]) ? q : b)), ex = left ? 5.9 : SW - 5.9, d = left ? 1 : -1;
+        k.lineWidth = .22; k.setLineDash([.9, .6]); k.beginPath(); k.moveTo(p[0], p[1]); k.lineTo(ex + d * .9, p[1]); k.stroke(); k.setLineDash([]);
+        k.beginPath(); k.moveTo(ex, p[1]); k.lineTo(ex + d * 1.1, p[1] - .55); k.lineTo(ex + d * 1.1, p[1] + .55); k.closePath(); k.fill();
+        k.beginPath(); k.arc(p[0], p[1], .34, 0, 6.3); k.fill();
+        txt('to ' + geo.names[other], (p[0] + ex) / 2 + d * .4, p[1] - 1.05, 1.2, { family: '"Crimson Pro"', style: 'italic', weight: 400, fill: BLOOD });
+      }
+      continue;
+    }
+    let best = 1e9, pa = A[0], pb = B[0];
+    for (const p of A) for (const q of B) { const d = (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2; if (d < best) { best = d; pa = p; pb = q; } }
+    const len = Math.sqrt(best), nx = -(pb[1] - pa[1]) / (len || 1), ny = (pb[0] - pa[0]) / (len || 1), mx = (pa[0] + pb[0]) / 2, my = (pa[1] + pb[1]) / 2;
+    let bulge = 0, low = 1e9;
+    for (const bq of len < 4 ? [0] : [.22, -.22, .1, -.1, 0]) {
+      let n = 0;
+      for (const f of [.2, .35, .5, .65, .8]) { const cx = mx + nx * len * bq, cy = my + ny * len * bq, x = (1 - f) ** 2 * pa[0] + 2 * f * (1 - f) * cx + f * f * pb[0], y = (1 - f) ** 2 * pa[1] + 2 * f * (1 - f) * cy + f * f * pb[1]; if (inLand(geo, x, y) >= 0) n++; }
+      if (n < low) { low = n; bulge = bq; }
+    }
+    k.lineWidth = .22; k.setLineDash([.9, .6]); k.beginPath(); k.moveTo(pa[0], pa[1]); k.quadraticCurveTo(mx + nx * len * bulge, my + ny * len * bulge, pb[0], pb[1]); k.stroke(); k.setLineDash([]);
+    for (const p of [pa, pb]) { k.beginPath(); k.arc(p[0], p[1], .34, 0, 6.3); k.fill(); }
+  }
+  // Territory names.
+  geo.label.forEach((lb) => lb.lines.forEach((l, i) => txt(l, lb.x, lb.y + i * lb.lh, lb.size, { halo: 'rgba(240,226,196,.42)', haloW: .34 })));
+
+  // Compass rose, with the Society's pyramid for north.
+  { const [x, y, R] = geo.rose;
+    k.strokeStyle = INK; k.lineWidth = .1; k.beginPath(); k.arc(x, y, R, 0, 6.3); k.stroke(); k.beginPath(); k.arc(x, y, R * .86, 0, 6.3); k.stroke();
+    k.beginPath(); for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2, r0 = i % 4 ? R * .93 : R * .86; k.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0); k.lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R); } k.stroke();
+    const point = (a, len, wd) => {
+      const tip = [x + Math.cos(a) * len, y + Math.sin(a) * len], l = [x + Math.cos(a - wd) * R * .2, y + Math.sin(a - wd) * R * .2], r = [x + Math.cos(a + wd) * R * .2, y + Math.sin(a + wd) * R * .2];
+      k.fillStyle = '#e9d9b4'; k.beginPath(); k.moveTo(...tip); k.lineTo(...r); k.lineTo(x, y); k.closePath(); k.fill(); k.stroke();
+      k.fillStyle = INK; k.beginPath(); k.moveTo(...tip); k.lineTo(...l); k.lineTo(x, y); k.closePath(); k.fill(); k.stroke();
+    };
+    k.lineWidth = .07;
+    for (let i = 0; i < 4; i++) point(Math.PI / 4 + (i * Math.PI) / 2, R * .6, Math.PI / 4);
+    for (let i = 0; i < 4; i++) point((i * Math.PI) / 2, R * (i === 3 ? 1.02 : .92), Math.PI / 4);
+    k.fillStyle = GOLD; k.strokeStyle = INK; k.lineWidth = .08;
+    k.beginPath(); k.arc(x, y, R * .09, 0, 6.3); k.fill(); k.stroke();
+    k.beginPath(); k.moveTo(x, y - R * 1.36); k.lineTo(x + R * .17, y - R * 1.08); k.lineTo(x - R * .17, y - R * 1.08); k.closePath(); k.fill(); k.stroke(); }
+
+  // The frame: a key-pattern band between two rules.
+  { const h = 1.5, a = 3.3;
+    const meander = (x, y, len, rot) => { k.save(); k.translate(x, y); k.rotate(rot); const n = Math.max(1, Math.round(len / (h * 1.3))), w = len / n; k.beginPath(); k.moveTo(0, h); k.lineTo(len, h); for (let i = 0; i < n; i++) { const u = i * w; k.moveTo(u + .12 * w, h); k.lineTo(u + .12 * w, .06 * h); k.lineTo(u + .88 * w, .06 * h); k.lineTo(u + .88 * w, .72 * h); k.lineTo(u + .4 * w, .72 * h); k.lineTo(u + .4 * w, .38 * h); k.lineTo(u + .64 * w, .38 * h); } k.stroke(); k.restore(); };
+    k.strokeStyle = INK; k.lineWidth = .3; k.strokeRect(3, 3, SW - 6, SH - 6);
+    k.lineWidth = .13;
+    meander(a + h, a, SW - 2 * (a + h), 0); meander(SW - a, a + h, SH - 2 * (a + h), Math.PI / 2); meander(SW - a - h, SH - a, SW - 2 * (a + h), Math.PI); meander(a, SH - a - h, SH - 2 * (a + h), -Math.PI / 2);
+    for (const [x, y] of [[a, a], [SW - a - h, a], [a, SH - a - h], [SW - a - h, SH - a - h]]) { k.strokeRect(x + .1, y + .1, h - .2, h - .2); k.fillStyle = GOLD; k.beginPath(); k.moveTo(x + h / 2, y + .32); k.lineTo(x + h - .32, y + h - .36); k.lineTo(x + .32, y + h - .36); k.closePath(); k.fill(); k.stroke(); }
+    k.lineWidth = .2; k.strokeRect(5.2, 5.2, SW - 10.4, SH - 10.4);
+    k.strokeStyle = GOLD; k.lineWidth = .12; k.strokeRect(5.6, 5.6, SW - 11.2, SH - 11.2); }
+
+  // The register: title, what each region is worth, and how to read the pieces.
+  { const y0 = OY + MH + 1.6, x0 = 7.4, x1 = SW - 7.4, w = x1 - x0, regs = def.regions, prose = { family: '"Crimson Pro"', style: 'italic', weight: 400 };
+    k.strokeStyle = INK; k.lineWidth = .24; k.beginPath(); k.moveTo(5.2, y0); k.lineTo(SW - 5.2, y0); k.stroke();
+    k.lineWidth = .08; k.beginPath(); k.moveTo(5.6, y0 + .5); k.lineTo(SW - 5.6, y0 + .5); k.stroke();
+    const sub = `${geo.nt} territories in ${regs.length} regions. The last House standing wins.`, lead = 'Hold a whole region and it sends you more armies each turn';
+    const entry = (r, ax, ay, cw) => {
+      txt(r[0], ax, ay, 1.16, { align: 'left' }); txt(String(r[1]), ax + cw, ay, 1.4, { align: 'right', weight: 900, fill: BLOOD });
+      const from = ax + measure(r[0], 1.16) + .6, to = ax + cw - measure(String(r[1]), 1.4, { weight: 900 }) - .6;
+      k.fillStyle = 'rgba(43,25,14,.55)'; for (let x = from; x < to; x += .62) { k.beginPath(); k.arc(x, ay + .35, .07, 0, 6.3); k.fill(); }
+    };
+    const key = (i, ax, ay) => {
+      k.strokeStyle = INK; k.fillStyle = 'rgba(43,25,14,.78)'; k.lineWidth = .1;
+      if (i === 0) { k.fillRect(ax + .65, ay - .42, .84, .84); }
+      if (i === 1) { k.fillRect(ax, ay - .4, 2.1, .8); }
+      if (i === 2) { k.beginPath(); k.moveTo(ax + 1.05, ay - .72); k.lineTo(ax + 1.85, ay + .5); k.lineTo(ax + .25, ay + .5); k.closePath(); k.fill(); }
+      if (i === 3) { k.strokeStyle = k.fillStyle = BLOOD; k.lineWidth = .22; k.setLineDash([.9, .6]); k.beginPath(); k.moveTo(ax, ay); k.lineTo(ax + 2.1, ay); k.stroke(); k.setLineDash([]); }
+      txt(['one army', 'five armies', 'ten armies', 'a sea lane'][i], ax + 2.9, ay, 1.3, { ...prose, align: 'left' });
+    };
+    if (!geo.portrait) {
+      txt(def.name.toUpperCase(), SW / 2, y0 + 5.3, 4.5, { weight: 900, track: .14, fill: BLOOD });
+      txt(sub, SW / 2, y0 + 9.2, 1.5, prose);
+      const lw = Math.min(w * .33, 62), nc = Math.ceil(regs.length / 4), cw = (lw - (nc - 1) * 2) / nc;
+      txt(lead, x0 + .4, y0 + 2.7, 1.3, { ...prose, align: 'left' });
+      regs.forEach((r, i) => entry(r, x0 + .4 + Math.floor(i / 4) * (cw + 2), y0 + 5 + (i % 4) * 1.8, cw));
+      for (let i = 0; i < 4; i++) key(i, x1 - 13, y0 + 3.6 + i * 2);
+    } else {
+      txt(def.name.toUpperCase(), SW / 2, y0 + 4.5, 4, { weight: 900, track: .14, fill: BLOOD });
+      txt(sub, SW / 2, y0 + 7.7, 1.45, prose);
+      txt(lead, SW / 2, y0 + 10.3, 1.25, prose);
+      const cw = (w - 5) / 3;
+      regs.forEach((r, i) => entry(r, x0 + .4 + Math.floor(i / 4) * (cw + 2.1), y0 + 12.3 + (i % 4) * 1.7, cw));
+      for (let i = 0; i < 4; i++) key(i, x0 + 2 + i * (w / 4), y0 + 20);
+    } }
+  return { S, W, H, base, ink, out };
+}
+
+const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+for (const h of HOUSES) { const c = rgbOf(h.color); h.fill = `rgb(${c.map((v) => Math.round(v + (255 - v) * .5))})`; h.body = `rgba(${c},.15)`; h.edge = `rgba(${c.map((v) => Math.round(v * .82))},.13)`; }
+/** The washes: every territory takes its holder's colour, deepest along its own borders. */
+function compose(art, geo, owner) {
+  const o = art.out.getContext('2d');
+  o.setTransform(1, 0, 0, 1, 0, 0); o.globalCompositeOperation = 'source-over'; o.clearRect(0, 0, art.W, art.H); o.drawImage(art.base, 0, 0);
+  o.setTransform(art.S, 0, 0, art.S, 0, 0); o.lineJoin = 'round';
+  for (let t = 0; t < geo.nt; t++) {
+    const h = HOUSES[owner[t]], [bx, by, bw, bh] = geo.bbox[t];
+    if (!h) continue;
+    o.save(); o.clip(geo.path[t], 'evenodd');
+    o.globalCompositeOperation = 'multiply'; o.fillStyle = h.fill; o.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    o.globalCompositeOperation = 'source-over'; o.fillStyle = h.body; o.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+    o.globalCompositeOperation = 'multiply'; o.strokeStyle = h.edge;
+    for (let w = 5.4; w > .5; w -= .7) { o.lineWidth = w; o.stroke(geo.path[t]); }
+    o.globalAlpha = .55; o.drawImage(geo.mottle, 0, 0, geo.SW, geo.SH); o.globalAlpha = 1;
+    o.restore();
+  }
+  o.setTransform(1, 0, 0, 1, 0, 0); o.globalCompositeOperation = 'source-over'; o.drawImage(art.ink, 0, 0);
+}
+
+// ---------------------------------------------------------------- a staged war, so the board is not empty
+function deal(geo, seed) {
+  const r = rng(seed), nt = geo.nt, owner = new Array(nt).fill(-1), seeds = [Math.floor(r() * nt)];
+  while (seeds.length < HOUSES.length) { let best = 0, bd = -1; for (let t = 0; t < nt; t++) { const m = Math.min(...seeds.map((s) => geo.dist[s][t])); if (m > bd) { bd = m; best = t; } } seeds.push(best); }
+  seeds.forEach((t, h) => (owner[t] = h));
+  for (let left = nt - seeds.length, h = 0; left; left--, h = (h + 1) % HOUSES.length) {
+    const free = [...owner.keys()].filter((t) => owner[t] < 0), near = free.filter((t) => geo.adj[t].some((x) => owner[x] === h)), pool = near.length ? near : free;
+    owner[pool[Math.floor(r() * pool.length)]] = h;
+  }
+  const sizes = [1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6, 7, 8, 11, 14, 17, 23];
+  const armies = owner.map((h, t) => { const front = geo.adj[t].some((x) => owner[x] !== h); return sizes[Math.floor((front ? .25 + r() * .75 : r() * .55) * sizes.length)]; });
+  return { owner, armies };
+}
+
+// ---------------------------------------------------------------- the war table
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#050302');
+const camera = new THREE.PerspectiveCamera(30, 1, 2, 4000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = .12; controls.maxPolarAngle = 1.12; controls.screenSpacePanning = false; controls.zoomToCursor = true;
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+scene.add(new THREE.HemisphereLight(0xfff1dc, 0x2a1a10, 1.75));
+const sun = new THREE.DirectionalLight(0xffe3bd, 2.3);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); sun.shadow.bias = -.0004; sun.shadow.normalBias = .03; sun.shadow.radius = 3.5;
+scene.add(sun, sun.target);
+
+function grain(w, h, bg, lines, tint) {
+  const c = mk(w, h), x = c.getContext('2d'), r = rng(w + lines);
+  x.fillStyle = bg; x.fillRect(0, 0, w, h);
+  for (let i = 0; i < lines; i++) { const y = r() * h, len = w * (.2 + r() * .8), x0 = r() * w - len / 2; x.strokeStyle = tint(r()); x.lineWidth = .6 + r() * 1.8; x.beginPath(); x.moveTo(x0, y); x.bezierCurveTo(x0 + len * .3, y + (r() - .5) * 7, x0 + len * .7, y + (r() - .5) * 7, x0 + len, y + (r() - .5) * 4); x.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  return t;
+}
+const tableTex = grain(1024, 1024, '#2b1a0f', 1500, (v) => (v < .7 ? `rgba(8,4,2,${.08 + v * .22})` : `rgba(140,92,48,${.05 + (v - .7) * .2})`));
+{ const c = tableTex.image.getContext('2d'); c.fillStyle = 'rgba(0,0,0,.55)'; for (const y of [0, 340, 690]) c.fillRect(0, y, 1024, 3); tableTex.needsUpdate = true; }
+const pieceTex = grain(256, 256, '#ffffff', 220, (v) => `rgba(40,20,5,${.04 + v * .12})`);
+const table = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ map: tableTex, roughness: .62 }));
+table.rotation.x = -Math.PI / 2; table.receiveShadow = true;
+scene.add(table);
+
+const GEO = {
+  cube: new RoundedBoxGeometry(.86, .86, .86, 3, .09),
+  bar: new RoundedBoxGeometry(2.05, .8, .8, 3, .09),
+  pyr: (() => { const g = new THREE.ConeGeometry(.84, 1.25, 4).toNonIndexed(); g.rotateY(Math.PI / 4); g.computeVertexNormals(); return g; })(),
+  coin: new THREE.CylinderGeometry(.98, .98, .26, 36), face: new THREE.CircleGeometry(.98, 36),
+};
+const HGT = { cube: .86, bar: .8, pyr: 1.25 };
+const pieceMat = HOUSES.map((h) => new THREE.MeshStandardMaterial({ color: h.color, map: pieceTex, roughness: .46 }));
+const coinMat = new THREE.MeshStandardMaterial({ color: '#c9a56b', map: pieceTex, roughness: .6 });
+const faceMats = new Map();
+function faceMat(n) {
+  let m = faceMats.get(n);
+  if (!m) {
+    const c = mk(128, 128), x = c.getContext('2d');
+    x.fillStyle = '#d6b47a'; x.fillRect(0, 0, 128, 128);
+    const r = rng(n * 13 + 1); for (let i = 0; i < 30; i++) { x.strokeStyle = `rgba(90,55,20,${.05 + r() * .1})`; x.lineWidth = 1 + r() * 2; const y = r() * 128; x.beginPath(); x.moveTo(0, y); x.lineTo(128, y + (r() - .5) * 8); x.stroke(); }
+    x.strokeStyle = 'rgba(60,34,12,.7)'; x.lineWidth = 4; x.beginPath(); x.arc(64, 64, 55, 0, 6.3); x.stroke();
+    x.fillStyle = '#2a160a'; x.font = `900 ${n > 9 ? 62 : 76}px Cinzel`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(n), 64, 69);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+    m = new THREE.MeshStandardMaterial({ map: t, roughness: .6 }); faceMats.set(n, m);
+  }
+  return m;
+}
+
+let W = null; // the board on the table: { geo, art, owner, armies, group, tex, piles[], hover }
+let view = 'table', picked = 0, flight = null;
+const SHEET_Y = .04, PIECE = 1.5;
+
+/** Where each piece of a garrison stands, around its territory's heart. */
+function pileSpots(n, r) {
+  const P = Math.min(4, Math.floor(n / 10)), rest = n - P * 10, B = Math.floor(rest / 5), C = rest % 5, spots = [];
+  const cubes = [[], [[0, 0, 0]], [[-.5, 0, 0], [.5, 0, 0]], [[-.5, 0, 0], [.5, 0, 0], [0, 1, 0]], [[-.5, 0, -.42], [.5, 0, -.42], [-.12, 0, .56], [0, 1, -.42]]][C];
+  const cw = C > 1 ? 1.95 : C ? .95 : 0, fw = (B ? B * 2.2 : 0) + (B && C ? .25 : 0) + cw, two = P && (B || C), zf = two ? .8 : 0, zb = two ? -.72 : 0;
+  for (let i = 0; i < P; i++) spots.push({ kind: 'pyr', x: (i - (P - 1) / 2) * 1.5, z: zb, lvl: 0 });
+  let x = -fw / 2;
+  for (let i = 0; i < B; i++) { spots.push({ kind: 'bar', x: x + 1.05, z: zf, lvl: 0 }); x += 2.2; }
+  if (B && C) x += .25;
+  for (const [dx, lvl, dz] of cubes) spots.push({ kind: 'cube', x: x + cw / 2 + dx * .95, z: zf + dz * .95, lvl });
+  for (const s of spots) { s.rot = (r() - .5) * (s.kind === 'bar' ? .22 : .5); s.x += (r() - .5) * .08; s.z += (r() - .5) * .08; }
+  return { spots, width: Math.max(fw, P * 1.5) };
+}
+function buildPile(t, drop) {
+  const old = W.piles[t];
+  if (old) { W.group.remove(old); }
+  const g = new THREE.Group(), n = W.armies[t], h = W.owner[t], { spots, width } = pileSpots(n, rng(t * 97 + 5)), [hx, hy] = W.geo.heart[t];
+  const shift = -(1.15 + .98) / 2;
+  spots.forEach((s, i) => {
+    const m = new THREE.Mesh(GEO[s.kind], pieceMat[h]);
+    m.castShadow = m.receiveShadow = true;
+    m.position.set(s.x + shift, HGT[s.kind] / 2 + s.lvl * HGT.cube, s.z); m.rotation.y = s.rot;
+    if (drop && !CALM) m.userData = { y: m.position.y, t0: performance.now() + i * 45 };
+    g.add(m);
+  });
+  const coin = new THREE.Group(), body = new THREE.Mesh(GEO.coin, coinMat), face = new THREE.Mesh(GEO.face, faceMat(n));
+  body.position.y = .13; body.castShadow = body.receiveShadow = true; face.rotation.x = -Math.PI / 2; face.position.y = .262;
+  coin.add(body, face); coin.position.set(width / 2 + 1.15 + shift, 0, .25);
+  g.add(coin);
+  g.scale.setScalar(W.scale);
+  g.position.set(hx - W.geo.SW / 2, SHEET_Y, hy - W.geo.SH / 2 - .35);
+  W.group.add(g); W.piles[t] = g;
+}
+
+function buildBoard(geo, art, st) {
+  if (W) { scene.remove(W.group); W.tex.dispose(); W.group.traverse((o) => { if (o.isMesh && !Object.values(GEO).includes(o.geometry)) o.geometry.dispose(); }); }
+  const { SW, SH } = geo, group = new THREE.Group();
+  const tex = new THREE.CanvasTexture(art.out);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(SW, SH), new THREE.MeshLambertMaterial({ map: tex, alphaTest: .5 }));
+  sheet.rotation.x = -Math.PI / 2; sheet.position.y = SHEET_Y; sheet.receiveShadow = true;
+  group.add(sheet);
+  { const c = mk(256, 256), x = c.getContext('2d'); x.filter = 'blur(9px)'; x.fillStyle = 'rgba(0,0,0,.8)'; x.fillRect(20, 20, 216, 216);
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(SW * 1.085, SH * 1.085 * (SW / SH > 1 ? 1.04 : 1)), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+    sh.rotation.x = -Math.PI / 2; sh.position.set(.8, .015, 1); group.add(sh); }
+  // The rods it hangs from, lying with it on the table.
+  const rodMat = new THREE.MeshStandardMaterial({ color: '#4a2c17', map: pieceTex, roughness: .5 }), brass = new THREE.MeshStandardMaterial({ color: '#c79a3c', roughness: .32, metalness: .35 });
+  for (const z of [-SH / 2 + .5, SH / 2 - .5]) {
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, SW + 7, 24), rodMat); rod.rotation.z = Math.PI / 2; rod.position.set(0, 1, z); rod.castShadow = rod.receiveShadow = true; group.add(rod);
+    for (const x of [-SW / 2 - 3.5, SW / 2 + 3.5]) { const f = new THREE.Mesh(new THREE.SphereGeometry(1.35, 20, 14), brass); f.position.set(x, 1, z); f.castShadow = true; group.add(f); }
+  }
+  scene.add(group);
+  const R = Math.max(SW, SH) / 2 + 8;
+  sun.position.set(-R * .55, R * 1.35, -R * .5); sun.target.position.set(0, 0, 0);
+  Object.assign(sun.shadow.camera, { left: -R * 1.1, right: R * 1.1, top: R * 1.1, bottom: -R * 1.1, near: 1, far: R * 5 }); sun.shadow.camera.updateProjectionMatrix();
+  table.scale.set(R * 14, R * 14, 1); tableTex.repeat.set((R * 14) / 90, (R * 14) / 90);
+  scene.fog = new THREE.Fog('#050302', R * 3.2, R * 7);
+  W = { geo, art, owner: st.owner, armies: st.armies, group, tex, piles: [], hover: null, hoverT: -1, shapes: [], scale: PIECE };
+  for (let t = 0; t < geo.nt; t++) buildPile(t, false);
+}
+
+function shot(v) {
+  const { SW, SH } = W.geo, f = Math.tan((camera.fov * Math.PI) / 360), tilt = v === 'over' ? .001 : .68, padX = 9, padY = 7;
+  const d = Math.max(((SH / 2) * Math.cos(tilt) + padY) / f, (SW / 2 + padX) / (f * camera.aspect)) * (v === 'over' ? 1.02 : 1.1);
+  const target = new THREE.Vector3(0, 0, v === 'over' ? 0 : SH * .02);
+  return { target, pos: new THREE.Vector3(0, d * Math.cos(tilt), target.z + d * Math.sin(tilt)), d };
+}
+function frame(v, glide) {
+  view = v;
+  for (const b of document.querySelectorAll('#views button')) b.setAttribute('aria-pressed', String(b.dataset.view === v));
+  const to = shot(v);
+  controls.minDistance = 22; controls.maxDistance = to.d * 1.5;
+  if (!glide || CALM) { camera.position.copy(to.pos); controls.target.copy(to.target); controls.update(); flight = null; return; }
+  flight = { t0: performance.now(), p0: camera.position.clone(), q0: controls.target.clone(), ...to };
+}
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', () => { resize(); if (W) frame(view, false); });
+
+const bounce = (x) => { const n = 7.5625, d = 2.75; return x < 1 / d ? n * x * x : x < 2 / d ? n * (x -= 1.5 / d) * x + .75 : x < 2.5 / d ? n * (x -= 2.25 / d) * x + .9375 : n * (x -= 2.625 / d) * x + .984375; };
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (!W) return;
+  if (flight) {
+    const k = clamp((now - flight.t0) / 800, 0, 1), e = k * k * (3 - 2 * k);
+    camera.position.lerpVectors(flight.p0, flight.pos, e); controls.target.lerpVectors(flight.q0, flight.target, e);
+    if (k === 1) flight = null;
+  }
+  const { SW, SH } = W.geo;
+  controls.target.x = clamp(controls.target.x, -SW / 2, SW / 2); controls.target.z = clamp(controls.target.z, -SH / 2, SH / 2); controls.target.y = 0;
+  controls.update();
+  // From across the room the pieces are drawn larger, so a count can still be read off the whole board.
+  const far = PIECE * clamp(camera.position.distanceTo(controls.target) / 125, 1, 1.8);
+  if (Math.abs(far - W.scale) > .005) { W.scale = far; for (const g of W.piles) g.scale.setScalar(far); }
+  for (const g of W.piles) for (const m of g.children) if (m.userData.t0) { const k = clamp((now - m.userData.t0) / 420, 0, 1); m.position.y = m.userData.y + (1 - bounce(k)) * 4; m.visible = now >= m.userData.t0; if (k === 1) m.userData = {}; }
+  renderer.render(scene, camera);
+}
+
+// ---------------------------------------------------------------- pointing at the map
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), -SHEET_Y), at = new THREE.Vector3();
+const tip = document.getElementById('tip');
+function territoryAt(ev) {
+  ndc.set((ev.clientX / innerWidth) * 2 - 1, -(ev.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  if (!ray.ray.intersectPlane(ground, at)) return -1;
+  return inLand(W.geo, at.x + W.geo.SW / 2, at.z + W.geo.SH / 2);
+}
+function hover(t, ev) {
+  if (t !== W.hoverT) {
+    if (W.hover) { W.group.remove(W.hover); W.hover = null; }
+    W.hoverT = t;
+    canvas.classList.toggle('over', t >= 0);
+    if (t >= 0) {
+      let g = W.shapes[t];
+      if (!g) { const sh = new THREE.Shape(W.geo.rings[t][0].filter((_, i) => i % 2 === 0).map(([x, y]) => new THREE.Vector2(x - W.geo.SW / 2, -(y - W.geo.SH / 2)))); g = W.shapes[t] = new THREE.ShapeGeometry(sh); }
+      W.hover = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#fff3c8', transparent: true, opacity: .3, depthWrite: false }));
+      W.hover.rotation.x = -Math.PI / 2; W.hover.position.y = SHEET_Y + .02;
+      W.group.add(W.hover);
+    }
+  }
+  if (t < 0) { tip.hidden = true; return; }
+  const reg = W.geo.regions[W.geo.region[t]], h = HOUSES[W.owner[t]], n = W.armies[t];
+  tip.innerHTML = `<b>${W.geo.names[t]}</b><span>${reg.name}, worth ${reg.bonus} when held whole</span><span><i style="background:${h.color}"></i>House ${h.name}, ${n} ${n === 1 ? 'army' : 'armies'}</span>`;
+  tip.hidden = false;
+  tip.style.left = Math.min(ev.clientX, innerWidth - 290) + 'px'; tip.style.top = Math.min(ev.clientY, innerHeight - 110) + 'px';
+}
+let down = null;
+canvas.addEventListener('pointerdown', (ev) => { down = [ev.clientX, ev.clientY]; });
+canvas.addEventListener('pointermove', (ev) => { if (W && ev.pointerType !== 'touch') hover(ev.buttons ? -1 : territoryAt(ev), ev); });
+canvas.addEventListener('pointerleave', () => W && hover(-1));
+canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+canvas.addEventListener('pointerup', (ev) => {
+  if (!W || !down || Math.hypot(ev.clientX - down[0], ev.clientY - down[1]) > 5) return;
+  const t = territoryAt(ev);
+  if (t < 0) return;
+  if (ev.button === 2) { if (W.armies[t] > 1) { W.armies[t]--; buildPile(t, false); } }
+  else if (W.owner[t] === picked) { W.armies[t]++; buildPile(t, true); }
+  else { W.owner[t] = picked; W.armies[t] = 3; compose(W.art, W.geo, W.owner); W.tex.needsUpdate = true; buildPile(t, true); }
+  tally(); hover(t, ev);
+});
+
+// ---------------------------------------------------------------- the chrome
+const housesEl = document.getElementById('houses');
+function tally() {
+  housesEl.innerHTML = HOUSES.map((h, i) => {
+    const lands = W.owner.filter((o) => o === i).length, men = W.armies.reduce((s, n, t) => s + (W.owner[t] === i ? n : 0), 0);
+    return `<button class="house" data-h="${i}" aria-pressed="${i === picked}"><span class="sig" style="background:${h.color}">${h.sigil}</span><b>${h.name}</b><span class="n">${lands} lands, ${men} armies</span></button>`;
+  }).join('');
+}
+housesEl.addEventListener('click', (ev) => { const b = ev.target.closest('.house'); if (b) { picked = +b.dataset.h; tally(); } });
+document.getElementById('views').addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b && W) frame(b.dataset.view, true); });
+const mapsEl = document.getElementById('maps'), boot = document.getElementById('boot');
+mapsEl.innerHTML = MAPS.map((m) => `<button data-map="${m.id}">${m.name}</button>`).join('');
+mapsEl.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (b) { location.hash = b.dataset.map; } });
+
+const cache = new Map();
+async function show(id) {
+  const mi = Math.max(0, MAPS.findIndex((m) => m.id === id)), def = MAPS[mi];
+  for (const b of mapsEl.children) b.setAttribute('aria-pressed', String(b.dataset.map === def.id));
+  document.getElementById('bootmsg').textContent = `Drawing ${def.name}`;
+  boot.hidden = false; tip.hidden = true;
+  await new Promise((r) => setTimeout(r, 40));
+  let geo = cache.get(def.id);
+  if (!geo) { geo = buildGeo(def, mi); layoutLabels(geo); geo.start = deal(geo, 11 + mi * 5); cache.set(def.id, geo); }
+  const art = paintStatic(geo), st = { owner: [...geo.start.owner], armies: [...geo.start.armies] };
+  compose(art, geo, st.owner);
+  buildBoard(geo, art, st);
+  tally(); frame(view, false);
+  boot.hidden = true;
+  window.__sk = { W, camera, controls, frame, show, look(x, z, d, tilt = .68) { flight = null; controls.target.set(x, 0, z); camera.position.set(x, d * Math.cos(tilt), z + d * Math.sin(tilt)); controls.update(); } };
+}
+addEventListener('hashchange', () => show(location.hash.slice(1)));
+
+resize();
+await Promise.race([Promise.all(['900 40px Cinzel', '700 40px Cinzel', 'italic 400 40px "Crimson Pro"'].map((f) => document.fonts.load(f))), new Promise((r) => setTimeout(r, 2500))]);
+requestAnimationFrame(tick);
+show(location.hash.slice(1) || 'earth');
+</script>
+</body>
+</html>

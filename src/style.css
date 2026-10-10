@@ -67,9 +67,10 @@ input, select { font: inherit; }
 #plates .pt b { font: 700 11px/1 var(--display); margin-left: 3px; letter-spacing: .04em; }
 #plates .pt.on { box-shadow: 0 0 0 2px var(--c, #fff1cf), 0 0 16px 5px var(--c, #fff1cf); z-index: 2500; font-size: 13px; }
 #plates:not(.reveal) .tn, #plates:not(.reveal) .rn, #plates:not(.reveal) .bn { display: none; }
-/* A Skirmish board prints its names like any board: once you are close enough to read them. */
-#plates.board .tn { font-size: 11px; background: rgba(10,6,5,.55); color: #f7efdf; }
-#plates.board.near:not(.reveal) .tn { display: block; }
+/* A Skirmish is fought on a map table: a wooden coin carries each count, and this small plate only what the coin cannot (armies placed this Draft, the odds of an attack). */
+#plates.table .plate { --c: rgba(20,12,8,.94); padding: .24em .4em .26em; box-shadow: 0 0 0 1.5px #9c7a36, 0 2px 6px rgba(0,0,0,.55); }
+#plates.table .plate::after { box-shadow: 1.5px 1.5px 0 #9c7a36; }
+#plates.table .plate em, #plates.table .plate u:first-child { margin-left: 0; }
 /* the one thing you are a territory short of */
 .goal { position: absolute; left: 0; top: 0; font: 800 12px/1 var(--ui); color: #2a1d05; background: linear-gradient(#ffe29a, #e6bb5c); border-radius: 999px; padding: 2px 7px; box-shadow: 0 0 0 1.5px rgba(14,8,7,.9), 0 0 12px rgba(243,210,122,.7); white-space: nowrap; will-change: transform; }
 .hidden { display: none !important; }
@@ -1441,7 +1442,7 @@ body.title-on .sound-toggle { display: none; }
 .mode-set { margin-bottom: 10px; }
 .map-picks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .map-pick { display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 6px 7px; border: 1px solid var(--line-hi); border-radius: 8px; background: rgba(0,0,0,.28); color: inherit; cursor: pointer; text-align: left; font: inherit; }
-.map-pick img { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #1d465d; border-radius: 5px; display: block; }
+.map-pick img { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #cdbb93; border-radius: 5px; display: block; }
 .map-pick b { font: 700 13px/1.15 var(--display); letter-spacing: .04em; color: var(--gold); margin-top: 3px; }
 .map-pick small { font-size: 11px; opacity: .75; }
 .map-pick:hover:not(:disabled) { border-color: var(--gold); }

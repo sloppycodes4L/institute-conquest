@@ -15,7 +15,18 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    v: '.012', title: 'Skirmish', date: '10 Oct 2026', open: true,
+    v: '.013', title: 'The war table', date: '10 Oct 2026', open: true,
+    html: `<p>Skirmish has left the valley, Golds. It is fought on a map now, the kind a Praetor hangs in a war room. No rules changed, and the war for the valley is untouched.</p>
+<ul>
+<li><b>A drawn map, no tiles.</b> All four boards are inked on vellum: coasts, borders, mountains, woods and fens, with each region's name written across it and a heavy gold-threaded line where two regions meet.</li>
+<li><b>Land wears its holder's colour.</b> Take a territory and it turns to yours.</li>
+<li><b>Wooden pieces.</b> A cube is one army, a long block five, a pyramid ten. The coin beside each garrison is the count, and the pieces grow as you pull back so you can read it from across the room.</li>
+<li><b>The register</b> under the map says what each region is worth. Dashed red lines are sea lanes.</li>
+<li>Odds and armies placed this Draft show on a small plate over the garrison, as before.</li>
+</ul>`,
+  },
+  {
+    v: '.012', title: 'Skirmish', date: '10 Oct 2026',
     html: `<p>A second way to go to war, Golds: quick, classic, and nobody to hide behind. The war for the valley is unchanged.</p>
 <ul>
 <li><b>Skirmish.</b> Pick it under <b>Mode</b> when you set up a war, local or online. 2 to 4 Houses on a small board, and every territory starts in somebody's hands.</li>

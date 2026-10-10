@@ -303,6 +303,9 @@ export const SKIRMISH_RULES_HTML = `
 <h2>Skirmish</h2>
 <p>A classic war on a small board, for <b>2 to 4 Houses</b>. Every territory starts in a House's hands: the board is dealt out, and each House's armies are spread over its own land.
 There are <b>no Keeps, no Standards, no neutral garrisons, no alliances and no Olympus</b>.</p>
+<h3>The table</h3>
+<p>The board is a map on a war table. Every territory is washed in its holder's colour; take one and it turns to yours.
+Armies are wooden pieces: a <b>cube</b> is one, a <b>long block</b> five, a <b>pyramid</b> ten, and the <b>coin</b> beside them is the count.</p>
 <h3>Winning</h3>
 <p>Take <b>every enemy territory</b>. A House falls the moment it loses its last one, and whoever took it gets its cards, and its House: its Proctor answers to you and its cards carry their House bonus.</p>
 <h3>Your turn: Draft, Attack, Fortify</h3>

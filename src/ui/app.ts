@@ -4,6 +4,7 @@ import { World, OLYMPUS, type Graphics, type Odds, type OlympusMode } from '../r
 import { DiceTray } from '../render/dice.ts';
 import { HOUSES, MAX_PLAYERS, TERRAIN_INFO, geoFor, layoutFor, mapGeo } from '../engine/data.ts';
 import { SKIRMISH_MAPS, SKIRMISH_MAX, skirmishGeo } from '../engine/skirmish.ts';
+import { sheetThumb } from '../render/warmap.ts';
 import { CARD, CARDS, EMOTES, OLYMPUS_POWER, fmt, isSiegeCard, activeText, passiveText } from '../engine/cards.ts';
 import {
   type Action, type Frame, type GameEvent, type GameState, type HouseDraft, type WarSettings, DEFAULT_SETTINGS, DRAFT_MS, EMOTE_COOLDOWN_MS, HAND_LIMIT, NEUTRAL, TURN_TIMERS, act, activeValue, drainLog,
@@ -647,14 +648,7 @@ export class App {
   private mapThumb(id: string): string {
     const hit = this.thumbs.get(id);
     if (hit) return hit;
-    const g = skirmishGeo(id), { w, h } = g.skirmish!;
-    const cv = document.createElement('canvas');
-    cv.width = 240; cv.height = Math.round((240 * h) / w);
-    const c = cv.getContext('2d')!, k = cv.width / (2 * w);
-    const hues = ['#c99a4f', '#d2b95a', '#7f86c6', '#c08440', '#8fb36f', '#9a73b5', '#5fa3ae', '#c66f68', '#a7a05c', '#62996c', '#cc8b52'];
-    c.fillStyle = '#1d465d'; c.fillRect(0, 0, cv.width, cv.height);
-    for (const hx of g.hexes) { c.fillStyle = hues[g.territories[hx.t].region % hues.length]; c.fillRect((hx.x + w) * k - 1.1 * k, (h - hx.y) * k - 1.1 * k, 2.2 * k, 2.2 * k); }
-    const url = cv.toDataURL();
+    const url: string = sheetThumb(id, 320).toDataURL();
     this.thumbs.set(id, url);
     return url;
   }
